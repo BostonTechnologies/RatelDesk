@@ -66,6 +66,7 @@ public class HelpdeskDbContext(
     public DbSet<EmailTemplate> EmailTemplates => Set<EmailTemplate>();
     public DbSet<EmailLayout> EmailLayouts => Set<EmailLayout>();
     public DbSet<TenantBranding> TenantBrandings => Set<TenantBranding>();
+    public DbSet<InstanceBranding> InstanceBrandings => Set<InstanceBranding>();
     public DbSet<Service> Services => Set<Service>();
     public DbSet<RequestForm> RequestForms => Set<RequestForm>();
     public DbSet<AiProvider> AiProviders => Set<AiProvider>();

@@ -37,6 +37,24 @@ public class TenantBrandingResolverTests
     }
 
     [Fact]
+    public async Task ResolveAsync_Uses_BundledPngWordmark_ForDefaultEmailBrand()
+    {
+        var repo = Substitute.For<IRepository<TenantBranding>>();
+        repo.GetAllAsync().Returns(Array.Empty<TenantBranding>());
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["StorageOptions:PublicApiBaseUrl"] = "https://api.example.test"
+            })
+            .Build();
+
+        var resolver = new TenantBrandingResolver(repo, new TestImageLinkSigner(), config);
+        var resolved = await resolver.ResolveAsync(null);
+
+        Assert.Contains("https://api.example.test/email-brand/rateldesk-email-wordmark.png", resolved.LogoHtml);
+    }
+
+    [Fact]
     public async Task ResolveAsync_ReturnsTenantOverride_AndBuildsLogoHtml()
     {
         var repo = Substitute.For<IRepository<TenantBranding>>();

@@ -105,9 +105,9 @@ public class TimelineService(
                 await RetryEmailAsync(id, userId, ct);
                 success++;
             }
-            catch
+            catch (Exception exception)
             {
-                // continue processing remaining failed deliveries
+                System.Diagnostics.Debug.WriteLine($"Failed to retry timeline email {id}: {exception.Message}");
             }
         }
 
@@ -161,6 +161,8 @@ public class TimelineService(
             .Replace("{{{TICKET_REF}}}", ticketRef);
         var layout = await layoutResolver.ResolveAsync(template.LayoutId, ct);
         var branding = await tenantBrandingResolver.ResolveAsync(ticket.OrganizationId, ct);
+        if (!string.IsNullOrWhiteSpace(branding.TemplateBrand.ApplicationUrl))
+            publicUrl = branding.TemplateBrand.ApplicationUrl.TrimEnd('/');
 
         var body = templateRenderer.Render(template.HtmlContent, new EmailTemplateContext
         {
@@ -171,6 +173,7 @@ public class TimelineService(
             UpdateMessageText = evt.MessageText ?? string.Empty,
             LayoutHtml = layout?.HtmlContent ?? string.Empty,
             BrandName = branding.BrandName,
+            Brand = branding.TemplateBrand,
             LogoHtml = branding.LogoHtml,
             FooterHtml = branding.FooterHtml,
             PrimaryColor = branding.PrimaryColor

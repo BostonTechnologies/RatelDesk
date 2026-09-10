@@ -1,6 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
 using Helpdesk.Application.Services.EmailTemplates;
+using Helpdesk.Application.Services.Branding;
 using Helpdesk.Application.WorkLogs;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
@@ -11,7 +12,8 @@ namespace Helpdesk.Infrastructure.EmailTemplates;
 public sealed class TenantBrandingResolver(
     IRepository<TenantBranding> tenantBrandingRepository,
     IImageLinkSigner imageLinkSigner,
-    IConfiguration configuration) : ITenantBrandingResolver
+    IConfiguration configuration,
+    IInstanceBrandingProvider? instanceBrandingProvider = null) : ITenantBrandingResolver
 {
     private static readonly TimeSpan EmailLogoTokenLifetime = TimeSpan.FromDays(30);
     private static readonly Regex TenantLogoPathPattern = new(
@@ -24,7 +26,7 @@ public sealed class TenantBrandingResolver(
     {
         _ = cancellationToken;
 
-        var defaults = BuildDefault();
+        var defaults = await BuildDefaultAsync(cancellationToken);
         if (!int.TryParse(tenantId, out var parsedTenantId))
             return defaults;
 
@@ -41,23 +43,29 @@ public sealed class TenantBrandingResolver(
             FooterHtml = string.IsNullOrWhiteSpace(branding.FooterHtml) ? defaults.FooterHtml : branding.FooterHtml,
             PrimaryColor = string.IsNullOrWhiteSpace(branding.PrimaryColor) ? defaults.PrimaryColor : branding.PrimaryColor,
             FromName = string.IsNullOrWhiteSpace(branding.FromName) ? defaults.FromName : branding.FromName,
-            ReplyTo = string.IsNullOrWhiteSpace(branding.ReplyTo) ? defaults.ReplyTo : branding.ReplyTo
+            ReplyTo = string.IsNullOrWhiteSpace(branding.ReplyTo) ? defaults.ReplyTo : branding.ReplyTo,
+            TemplateBrand = defaults.TemplateBrand
         };
     }
 
-    private TenantBrandingResolved BuildDefault()
+    private async Task<TenantBrandingResolved> BuildDefaultAsync(CancellationToken cancellationToken)
     {
-        var defaultBrandName = configuration["EmailBrand:BrandName"] ?? "RatelDesk";
+        var brand = instanceBrandingProvider is null
+            ? new InstanceBrandingSnapshot(
+                configuration["EmailBrand:BrandName"] ?? "RatelDesk", "", configuration["PublicWebAppUrl"] ?? "", "", "", "",
+                configuration["EmailBrand:LogoUrl"] ?? "/branding/rateldesk-wordmark.webp", "/branding/rateldesk-mark.webp", "/favicon.ico",
+                configuration["EmailBrand:FromName"] ?? configuration["EmailBrand:BrandName"] ?? "RatelDesk", "Service management")
+            : await instanceBrandingProvider.GetEffectiveAsync(cancellationToken);
+        var defaultBrandName = brand.ApplicationName;
         var defaultLogoHtml = configuration["EmailBrand:LogoHtml"] ?? BuildDefaultLogoHtml();
         var defaultFooterHtml = configuration["EmailBrand:FooterHtml"] ?? """
             <div style="margin:0;">
-              <strong style="color:#152033;">RatelDesk</strong><br />
-              This message was sent by the RatelDesk support platform. You can reply to ticket emails to add an update.
+              This message was sent by the support platform. You can reply to ticket emails to add an update.
             </div>
             """;
         var defaultColor = configuration["EmailBrand:PrimaryColor"] ?? "#0ea5e9";
         var defaultReplyTo = configuration["EmailBrand:ReplyTo"] ?? string.Empty;
-        var defaultFromName = configuration["EmailBrand:FromName"] ?? defaultBrandName;
+        var defaultFromName = configuration["EmailBrand:FromName"] ?? brand.EmailFromDisplayName;
 
         return new TenantBrandingResolved
         {
@@ -66,7 +74,19 @@ public sealed class TenantBrandingResolver(
             FooterHtml = defaultFooterHtml,
             PrimaryColor = defaultColor,
             FromName = defaultFromName,
-            ReplyTo = defaultReplyTo
+            ReplyTo = defaultReplyTo,
+            TemplateBrand = new EmailBrandingTemplateContext
+            {
+                ApplicationName = brand.ApplicationName,
+                OrganizationName = brand.OrganizationName,
+                ApplicationUrl = brand.ApplicationUrl,
+                OrganizationUrl = brand.OrganizationUrl,
+                SupportUrl = brand.SupportUrl,
+                SupportEmail = brand.SupportEmail,
+                LogoUrl = brand.LogoUrl,
+                EmailFromDisplayName = brand.EmailFromDisplayName,
+                Tagline = brand.Tagline
+            }
         };
     }
 
@@ -178,7 +198,7 @@ public sealed class TenantBrandingResolver(
         if (string.IsNullOrWhiteSpace(publicApiBaseUrl))
             return string.Empty;
 
-        var logoPath = configuration["EmailBrand:LogoPath"] ?? "/email-brand/rateldesk-mark.svg";
+        var logoPath = configuration["EmailBrand:LogoPath"] ?? "/email-brand/rateldesk-email-wordmark.png";
         var normalizedPath = logoPath.StartsWith("/", StringComparison.Ordinal) ? logoPath : $"/{logoPath}";
         return BuildLogoHtml($"{publicApiBaseUrl}{normalizedPath}", string.Empty);
     }

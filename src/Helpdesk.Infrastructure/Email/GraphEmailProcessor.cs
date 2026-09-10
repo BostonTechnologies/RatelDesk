@@ -926,6 +926,7 @@ public class GraphEmailProcessor : IGraphEmailProcessor
             TicketLink = safeLink,
             LayoutHtml = layout?.HtmlContent ?? string.Empty,
             BrandName = branding.BrandName,
+            Brand = branding.TemplateBrand,
             LogoHtml = branding.LogoHtml,
             FooterHtml = branding.FooterHtml,
             PrimaryColor = branding.PrimaryColor

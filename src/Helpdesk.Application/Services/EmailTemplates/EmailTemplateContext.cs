@@ -60,4 +60,18 @@ public class EmailTemplateContext
     public string ActionColor { get; set; } = "#f59e0b";
     public string ActionBorderColor { get; set; } = "#d97706";
     public string ActionTextColor { get; set; } = "#111827";
+    public EmailBrandingTemplateContext Brand { get; set; } = new();
+}
+
+public sealed class EmailBrandingTemplateContext
+{
+    public string ApplicationName { get; set; } = "RatelDesk";
+    public string OrganizationName { get; set; } = string.Empty;
+    public string ApplicationUrl { get; set; } = string.Empty;
+    public string OrganizationUrl { get; set; } = string.Empty;
+    public string SupportUrl { get; set; } = string.Empty;
+    public string SupportEmail { get; set; } = string.Empty;
+    public string LogoUrl { get; set; } = string.Empty;
+    public string EmailFromDisplayName { get; set; } = "RatelDesk";
+    public string Tagline { get; set; } = string.Empty;
 }

@@ -150,6 +150,7 @@ public static class EmailTemplateEndpoints
                 HelpdeskUrl = string.IsNullOrWhiteSpace(sample.HelpdeskUrl) ? "https://helpdesk.example.com" : sample.HelpdeskUrl!,
                 LayoutHtml = request.DraftLayoutHtml ?? layout?.HtmlContent ?? string.Empty,
                 BrandName = branding.BrandName,
+                Brand = branding.TemplateBrand,
                 LogoHtml = branding.LogoHtml,
                 FooterHtml = branding.FooterHtml,
                 PrimaryColor = branding.PrimaryColor

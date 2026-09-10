@@ -14,13 +14,16 @@ public class EmailBrandStaticAssetTests : IClassFixture<WebApplicationFactory<Pr
     }
 
     [Fact]
-    public async Task DefaultEmailBrandLogo_IsServedWithoutAuthentication()
+    public async Task DefaultEmailBrandPngs_AreServedWithoutAuthentication()
     {
         var client = _factory.CreateClient();
 
-        var response = await client.GetAsync("/email-brand/rateldesk-mark.svg");
+        var markResponse = await client.GetAsync("/email-brand/rateldesk-email-mark.png");
+        var wordmarkResponse = await client.GetAsync("/email-brand/rateldesk-email-wordmark.png");
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("image/svg+xml", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.OK, markResponse.StatusCode);
+        Assert.Equal("image/png", markResponse.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.OK, wordmarkResponse.StatusCode);
+        Assert.Equal("image/png", wordmarkResponse.Content.Headers.ContentType?.MediaType);
     }
 }

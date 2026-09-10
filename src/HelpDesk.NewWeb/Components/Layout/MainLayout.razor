@@ -2,6 +2,10 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 @inject Microsoft.Extensions.Configuration.IConfiguration Configuration
+@inject IHttpClientFactory HttpClientFactory
+
+<PageTitle>@_branding.ApplicationName</PageTitle>
+<HeadContent><link rel="icon" href="@_branding.FaviconUrl" /></HeadContent>
 
 <ThemePreferenceProvider Context="themePreference">
 <MudPopoverProvider />
@@ -18,7 +22,7 @@
                                aria-label="Toggle navigation"
                                data-testid="navigation-toggle" />
             </AuthorizeView>
-            <MudText Typo="Typo.h6" Class="helpdesk-appbar-title">RatelDesk</MudText>
+            <MudText Typo="Typo.h6" Class="helpdesk-appbar-title">@_branding.ApplicationName</MudText>
         </div>
         <AuthorizeView>
             <Authorized>
@@ -126,10 +130,24 @@
     private AppBarVersionDetails _appBarVersion = new("HelpDesk.NewWeb", "vdev", "dev", "Fallback", "unknown");
     private DotNetObjectReference<MainLayout>? dotNetRef;
     private int? hotkeyRegistrationId;
+    private BrandingSnapshot _branding = new();
 
     protected override void OnInitialized()
     {
         _appBarVersion = AppBarVersionResolver.ResolveDetails(Configuration, typeof(MainLayout).Assembly);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _branding = await HttpClientFactory.CreateClient("HelpdeskApi")
+                .GetFromJsonAsync<BrandingSnapshot>("api/v1/branding") ?? _branding;
+        }
+        catch (HttpRequestException exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"Branding endpoint unavailable while rendering the application shell: {exception.Message}");
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -187,11 +205,17 @@
             {
                 await JS.InvokeVoidAsync("helpdeskGlobalSearchHotkeys.dispose", hotkeyRegistrationId.Value);
             }
-            catch (JSDisconnectedException)
+            catch (JSDisconnectedException exception)
             {
+                System.Diagnostics.Debug.WriteLine($"Global-search hotkey cleanup was interrupted by circuit disposal: {exception.Message}");
             }
         }
 
         dotNetRef?.Dispose();
+    }
+    private sealed class BrandingSnapshot
+    {
+        public string ApplicationName { get; set; } = "RatelDesk";
+        public string FaviconUrl { get; set; } = "/favicon.ico";
     }
 }

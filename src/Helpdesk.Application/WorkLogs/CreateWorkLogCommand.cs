@@ -168,9 +168,9 @@ public class CreateWorkLogCommandHandler(
                 await _ticketSlaService.PauseAsync(request.TicketId, request.TechnicianId, "AgentResponded");
             }
         }
-        catch
+        catch (Exception exception)
         {
-            // Worklog creation must not fail if SLA pause fails.
+            _logger.LogWarning(exception, "SLA pause failed after work-log creation. TicketId={TicketId}", request.TicketId);
         }
 
         try
@@ -189,9 +189,9 @@ public class CreateWorkLogCommandHandler(
                 }
             }
         }
-        catch
+        catch (Exception exception)
         {
-            // Worklog creation must not fail if SLA escalation evaluation fails.
+            _logger.LogWarning(exception, "SLA evaluation failed after work-log creation. TicketId={TicketId}", request.TicketId);
         }
 
         if (ticketDetails is not null &&
@@ -256,6 +256,8 @@ public class CreateWorkLogCommandHandler(
                     var publicUrl = (config["PublicWebAppUrl"] ?? string.Empty).TrimEnd('/');
                     var layout = await layoutResolver.ResolveAsync(template.LayoutId, cancellationToken);
                     var branding = await tenantBrandingResolver.ResolveAsync(ticketDetails.OrganizationId, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(branding.TemplateBrand.ApplicationUrl))
+                        publicUrl = branding.TemplateBrand.ApplicationUrl.TrimEnd('/');
                     var primaryRecipient = recipients[0];
                     var ccFinal = recipients
                         .Skip(1)
@@ -272,6 +274,7 @@ public class CreateWorkLogCommandHandler(
                         UpdateMessageText = plainText,
                         LayoutHtml = layout?.HtmlContent ?? string.Empty,
                         BrandName = branding.BrandName,
+                        Brand = branding.TemplateBrand,
                         LogoHtml = branding.LogoHtml,
                         FooterHtml = branding.FooterHtml,
                         PrimaryColor = branding.PrimaryColor

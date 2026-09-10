@@ -2,8 +2,11 @@
 @layout PublicLayout
 @attribute [AllowAnonymous]
 @inject NavigationManager Navigation
+@inject IHttpClientFactory HttpClientFactory
+@using System.Net.Http.Json
 
-<PageTitle>RatelDesk Portal</PageTitle>
+<PageTitle>@_branding.ApplicationName Portal</PageTitle>
+<HeadContent><link rel="icon" href="@_branding.FaviconUrl" /></HeadContent>
 
 <section class="helpdesk-portal-page">
     <div class="helpdesk-portal-admin">
@@ -17,12 +20,12 @@
 
     <MudContainer MaxWidth="MaxWidth.Medium" Class="helpdesk-portal-content">
         <MudStack AlignItems="AlignItems.Center" Spacing="2" Class="helpdesk-portal-signature">
-            <img class="helpdesk-portal-logo" src="rateldesk-mark.svg" alt="RatelDesk" />
-            <MudText Typo="Typo.caption" HtmlTag="p" Class="helpdesk-portal-company">RatelDesk</MudText>
+            <img class="helpdesk-portal-logo" src="@_branding.CompactLogoUrl" alt="@_branding.ApplicationName" />
+            <MudText Typo="Typo.caption" HtmlTag="p" Class="helpdesk-portal-company">@_branding.OrganizationName</MudText>
         </MudStack>
 
-        <MudText Typo="Typo.h3" HtmlTag="h1" GutterBottom="true" Align="Align.Center">Welcome to RatelDesk</MudText>
-        <MudText Typo="Typo.h6" Align="Align.Center" Color="Color.Secondary" Class="mb-12">How can we help you today?</MudText>
+        <MudText Typo="Typo.h3" HtmlTag="h1" GutterBottom="true" Align="Align.Center">Welcome to @_branding.ApplicationName</MudText>
+        <MudText Typo="Typo.h6" Align="Align.Center" Color="Color.Secondary" Class="mb-12">@(_branding.Tagline ?? "How can we help you today?")</MudText>
 
         <MudGrid Justify="Justify.Center" Spacing="4">
             <MudItem xs="12" sm="6" md="5">
@@ -54,3 +57,29 @@
         </MudGrid>
     </MudContainer>
 </section>
+
+@code {
+    private BrandingSnapshot _branding = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _branding = await HttpClientFactory.CreateClient("HelpdeskApi")
+                .GetFromJsonAsync<BrandingSnapshot>("api/v1/branding") ?? _branding;
+        }
+        catch (HttpRequestException exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"Branding endpoint unavailable while rendering the public portal: {exception.Message}");
+        }
+    }
+
+    private sealed class BrandingSnapshot
+    {
+        public string ApplicationName { get; set; } = "RatelDesk";
+        public string OrganizationName { get; set; } = "RatelDesk";
+        public string CompactLogoUrl { get; set; } = "/branding/rateldesk-mark.webp";
+        public string? Tagline { get; set; } = "How can we help you today?";
+        public string FaviconUrl { get; set; } = "/favicon.ico";
+    }
+}
