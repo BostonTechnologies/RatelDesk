@@ -27,6 +27,8 @@ environment:
 
 `ApplicationUrl` is the canonical base for generated application links. Use an HTTPS public URL in production; it must be an absolute HTTP(S) URL. Host logos and favicons on a publicly reachable HTTPS endpoint, or retain the bundled `/branding/` artwork.
 
+The bundled browser defaults are `/branding/rateldesk-mark.webp`, `/branding/rateldesk-wordmark.webp`, and `/branding/rateldesk-splash.webp`; PNG counterparts are included for transparent-image fallback. The email default is the mail-client-compatible `/email-brand/rateldesk-email-wordmark.png`. `LogoUrl`, `CompactLogoUrl`, and `FaviconUrl` continue to override these upstream defaults, and tenant branding remains more specific where configured.
+
 ## Email templates
 
 Existing `BRAND_NAME`, `LOGO_HTML`, and `FOOTER_HTML` tokens continue to work. Templates may also use structured, escaped tokens such as `{{brand.application_name}}`, `{{brand.organization_name}}`, `{{brand.application_url}}`, `{{brand.organization_url}}`, `{{brand.support_url}}`, `{{brand.support_email}}`, `{{brand.logo_url}}`, `{{brand.email_from_display_name}}`, and `{{brand.tagline}}`.

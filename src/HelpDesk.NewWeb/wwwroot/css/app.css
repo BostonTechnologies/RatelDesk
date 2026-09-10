@@ -711,7 +711,7 @@ html[data-helpdesk-theme="dark"] .helpdesk-login-logo
     padding: clamp(58px, 10vh, 84px) 16px 20px;
     background:
         linear-gradient(90deg, rgba(5, 6, 16, 0.30), rgba(5, 6, 16, 0.78)),
-        url('/branding/rateldesk-splash-realistic.png') center / cover no-repeat,
+        url('/branding/rateldesk-splash.webp') center / cover no-repeat,
         var(--mud-palette-background);
     overflow-x: hidden;
 }

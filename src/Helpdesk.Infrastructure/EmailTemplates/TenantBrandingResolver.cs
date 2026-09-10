@@ -53,11 +53,11 @@ public sealed class TenantBrandingResolver(
         var brand = instanceBrandingProvider is null
             ? new InstanceBrandingSnapshot(
                 configuration["EmailBrand:BrandName"] ?? "RatelDesk", "", configuration["PublicWebAppUrl"] ?? "", "", "", "",
-                configuration["EmailBrand:LogoUrl"] ?? "/branding/rateldesk-wordmark.svg", "/branding/rateldesk-mark.svg", "/favicon.ico",
+                configuration["EmailBrand:LogoUrl"] ?? "/branding/rateldesk-wordmark.webp", "/branding/rateldesk-mark.webp", "/favicon.ico",
                 configuration["EmailBrand:FromName"] ?? configuration["EmailBrand:BrandName"] ?? "RatelDesk", "Service management")
             : await instanceBrandingProvider.GetEffectiveAsync(cancellationToken);
         var defaultBrandName = brand.ApplicationName;
-        var defaultLogoHtml = configuration["EmailBrand:LogoHtml"] ?? BuildDefaultLogoHtml(brand.LogoUrl);
+        var defaultLogoHtml = configuration["EmailBrand:LogoHtml"] ?? BuildDefaultLogoHtml();
         var defaultFooterHtml = configuration["EmailBrand:FooterHtml"] ?? """
             <div style="margin:0;">
               This message was sent by the support platform. You can reply to ticket emails to add an update.
@@ -188,9 +188,9 @@ public sealed class TenantBrandingResolver(
         return false;
     }
 
-    private string BuildDefaultLogoHtml(string brandLogoUrl)
+    private string BuildDefaultLogoHtml()
     {
-        var configuredLogoUrl = configuration["EmailBrand:LogoUrl"] ?? brandLogoUrl;
+        var configuredLogoUrl = configuration["EmailBrand:LogoUrl"];
         if (!string.IsNullOrWhiteSpace(configuredLogoUrl))
             return BuildLogoHtml(configuredLogoUrl, string.Empty);
 
@@ -198,7 +198,7 @@ public sealed class TenantBrandingResolver(
         if (string.IsNullOrWhiteSpace(publicApiBaseUrl))
             return string.Empty;
 
-        var logoPath = configuration["EmailBrand:LogoPath"] ?? "/email-brand/rateldesk-mark.svg";
+        var logoPath = configuration["EmailBrand:LogoPath"] ?? "/email-brand/rateldesk-email-wordmark.png";
         var normalizedPath = logoPath.StartsWith("/", StringComparison.Ordinal) ? logoPath : $"/{logoPath}";
         return BuildLogoHtml($"{publicApiBaseUrl}{normalizedPath}", string.Empty);
     }

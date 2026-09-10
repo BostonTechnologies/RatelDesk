@@ -1,4 +1,4 @@
-<p align="center"><img src=".github/assets/rateldesk-wordmark.svg" alt="RatelDesk" width="560" /></p>
+<p align="center"><img src=".github/assets/rateldesk-wordmark.png" alt="RatelDesk" width="800" /></p>
 
 # RatelDesk
 

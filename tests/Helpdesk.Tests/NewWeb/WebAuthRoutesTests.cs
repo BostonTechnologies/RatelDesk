@@ -40,7 +40,7 @@ public class WebAuthRoutesTests
         Assert.Contains("Continue to RatelDesk using your authorised account.", content, StringComparison.Ordinal);
         Assert.Contains("Sign in to RatelDesk", content, StringComparison.Ordinal);
         Assert.Contains("href=\"/login-authentik\"", content, StringComparison.Ordinal);
-        Assert.Contains("rateldesk-mark.svg", content, StringComparison.Ordinal);
+        Assert.Contains("rateldesk-mark.webp", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Automation Platform", content, StringComparison.Ordinal);
         Assert.DoesNotContain("<header", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Developer account tools", content, StringComparison.Ordinal);
@@ -60,7 +60,7 @@ public class WebAuthRoutesTests
         Assert.Contains("Submit a New Ticket", content, StringComparison.Ordinal);
         Assert.Contains("View Existing Tickets", content, StringComparison.Ordinal);
         Assert.Contains("RatelDesk", content, StringComparison.Ordinal);
-        Assert.Contains("rateldesk-mark.svg", content, StringComparison.Ordinal);
+        Assert.Contains("rateldesk-mark.webp", content, StringComparison.Ordinal);
         Assert.Contains("href=\"/login\"", content, StringComparison.Ordinal);
         Assert.Contains("Admin sign-in", content, StringComparison.Ordinal);
         Assert.DoesNotContain("<header", content, StringComparison.OrdinalIgnoreCase);

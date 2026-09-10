@@ -17,7 +17,7 @@ public sealed class InstanceBrandingProviderTests
         var effective = await provider.GetEffectiveAsync();
 
         Assert.Equal("RatelDesk", effective.ApplicationName);
-        Assert.Equal("/branding/rateldesk-mark.svg", effective.CompactLogoUrl);
+        Assert.Equal("/branding/rateldesk-mark.webp", effective.CompactLogoUrl);
         Assert.Equal("RatelDesk", effective.EmailFromDisplayName);
     }
 

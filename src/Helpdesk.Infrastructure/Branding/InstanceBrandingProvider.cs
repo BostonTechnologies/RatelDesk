@@ -10,8 +10,8 @@ public sealed class InstanceBrandingProvider(
     IConfiguration configuration) : IInstanceBrandingProvider
 {
     private static readonly InstanceBrandingSnapshot Defaults = new(
-        "RatelDesk", "", "", "", "", "", "/branding/rateldesk-wordmark.svg",
-        "/branding/rateldesk-mark.svg", "/favicon.ico", "RatelDesk", "Service management");
+        "RatelDesk", "", "", "", "", "", "/branding/rateldesk-wordmark.webp",
+        "/branding/rateldesk-mark.webp", "/favicon.ico", "RatelDesk", "Service management");
 
     public async Task<InstanceBrandingSnapshot> GetEffectiveAsync(CancellationToken cancellationToken = default)
     {
