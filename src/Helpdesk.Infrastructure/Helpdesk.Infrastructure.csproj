@@ -27,7 +27,7 @@
 	  <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.9.0" />
     <PackageReference Include="Microsoft.Kiota.Abstractions" Version="1.22.0" />
     <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.0.1" />
-    <PackageReference Include="Microsoft.Graph" Version="5.93.0" />
+    <PackageReference Include="Microsoft.Graph" Version="6.6.0" />
     <PackageReference Include="pgvector.entityframeworkcore" Version="0.2.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.11" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
