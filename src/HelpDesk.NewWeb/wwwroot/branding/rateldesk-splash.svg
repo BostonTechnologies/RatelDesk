@@ -1,46 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
-<title id="title">RatelDesk splash</title>
-<desc id="desc">Dark neon service desk splash with RatelDesk honey badger mark.</desc>
-<defs>
- <radialGradient id="halo"><stop stop-color="#AF2BFF" stop-opacity=".48"/><stop offset=".55" stop-color="#101634" stop-opacity=".18"/><stop offset="1" stop-color="#050610" stop-opacity="0"/></radialGradient>
- <linearGradient id="line" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#35D9FF"/><stop offset=".48" stop-color="#AF2BFF"/><stop offset="1" stop-color="#FF37D1"/></linearGradient>
- <linearGradient id="text" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#35D9FF"/><stop offset=".45" stop-color="#F5F3FF"/><stop offset="1" stop-color="#FF37D1"/></linearGradient>
- <filter id="glow"><feGaussianBlur stdDeviation="14" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-</defs>
-<rect width="1600" height="900" fill="#050610"/>
-<circle cx="460" cy="430" r="420" fill="url(#halo)"/>
-<circle cx="1280" cy="180" r="260" fill="url(#halo)" opacity=".5"/>
-<!-- grid -->
-<g stroke="#182048" stroke-width="1" opacity=".45">
-  <path d="M0 720 H1600 M0 770 H1600 M0 820 H1600"/>
-  <path d="M180 640 L0 900 M360 640 L250 900 M540 640 L500 900 M720 640 L750 900 M900 640 L1000 900 M1080 640 L1250 900 M1260 640 L1500 900"/>
-</g>
-<!-- stylized crest -->
-<g transform="translate(120 130)">
-  <path d="M340 20 C498 20 620 84 674 205 V390 C674 449 642 512 591 558 L340 734 L89 558 C38 512 6 449 6 390 V205 C60 84 182 20 340 20Z"
-        fill="#080B19" stroke="#222A58" stroke-width="24"/>
-  <path d="M340 45 C480 45 586 98 634 217 V377 C634 426 607 474 565 515 L340 678 L115 515 C73 474 46 426 46 377 V217 C94 98 200 45 340 45Z"
-        fill="none" stroke="url(#line)" stroke-width="10" filter="url(#glow)"/>
-  <path d="M193 304 C207 219 266 160 340 160 C414 160 473 219 487 304 C498 375 469 461 414 505 C387 527 364 538 340 538 C316 538 293 527 266 505 C211 461 182 375 193 304Z"
-        fill="#090B18" stroke="#22294F" stroke-width="9"/>
-  <path d="M195 286 C220 205 273 164 340 164 C407 164 460 205 485 286 C447 263 414 252 389 248 C370 245 355 234 340 214 C325 234 310 245 291 248 C266 252 233 263 195 286Z"
-        fill="#F5F3FF"/>
-  <path d="M230 326 Q270 302 309 330 Q271 357 230 341Z" fill="#35D9FF" filter="url(#glow)"/>
-  <path d="M450 326 Q410 302 371 330 Q409 357 450 341Z" fill="#35D9FF" filter="url(#glow)"/>
-  <path d="M264 390 Q340 344 416 390 L398 426 Q340 462 282 426Z" fill="#171326" stroke="#AF2BFF" stroke-width="7"/>
-  <path d="M286 423 Q340 470 394 423 Q378 495 340 502 Q302 495 286 423Z" fill="#22071A" stroke="#FF37D1" stroke-width="6"/>
-  <path d="M299 432 l20 4 -9 31Z M381 432 l-20 4 9 31Z" fill="#F5F3FF"/>
-  <!-- small desk chat motif -->
-  <path d="M240 555 H440 Q462 555 462 577 V632 Q462 654 440 654 H357 L330 680 V654 H262 Q240 654 240 632Z"
-        fill="#0D1026" stroke="url(#line)" stroke-width="7"/>
-  <circle cx="292" cy="605" r="8" fill="#35D9FF"/><circle cx="350" cy="605" r="8" fill="#AF2BFF"/><circle cx="408" cy="605" r="8" fill="#FF37D1"/>
-</g>
-
-<g transform="translate(820 285)">
-  <text x="0" y="0" font-family="Arial Black, Arial, sans-serif" font-size="116" font-weight="900" letter-spacing="2" fill="url(#text)">RATELDESK</text>
-  <text x="8" y="88" font-family="Arial, sans-serif" font-size="31" font-weight="700" letter-spacing="6" fill="#B8C7FF">SELF-HOSTED SERVICE DESK</text>
-  <path d="M8 128 H760" stroke="url(#line)" stroke-width="6" filter="url(#glow)"/>
-  <text x="8" y="210" font-family="Arial, sans-serif" font-size="28" fill="#AAB7E8">Simple. Secure. Reliable.</text>
-  <text x="8" y="253" font-family="Arial, sans-serif" font-size="24" fill="#7380B8">Open source • Built with .NET</text>
-</g>
+  <title id="title">RatelDesk splash</title><desc id="desc">RatelDesk splash with a calm, focused honey badger profile.</desc>
+  <defs><linearGradient id="night" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101735"/><stop offset=".55" stop-color="#070a1a"/><stop offset="1" stop-color="#03040b"/></linearGradient><linearGradient id="rim" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#43dcff"/><stop offset=".56" stop-color="#9c55ff"/><stop offset="1" stop-color="#ed59c9"/></linearGradient><linearGradient id="crown" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f3f5f5"/><stop offset="1" stop-color="#aab6c9"/></linearGradient><filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="14" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+  <rect width="1600" height="900" fill="url(#night)"/><g opacity=".35" stroke="#26407a"><path d="M0 730H1600M0 790H1600M0 850H1600"/><path d="M80 900L350 600M300 900L510 600M520 900L670 600M740 900L830 600M960 900L990 600M1180 900L1150 600M1400 900L1310 600"/></g><g fill="#47d9ff" opacity=".45" filter="url(#glow)"><circle cx="1080" cy="180" r="5"/><circle cx="1190" cy="254" r="8"/><circle cx="1320" cy="155" r="6"/><circle cx="1450" cy="325" r="5"/></g>
+  <path d="M98 713C122 587 164 454 218 337C275 214 390 135 527 138C654 141 755 216 800 332C833 418 832 521 790 602C724 729 593 794 443 789C303 784 184 753 98 713Z" fill="#090d1c" stroke="url(#rim)" stroke-width="15" filter="url(#glow)"/><path d="M218 412C271 269 387 198 510 199C620 199 710 251 765 348C667 316 577 303 477 323C374 344 293 383 218 412Z" fill="url(#crown)"/><path d="M225 418C316 349 403 329 503 343C610 358 699 411 759 499C705 489 644 500 578 534C482 583 390 611 297 601C235 591 194 535 201 475C203 451 211 433 225 418Z" fill="#181f34"/>
+  <path d="M319 436C370 399 433 399 479 436C434 467 376 474 319 457Z" fill="#060811"/><ellipse cx="406" cy="438" rx="18" ry="20" fill="#b9f1ff"/><circle cx="412" cy="431" r="7" fill="#fff"/><path d="M586 468C653 456 719 483 765 531C794 562 781 603 741 619C676 638 605 627 542 604C555 556 570 509 586 468Z" fill="#20283f"/><path d="M735 517C765 510 792 531 785 558C779 583 751 595 728 580Z" fill="#05060b"/><path d="M536 598C600 622 667 628 732 607" fill="none" stroke="#8593ad" stroke-width="11" stroke-linecap="round"/><path d="M536 598C600 614 666 616 729 598" fill="none" stroke="#090b13" stroke-width="8" stroke-linecap="round"/><path d="M225 414C283 271 392 204 510 204" fill="none" stroke="#f4fbff" stroke-width="15" stroke-linecap="round" opacity=".64"/>
+  <g transform="translate(850 300)"><text x="0" y="0" font-family="Arial, Helvetica, sans-serif" font-size="118" font-weight="800" letter-spacing="-4" fill="#eef5ff">RatelDesk</text><text x="8" y="82" font-family="Arial, Helvetica, sans-serif" font-size="29" font-weight="700" letter-spacing="7" fill="#a8b8df">SELF-HOSTED SERVICE DESK</text><path d="M8 124H650" stroke="url(#rim)" stroke-width="7" filter="url(#glow)"/><text x="8" y="196" font-family="Arial, Helvetica, sans-serif" font-size="27" fill="#c4d0ec">Calm, focused service operations.</text></g>
 </svg>

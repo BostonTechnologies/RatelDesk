@@ -1,147 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
-<title id="title">RatelDesk mark</title>
-<desc id="desc">Neon honey badger inside a ticket-shaped service desk shield.</desc>
-<defs>
-  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-    <stop stop-color="#0D1026"/>
-    <stop offset="1" stop-color="#050610"/>
-  </linearGradient>
-  <linearGradient id="neon" x1="0" y1="0" x2="1" y2="1">
-    <stop stop-color="#35D9FF"/>
-    <stop offset=".45" stop-color="#AF2BFF"/>
-    <stop offset="1" stop-color="#FF37D1"/>
-  </linearGradient>
-  <linearGradient id="fur" x1="0" y1="0" x2=".9" y2=".9">
-    <stop stop-color="#F5F3FF"/>
-    <stop offset=".34" stop-color="#B8C7FF"/>
-    <stop offset=".35" stop-color="#1B2142"/>
-    <stop offset="1" stop-color="#070914"/>
-  </linearGradient>
-  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-    <feGaussianBlur stdDeviation="12" result="b"/>
-    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-  </filter>
-  <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
-    <feGaussianBlur stdDeviation="5"/>
-  </filter>
-</defs>
-
-<!-- transparent canvas -->
-<path d="M512 68
-         C697 68 848 146 914 286
-         L914 503
-         C914 585 872 669 805 730
-         L512 942
-         L219 730
-         C152 669 110 585 110 503
-         L110 286
-         C176 146 327 68 512 68Z"
-      fill="url(#bg)" stroke="#171C3A" stroke-width="34"/>
-<path d="M512 96
-         C683 96 817 165 876 298
-         L876 490
-         C876 555 842 625 784 680
-         L512 884
-         L240 680
-         C182 625 148 555 148 490
-         L148 298
-         C207 165 341 96 512 96Z"
-      fill="none" stroke="url(#neon)" stroke-width="13" filter="url(#glow)"/>
-
-<!-- ticket notches / desk cue -->
-<path d="M132 410 h76 v58 h-76 M892 410 h-76 v58 h76" fill="none" stroke="#35D9FF" stroke-width="10" opacity=".75"/>
-
-<!-- subtle circuit rays -->
-<g stroke="url(#neon)" stroke-width="8" opacity=".42" fill="none">
-  <path d="M230 268 H330 L378 316"/>
-  <path d="M794 268 H694 L646 316"/>
-  <path d="M192 532 H300 L346 486"/>
-  <path d="M832 532 H724 L678 486"/>
-</g>
-<g fill="#35D9FF" filter="url(#glow)">
-  <circle cx="230" cy="268" r="7"/><circle cx="794" cy="268" r="7"/>
-  <circle cx="192" cy="532" r="7"/><circle cx="832" cy="532" r="7"/>
-</g>
-
-<!-- honey badger shoulders -->
-<path d="M273 655
-         C302 552 335 493 385 453
-         C421 424 461 411 512 413
-         C563 411 603 424 639 453
-         C689 493 722 552 751 655
-         C681 724 606 755 512 755
-         C418 755 343 724 273 655Z"
-      fill="#080B19" stroke="#252C57" stroke-width="10"/>
-
-<!-- head silhouette -->
-<path d="M333 392
-         C346 299 423 233 512 233
-         C601 233 678 299 691 392
-         C702 467 671 559 606 611
-         C574 637 544 650 512 650
-         C480 650 450 637 418 611
-         C353 559 322 467 333 392Z"
-      fill="#090B18" stroke="#22294F" stroke-width="10"/>
-
-<!-- ears -->
-<path d="M348 365 C293 322 281 257 327 229 C374 241 397 277 404 317Z"
-      fill="#10152C" stroke="#AF2BFF" stroke-width="8"/>
-<path d="M676 365 C731 322 743 257 697 229 C650 241 627 277 620 317Z"
-      fill="#10152C" stroke="#AF2BFF" stroke-width="8"/>
-
-<!-- iconic white honey-badger crown stripe -->
-<path d="M337 365
-         C360 282 428 225 512 225
-         C596 225 664 282 687 365
-         C646 337 607 323 575 318
-         C549 314 530 300 512 279
-         C494 300 475 314 449 318
-         C417 323 378 337 337 365Z"
-      fill="url(#fur)" stroke="#F5F3FF" stroke-width="5" opacity=".98"/>
-
-<!-- cheek highlights -->
-<path d="M363 423 C398 389 434 374 466 375 C437 397 416 425 401 463Z"
-      fill="#273564" opacity=".75"/>
-<path d="M661 423 C626 389 590 374 558 375 C587 397 608 425 623 463Z"
-      fill="#273564" opacity=".75"/>
-
-<!-- eyes -->
-<path d="M397 414 Q438 393 475 416 Q439 444 397 428Z" fill="#35D9FF" filter="url(#glow)"/>
-<path d="M627 414 Q586 393 549 416 Q585 444 627 428Z" fill="#35D9FF" filter="url(#glow)"/>
-<path d="M414 419 Q442 408 464 419" stroke="#F5F3FF" stroke-width="5" fill="none"/>
-<path d="M610 419 Q582 408 560 419" stroke="#F5F3FF" stroke-width="5" fill="none"/>
-
-<!-- muzzle -->
-<path d="M412 470
-         C438 442 472 437 512 455
-         C552 437 586 442 612 470
-         C627 487 631 520 610 548
-         C584 582 551 598 512 598
-         C473 598 440 582 414 548
-         C393 520 397 487 412 470Z"
-      fill="#171326" stroke="#AF2BFF" stroke-width="8"/>
-
-<!-- nose -->
-<path d="M467 482 Q512 458 557 482 L544 520 Q512 537 480 520Z"
-      fill="#03040A" stroke="#35D9FF" stroke-width="4"/>
-
-<!-- open snarl -->
-<path d="M430 529 Q512 591 594 529 Q575 614 512 625 Q449 614 430 529Z"
-      fill="#22071A" stroke="#FF37D1" stroke-width="7"/>
-<g fill="#F5F3FF">
-  <path d="M449 542 l22 4 -10 32Z"/>
-  <path d="M575 542 l-22 4 10 32Z"/>
-  <path d="M477 561 l15 4 -6 24Z"/>
-  <path d="M547 561 l-15 4 6 24Z"/>
-</g>
-<path d="M476 601 Q512 615 548 601" stroke="#FF5EBE" stroke-width="10" stroke-linecap="round"/>
-
-<!-- desk/chat glyph -->
-<g transform="translate(380 664)">
-  <path d="M0 0 H264 Q288 0 288 24 V104 Q288 128 264 128 H146 L112 160 V128 H24 Q0 128 0 104Z"
-        fill="#0D1026" stroke="url(#neon)" stroke-width="9" filter="url(#glow)"/>
-  <circle cx="72" cy="64" r="10" fill="#35D9FF"/>
-  <circle cx="144" cy="64" r="10" fill="#AF2BFF"/>
-  <circle cx="216" cy="64" r="10" fill="#FF37D1"/>
-</g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">RatelDesk mark</title><desc id="desc">A calm honey badger in focused side profile.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101735"/><stop offset="1" stop-color="#050714"/></linearGradient>
+    <linearGradient id="rim" x1=".15" y1="0" x2=".85" y2="1"><stop stop-color="#44d9ff"/><stop offset=".52" stop-color="#a44cff"/><stop offset="1" stop-color="#f25ac8"/></linearGradient>
+    <linearGradient id="crown" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f5f6f7"/><stop offset="1" stop-color="#a9b4c8"/></linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect x="28" y="28" width="456" height="456" rx="112" fill="url(#bg)" stroke="#202c58" stroke-width="14"/>
+  <path d="M63 344C94 299 116 246 132 185C148 126 206 85 276 88C345 91 396 132 421 197C435 236 439 276 429 313C413 371 366 415 300 430C229 446 137 415 63 344Z" fill="#090d1c" stroke="url(#rim)" stroke-width="8" filter="url(#glow)"/>
+  <path d="M128 219C151 144 205 112 271 115C321 116 365 141 392 183C349 169 309 163 268 165C222 168 180 187 128 219Z" fill="url(#crown)"/>
+  <path d="M132 225C181 186 225 173 275 174C329 175 370 195 401 225C416 240 430 263 432 284C433 304 419 320 399 326L358 336C326 354 293 369 251 375C202 381 158 357 129 318C107 288 105 247 132 225Z" fill="#151b2f"/>
+  <path d="M151 266C175 219 219 197 268 197C310 197 348 214 382 246C353 245 323 251 292 268C257 287 223 303 184 306Z" fill="#202941" opacity=".9"/>
+  <path d="M205 238C228 224 255 223 277 240C257 255 231 257 205 249Z" fill="#050712"/><ellipse cx="246" cy="240" rx="9" ry="10" fill="#a9efff"/><circle cx="249" cy="237" r="3" fill="#fff"/>
+  <path d="M335 259C364 250 398 258 421 280C437 296 432 317 411 324C381 333 350 328 321 321C328 300 333 280 335 259Z" fill="#20263b"/><path d="M400 282C414 279 428 286 432 298C432 310 419 320 406 319C397 315 393 305 394 294Z" fill="#05060b"/>
+  <path d="M302 315C329 323 362 328 397 318" fill="none" stroke="#8793ae" stroke-width="5" stroke-linecap="round"/><path d="M302 315C334 321 367 320 396 312" fill="none" stroke="#0a0c14" stroke-width="4" stroke-linecap="round"/>
+  <path d="M136 221C157 143 213 109 276 112" fill="none" stroke="#eff7ff" stroke-width="8" stroke-linecap="round" opacity=".7"/><path d="M157 346C194 382 252 396 307 378" fill="none" stroke="#44d9ff" stroke-width="6" opacity=".6"/>
+  <circle cx="97" cy="358" r="7" fill="#f25ac8" filter="url(#glow)"/><circle cx="122" cy="377" r="5" fill="#44d9ff" filter="url(#glow)"/>
 </svg>
