@@ -31,6 +31,7 @@ public interface IAiAssistantChatStore
 {
     Task<IReadOnlyList<ChatConversationSummary>> HistoryAsync(string type, string ticket, int skip, CancellationToken ct);
     Task RequestRecoveryAsync(string type, string ticket, Guid conversation, string actor, CancellationToken ct);
+    Task StopWaitingAsync(string type, string ticket, ChatStopWaitingRequest request, string actor, CancellationToken ct);
     Task AbandonAsync(string type, string ticket, ChatAbandonRequest request, string actor, CancellationToken ct);
     Task<ChatSnapshot> LoadAsync(string type, string ticket, Guid? conversation, long after, string actor, CancellationToken ct);
     Task<bool> AcceptMessageAsync(string type, string ticket, ChatMessageRequest request, string actor, CancellationToken ct);
@@ -41,6 +42,7 @@ public interface IAiAssistantChatStore
 public interface IAiAssistantChatTransport
 {
     Task ReconcileAsync(Guid conversation, CancellationToken ct);
+    Task RetireAsync(Guid conversation, CancellationToken ct);
     Task SendAsync(Guid conversation, Guid messageId, string text, CancellationToken ct);
     Task RespondAsync(Guid conversation, string callId, string key, CancellationToken ct);
 }

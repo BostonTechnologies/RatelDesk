@@ -30,6 +30,12 @@
         <MudCheckBox T="bool" @bind-Value="acknowledgeAbandon" Disabled="busy" Label="I understand the old turn may still execute. Archive this transcript and start blank, without retrying it." />
         <MudButton Color="Color.Warning" Disabled="@(busy || !acknowledgeAbandon || UnresolvedMessageId is null)" OnClick="AbandonAsync">Abandon unresolved turn and start blank</MudButton>
     }
+    @if (state == ChatState.Processing)
+    {
+        <MudAlert Severity="Severity.Warning">The remote assistant may still be processing. Stopping locally never resends this request.</MudAlert>
+        <MudCheckBox T="bool" @bind-Value="acknowledgeStopWaiting" Disabled="busy" Label="The remote assistant may still be processing. RatelDesk will stop waiting locally and will not resend this request automatically." />
+        <MudButton Color="Color.Warning" Disabled="@(busy || !acknowledgeStopWaiting || UnresolvedMessageId is null)" OnClick="StopWaitingAsync">Stop waiting</MudButton>
+    }
     @if (error is not null) { <MudAlert Severity="Severity.Warning">@error</MudAlert> }
     @foreach (var turn in AiAssistantChatPresentation.Build(events))
     {
@@ -70,7 +76,7 @@
     private string? error;
     private long cursor;
     private bool busy;
-    private bool acknowledgeAbandon, hasOlderHistory;
+    private bool acknowledgeAbandon, acknowledgeStopWaiting, hasOlderHistory;
     private Guid resolutionId = Guid.NewGuid();
     private string connectionStatus = "Connecting";
     private string? currentActor;
@@ -120,7 +126,7 @@
             stream = Task.CompletedTask;
             if (disposed) return;
             connectionStatus = "Connecting"; error = null;
-            events.Clear(); draft = ""; cursor = 0; acknowledgeAbandon = false;
+            events.Clear(); draft = ""; cursor = 0; acknowledgeAbandon = false; acknowledgeStopWaiting = false;
             resolutionId = Guid.NewGuid(); messageId = Guid.NewGuid(); message = ""; submittedMessage = null;
             using var api = Api;
             var snapshot = await api.GetFromJsonAsync<ChatSnapshot>(id == Guid.Empty ? Route : $"{Route}?conversationId={id}", cancellation.Token);
@@ -268,6 +274,20 @@
             if (!response.IsSuccessStatusCode) error = "The session check was not accepted. Refresh the conversation state.";
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { error = "The session check was interrupted. No message was resent."; }
+        finally { busy = false; }
+    }
+
+    private async Task StopWaitingAsync()
+    {
+        if (UnresolvedMessageId is not { } expectedMessage) return;
+        busy = true; error = null;
+        try
+        {
+            using var api = Api;
+            using var response = await api.PostAsJsonAsync($"{Route}/stop-waiting", new ChatStopWaitingRequest(conversation, expectedMessage), cancellation.Token);
+            if (!response.IsSuccessStatusCode) error = "Stopping locally was not accepted. Refresh the conversation state.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { error = "The stop-waiting request was interrupted. Refresh the conversation state; no message is resent automatically."; }
         finally { busy = false; }
     }
 

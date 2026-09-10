@@ -54,6 +54,10 @@ for (const mode of ['empty', 'processing', 'approval', 'failed', 'archived']) {
     await openChat(page);
     if (['processing', 'approval', 'failed'].includes(mode))
       await expect(page.getByTestId('ai-assistant-activity').getByRole('button').first()).toHaveAttribute('aria-expanded', 'true');
+    if (mode === 'processing') {
+      await expect(page.getByRole('button', { name: 'Stop waiting' })).toBeVisible();
+      await expect(page.getByText('will not resend this request automatically', { exact: false })).toBeVisible();
+    }
     if (mode === 'approval') await expect(page.getByRole('button', { name: 'Allow once' })).toBeVisible();
     if (mode === 'archived') {
       await expect(page.getByText('Archived transcript', { exact: false })).toBeVisible();

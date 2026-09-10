@@ -100,6 +100,7 @@ public class HelpdeskDbContext(
             entity.ToTable("AiAssistantChatConversations");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.OrganizationId, x.TicketType, x.TicketId }).IsUnique().HasFilter("\"State\" <> 4");
+            entity.HasIndex(x => new { x.State, x.LastTransportActivityAtUtc });
         });
         modelBuilder.Entity<Helpdesk.Shared.AiAssistant.Chat.AiAssistantChatEvent>(entity =>
         {

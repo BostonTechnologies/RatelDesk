@@ -24,6 +24,12 @@ Microsoft Graph delivery is disabled by default. Enable it only after configurin
 
 AI providers are configurable and should use provider-specific credentials from a secret store. MCP hosts use isolated `RATELDESK_MCP_CONFIG` configuration files and `RATELDESK_MCP_<INSTANCE>_API_BASE_URL` endpoint pinning. External orchestration is an optional integration: configure a provider endpoint and credentials only when required by your deployment.
 
+### AI Assistant chat recovery
+
+An AI Assistant turn is `Processing` only while RatelDesk has recent, durable provider activity. Set `AiAssistantChat__TurnInactivityTimeout` to the maximum acceptable silent interval (default `00:05:00`) and `AiAssistantChat__ActivityHeartbeatInterval` to the bounded activity checkpoint period (default `00:00:15`). Both must be positive and the heartbeat must be shorter than the timeout.
+
+When no activity is checkpointed before the timeout, RatelDesk changes the turn to `DeliveryUnknown`. This is intentionally not a retry state: the provider could have admitted the message or already executed a tool, so RatelDesk never resends it automatically. Operators can choose **Stop waiting** while a turn is processing and confirm the same safe local transition. They can then check/reconcile the saved remote session, or acknowledge the uncertainty and archive the transcript to start a blank conversation.
+
 ## Observability
 
 OpenTelemetry is enabled through standard `OTEL_*` settings. Export to an OTLP endpoint you operate and avoid placing user, ticket, or credential data in telemetry attributes.
