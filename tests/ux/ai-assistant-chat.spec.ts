@@ -54,6 +54,10 @@ for (const mode of ['empty', 'processing', 'approval', 'failed', 'archived']) {
     await openChat(page);
     if (['processing', 'approval', 'failed'].includes(mode))
       await expect(page.getByTestId('ai-assistant-activity').getByRole('button').first()).toHaveAttribute('aria-expanded', 'true');
+    if (mode === 'processing') {
+      await expect(page.getByRole('button', { name: 'Stop waiting' })).toBeVisible();
+      await expect(page.getByText('will not resend this request automatically', { exact: false })).toBeVisible();
+    }
     if (mode === 'approval') await expect(page.getByRole('button', { name: 'Allow once' })).toBeVisible();
     if (mode === 'archived') {
       await expect(page.getByText('Archived transcript', { exact: false })).toBeVisible();
@@ -63,6 +67,20 @@ for (const mode of ['empty', 'processing', 'approval', 'failed', 'archived']) {
     await page.screenshot({ path: testInfo.outputPath(`${mode}.png`), fullPage: true });
   });
 }
+
+test('stop waiting shows authoritative uncertain-delivery recovery controls', async ({ page, request }) => {
+  await request.get('http://127.0.0.1:18299/fixture/reset?mode=processing');
+  await openChat(page);
+  await page.getByRole('checkbox', { name: 'The remote assistant may still be processing. RatelDesk will stop waiting locally and will not resend this request automatically.' }).check();
+  const stopWaiting = page.getByRole('button', { name: 'Stop waiting' });
+  await expect(stopWaiting).toBeEnabled();
+  await stopWaiting.click();
+  await expect(page.getByText('Delivery or completion could not be confirmed.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check saved session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Abandon unresolved turn and start blank' })).toBeVisible();
+  await expect(page.getByText('Working…', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Stop waiting' })).toHaveCount(0);
+});
 
 test('desktop Enter admission lock, Shift+Enter and IME', async ({ page, request }) => {
   await request.get('http://127.0.0.1:18299/fixture/reset?mode=empty');

@@ -31,6 +31,12 @@ public static class AiAssistantChatEndpoints
             await transport.ReconcileAsync(request.ConversationId, ct);
             return Results.Accepted();
         }).WithName("ReconcileAiAssistantChat").WithSummary("Check an unresolved turn without resending").WithDescription("Audits the requesting operator, resumes the saved SignalR session and conservatively reconciles history.");
+        group.MapPost("/stop-waiting", async (string ticketType, string ticketId, ChatStopWaitingRequest request, HttpContext context, IAiAssistantChatStore store, IAiAssistantChatTransport transport, CancellationToken ct) =>
+        {
+            await store.StopWaitingAsync(ticketType, ticketId, request, Actor(context), ct);
+            await transport.RetireAsync(request.ConversationId, ct);
+            return Results.Accepted();
+        }).WithName("StopWaitingForAiAssistantChat").WithSummary("Stop waiting for an uncertain processing turn").WithDescription("Records uncertain delivery, retires the local transport owner, and never resends the operator message.");
         group.MapPost("/abandon", async (string ticketType, string ticketId, ChatAbandonRequest request, HttpContext context, IAiAssistantChatStore store, CancellationToken ct) =>
         {
             await store.AbandonAsync(ticketType, ticketId, request, Actor(context), ct);

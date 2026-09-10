@@ -15,6 +15,43 @@ namespace Helpdesk.Tests.Infrastructure.AiAssistant;
 public sealed class ChatTransportLifecycleTests(ChatPostgresFixture fixture) : IClassFixture<ChatPostgresFixture>
 {
     [Fact]
+    public async Task FinalApprovalRenewsProviderProcessingLease()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 9, 10, 12, 0, 0, TimeSpan.Zero));
+        await using var run = await Run.CreateAsync(fixture, clock);
+        await run.SendAsync();
+        await run.Client.EmitApprovalAsync("call-one");
+        await run.WaitForAsync(events => events.Any(x => x.Type == "approval_request"));
+
+        clock.Advance(TimeSpan.FromMinutes(20));
+        await using (var db = fixture.Context())
+        {
+            await fixture.Store(db, timeProvider: clock).AcceptApprovalAsync("incidents", run.Ticket, "call-one", new(run.Conversation, "approve_once"), "approver", default);
+            var accepted = await db.Set<AiAssistantChatConversation>().SingleAsync(x => x.Id == run.Conversation);
+            Assert.Equal(ChatState.Processing, accepted.State);
+            Assert.Equal(clock.GetUtcNow(), accepted.LastTransportActivityAtUtc);
+        }
+        await run.Manager.RespondAsync(run.Conversation, "call-one", "approve_once", default);
+        Assert.Single(run.Client.Responses);
+
+        await run.Manager.SweepStaleProcessingAsync(default);
+        await AssertStateAsync(ChatState.Processing);
+        clock.Advance(TimeSpan.FromMinutes(4) + TimeSpan.FromSeconds(59));
+        await run.Manager.SweepStaleProcessingAsync(default);
+        await AssertStateAsync(ChatState.Processing);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await run.Manager.SweepStaleProcessingAsync(default);
+        await AssertStateAsync(ChatState.DeliveryUnknown);
+
+        async Task AssertStateAsync(ChatState expected)
+        {
+            await using var check = fixture.Context();
+            Assert.Equal(expected, await check.Set<AiAssistantChatConversation>().AsNoTracking()
+                .Where(x => x.Id == run.Conversation).Select(x => x.State).SingleAsync());
+        }
+    }
+
+    [Fact]
     public async Task ImmediateApprovalDeltaUsesCommittedDecisionBoundary()
     {
         await using var run = await Run.CreateAsync(fixture);
@@ -198,7 +235,7 @@ public sealed class ChatTransportLifecycleTests(ChatPostgresFixture fixture) : I
         // barrier before checking that late callbacks left the archive untouched.
         await run.Manager.SendAsync(run.Conversation, run.Request.ClientMessageId, run.Request.Text, default);
         await using var check = fixture.Context();
-        var archived = await check.Set<AiAssistantChatConversation>().SingleAsync(x => x.Id == run.Conversation);
+        var archived = await check.Set<AiAssistantChatConversation>().AsNoTracking().SingleAsync(x => x.Id == run.Conversation);
         Assert.Equal(ChatState.Archived, archived.State);
         Assert.Equal(archivedSequence, archived.LastSequence);
         Assert.Single(run.Client.Sent);
@@ -211,6 +248,7 @@ public sealed class ChatTransportLifecycleTests(ChatPostgresFixture fixture) : I
         private readonly ServiceProvider services;
         private readonly ChatLiveFeed feed;
         private readonly ChannelReader<ChatDelta> reader;
+        private readonly TimeProvider? timeProvider;
         public AiAssistantChatSessionManager Manager { get; }
         public ControlledClient Client { get; }
         public ControlledFactory Factory { get; }
@@ -218,7 +256,7 @@ public sealed class ChatTransportLifecycleTests(ChatPostgresFixture fixture) : I
         public Guid Conversation { get; }
         public ChatMessageRequest Request { get; }
 
-        private Run(ChatPostgresFixture fixture, ServiceProvider services, ChatLiveFeed feed, AiAssistantChatSessionManager manager, ControlledFactory factory, string ticket, Guid conversation)
+        private Run(ChatPostgresFixture fixture, ServiceProvider services, ChatLiveFeed feed, AiAssistantChatSessionManager manager, ControlledFactory factory, string ticket, Guid conversation, TimeProvider? timeProvider)
         {
             this.fixture = fixture;
             this.services = services;
@@ -228,27 +266,28 @@ public sealed class ChatTransportLifecycleTests(ChatPostgresFixture fixture) : I
             Client = factory.Next;
             Ticket = ticket;
             Conversation = conversation;
+            this.timeProvider = timeProvider;
             Request = new(conversation, Guid.NewGuid(), "Investigate this ticket.");
             reader = feed.Subscribe(conversation);
         }
 
-        public static async Task<Run> CreateAsync(ChatPostgresFixture fixture)
+        public static async Task<Run> CreateAsync(ChatPostgresFixture fixture, TimeProvider? timeProvider = null)
         {
             var services = new ServiceCollection().AddScoped(_ => fixture.Context())
                 .AddSingleton(Substitute.For<IDomainEventPublisher>())
                 .AddSingleton(Substitute.For<ICorrelationContext>()).BuildServiceProvider();
             var factory = new ControlledFactory();
             var feed = new ChatLiveFeed();
-            var manager = new AiAssistantChatSessionManager(services.GetRequiredService<IServiceScopeFactory>(), Options.Create(new AiAssistantChatOptions { Enabled = true }), feed, NullLogger<AiAssistantChatSessionManager>.Instance, factory);
+            var manager = new AiAssistantChatSessionManager(services.GetRequiredService<IServiceScopeFactory>(), Options.Create(new AiAssistantChatOptions { Enabled = true }), feed, NullLogger<AiAssistantChatSessionManager>.Instance, factory, timeProvider);
             await manager.StartAsync(default);
             var (ticket, conversation) = await fixture.CreateAsync();
-            return new(fixture, services, feed, manager, factory, ticket, conversation);
+            return new(fixture, services, feed, manager, factory, ticket, conversation, timeProvider);
         }
 
         public async Task SendAsync()
         {
             await using var db = fixture.Context();
-            Assert.True(await fixture.Store(db).AcceptMessageAsync("incidents", Ticket, Request, "operator", default));
+            Assert.True(await fixture.Store(db, timeProvider: timeProvider).AcceptMessageAsync("incidents", Ticket, Request, "operator", default));
             await Manager.SendAsync(Conversation, Request.ClientMessageId, Request.Text, default);
         }
 
@@ -330,5 +369,12 @@ public sealed class ChatTransportLifecycleTests(ChatPostgresFixture fixture) : I
             if (FailResponse) throw new IOException("Decision acknowledgement lost");
         }
         public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset current = now;
+        public override DateTimeOffset GetUtcNow() => current;
+        public void Advance(TimeSpan duration) => current += duration;
     }
 }

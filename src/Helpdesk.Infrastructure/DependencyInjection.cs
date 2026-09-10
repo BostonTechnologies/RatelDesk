@@ -63,8 +63,9 @@ public static class DependencyInjection
         services.AddHttpContextAccessor();
         services.AddOptions<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatOptions>()
             .Bind(configuration.GetSection("AiAssistantChat"))
-            .Validate(x => x.IsValid(), "Enabled chat requires Dev instance, session hub, credential and positive limits; private HTTP requires explicit opt-in.")
+            .Validate(x => x.IsValid(), "Enabled chat requires Dev instance, session hub, credential, positive limits, and an activity heartbeat shorter than the turn inactivity timeout; private HTTP requires explicit opt-in.")
             .ValidateOnStart();
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<Helpdesk.Application.AiAssistant.Chat.IAiAssistantChatStore, Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatStore>();
         services.AddSingleton<Helpdesk.Application.AiAssistant.Chat.IChatLiveFeed, Helpdesk.Infrastructure.AiAssistant.Chat.ChatLiveFeed>();
         services.AddSingleton<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatSessionManager>();

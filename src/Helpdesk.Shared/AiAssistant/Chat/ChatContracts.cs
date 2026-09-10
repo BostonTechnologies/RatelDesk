@@ -13,6 +13,8 @@ public sealed class AiAssistantChatConversation
     public long LastSequence { get; set; }
     public Guid? ActiveMessageId { get; set; }
     public DateTimeOffset LastActivityUtc { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? TurnStartedAtUtc { get; set; }
+    public DateTimeOffset? LastTransportActivityAtUtc { get; set; }
     public string CreatedByUserId { get; set; } = string.Empty;
 }
 
@@ -49,4 +51,5 @@ public sealed record ChatActivityMetadata(string DisplayName, string ToolKind, s
     string? SkillName, long? DurationMs, string Outcome);
 public sealed record ChatDelta(Guid ConversationId, string? Text, long AfterSequence = 0);
 public sealed record ChatAbandonRequest(Guid ConversationId, Guid ResolutionId, Guid ExpectedMessageId, bool AcknowledgePossibleDelivery);
+public sealed record ChatStopWaitingRequest(Guid ConversationId, Guid ExpectedMessageId);
 public sealed record ChatConversationSummary(Guid ConversationId, ChatState State, DateTimeOffset LastActivityUtc, string CreatedByUserId);
