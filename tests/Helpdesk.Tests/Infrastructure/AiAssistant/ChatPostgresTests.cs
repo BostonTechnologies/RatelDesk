@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using Npgsql;
 using Pgvector.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
 
@@ -54,6 +55,28 @@ public sealed class ChatPostgresFixture : IAsyncLifetime
 
 public sealed class ChatPostgresTests(ChatPostgresFixture fixture) : IClassFixture<ChatPostgresFixture>
 {
+    [Fact]
+    public async Task OwnershipStartupPreservesCredentialsWhenPublicConnectionStringIsRedacted()
+    {
+        await using var db = fixture.Context();
+        await db.Database.OpenConnectionAsync();
+        var providerConnection = Assert.IsType<NpgsqlConnection>(db.Database.GetDbConnection());
+        Assert.DoesNotContain("Password=", providerConnection.ConnectionString, StringComparison.OrdinalIgnoreCase);
+
+        await using var services = new ServiceCollection()
+            .AddScoped<HelpdeskDbContext>(_ => db)
+            .BuildServiceProvider();
+        using var manager = new AiAssistantChatSessionManager(
+            services.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new AiAssistantChatOptions { Enabled = true }),
+            new ChatLiveFeed(),
+            NullLogger<AiAssistantChatSessionManager>.Instance,
+            Substitute.For<IAiAssistantChatClientFactory>());
+
+        await manager.StartAsync(default);
+        await manager.StopAsync(default);
+    }
+
     [Fact]
     public async Task ConcurrentIdenticalResolutionsCreateOnlyOneSuccessor()
     {
