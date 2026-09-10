@@ -1,8 +1,8 @@
 ﻿@inherits LayoutComponentBase
 @implements IAsyncDisposable
 @inject IJSRuntime JS
-@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
 @inject IHttpClientFactory HttpClientFactory
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
 
 <PageTitle>@_branding.ApplicationName</PageTitle>
 <HeadContent><link rel="icon" href="@_branding.FaviconUrl" /></HeadContent>
@@ -127,14 +127,14 @@
     [Inject] private IDialogService DialogService { get; set; } = default!;
     private bool _drawerOpen = true;
     private bool searchOpen;
-    private AppBarVersionDetails _appBarVersion = new("HelpDesk.NewWeb", "vdev", "dev", "Fallback", "unknown");
+    private Helpdesk.Shared.Build.BuildInfo _appBarVersion = new("dev", "unknown", "unknown", "HelpDesk.NewWeb", "unknown");
     private DotNetObjectReference<MainLayout>? dotNetRef;
     private int? hotkeyRegistrationId;
     private BrandingSnapshot _branding = new();
 
     protected override void OnInitialized()
     {
-        _appBarVersion = AppBarVersionResolver.ResolveDetails(Configuration, typeof(MainLayout).Assembly);
+        _appBarVersion = AppBarVersionResolver.ResolveDetails(typeof(MainLayout).Assembly, HostEnvironment.EnvironmentName);
     }
 
     protected override async Task OnInitializedAsync()

@@ -10,9 +10,13 @@ EXPOSE 8222 8222
 FROM mcr.microsoft.com/dotnet/sdk:10.0.400-alpine3.23 AS build
 WORKDIR /src
 ARG BUILD_CONFIGURATION=Release
+ARG VERSION=0.0.0-local
+ARG SOURCE_REVISION_ID=unknown
+ARG BUILD_TIMESTAMP=
 
 # Copy global build inputs and the target dependency graph first for a reusable restore layer.
 COPY global.json ./
+COPY Directory.Build.props Directory.Build.targets ./
 COPY src/Helpdesk.API/*.csproj             src/Helpdesk.API/
 COPY src/Helpdesk.Application/*.csproj     src/Helpdesk.Application/
 COPY src/Helpdesk.Infrastructure/*.csproj  src/Helpdesk.Infrastructure/
@@ -32,7 +36,11 @@ COPY src/Helpdesk.ServiceDefaults/ src/Helpdesk.ServiceDefaults/
 RUN mkdir /out \
  && dotnet publish src/Helpdesk.API/Helpdesk.API.csproj \
       -c $BUILD_CONFIGURATION -o /out --no-restore -v:n \
-      /p:UseAppHost=false
+      -p:UseAppHost=false \
+      -p:Version=$VERSION \
+      -p:SourceRevisionId=$SOURCE_REVISION_ID \
+      -p:BuildTimestamp=$BUILD_TIMESTAMP \
+      -p:ContinuousIntegrationBuild=true
 
 # 3) Final
 FROM base AS final

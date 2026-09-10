@@ -24,6 +24,16 @@ dotnet run --project src/HelpDesk.NewWeb
 
 The Compose stack provides local PostgreSQL, API, and web services at `http://localhost:8111`. It enables the local development operator only; do not use it as a production identity configuration. Its OIDC and signed-link defaults are intentionally non-secret placeholders so the containers can start; replace `RATELDESK_OIDC_CLIENT_ID`, `RATELDESK_OIDC_CLIENT_SECRET`, and `RATELDESK_IMAGE_SIGNING_SECRET` before exposing the application. The application configuration files contain only example values. Put real credentials in environment variables, a secret manager, or .NET user secrets; do not commit them.
 
+## Released containers
+
+The first public release is `0.1.0`. To run published images rather than build from source, configure your OIDC provider and a unique signing secret, then use the release Compose file:
+
+```bash
+RATELDESK_VERSION=0.1.0 docker compose -f docker/docker-compose.release.yml up -d
+```
+
+Use an exact SemVer tag in production, or preferably replace tags with the published image digests. `latest` advances only for stable releases; prereleases never move it. See [release engineering](docs/releases.md) for versioning, build metadata, and release instructions.
+
 ## Configuration
 
 The main public configuration surfaces are:

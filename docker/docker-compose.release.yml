@@ -1,0 +1,61 @@
+name: rateldesk
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: rateldesk
+      POSTGRES_USER: rateldesk
+      POSTGRES_PASSWORD: rateldesk
+    volumes:
+      - rateldesk-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rateldesk -d rateldesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    image: ghcr.io/bostontechnologies/rateldesk-api:${RATELDESK_VERSION:-0.1.0}
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__HelpdeskDb: Host=postgres;Port=5432;Database=rateldesk;Username=rateldesk;Password=rateldesk
+      DataProtection__KeyRingPath: /var/lib/rateldesk/keys
+      PublicWebAppUrl: http://localhost:8111/
+      StorageOptions__PublicApiBaseUrl: http://localhost:8222
+      StorageOptions__ImageSigningSecret: ${RATELDESK_IMAGE_SIGNING_SECRET:?Set a unique image-signing secret}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${RATELDESK_API_PORT:-8222}:8222"
+    volumes:
+      - rateldesk-data-protection:/var/lib/rateldesk/keys
+      - rateldesk-storage:/app/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8222/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  web:
+    image: ghcr.io/bostontechnologies/rateldesk-web:${RATELDESK_VERSION:-0.1.0}
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ApiBaseUrl: http://api:8222/
+      DataProtection__KeyRingPath: /var/lib/rateldesk/keys
+      ReverseProxy__Clusters__apiCluster__Destinations__api1__Address: http://api:8222/
+      Authentication__Authentik__ClientId: ${RATELDESK_OIDC_CLIENT_ID:?Set an OIDC client ID}
+      AUTHENTIK_CLIENT_SECRET: ${RATELDESK_OIDC_CLIENT_SECRET:?Set an OIDC client secret}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${RATELDESK_WEB_PORT:-8111}:8111"
+    volumes:
+      - rateldesk-data-protection:/var/lib/rateldesk/keys
+
+volumes:
+  rateldesk-postgres-data:
+  rateldesk-data-protection:
+  rateldesk-storage:

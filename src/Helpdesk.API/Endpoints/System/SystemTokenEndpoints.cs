@@ -1,8 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Reflection;
 using System.Security.Claims;
 using System.Text;
-using System.Text.RegularExpressions;
+using Helpdesk.Shared.Build;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 
@@ -23,28 +22,9 @@ public static class SystemTokenEndpoints
     {
         var group = app.MapGroup("/api/v1/system").WithTags("System");
 
-        group.MapGet("/version", (IHostEnvironment environment, IConfiguration configuration) =>
+        group.MapGet("/version", (IHostEnvironment environment) =>
         {
-            var assembly = typeof(SystemTokenEndpoints).Assembly;
-            var assemblyVersion = ResolveAssemblyVersion(assembly);
-            var fullVersion = FirstNonEmpty(
-                configuration["RATELDESK_BUILD_VERSION"],
-                configuration["AppBar:BuildVersion"],
-                configuration["BUILD_VERSION"],
-                configuration["APP_VERSION"],
-                configuration["VERSION"],
-                configuration["OTEL_SERVICE_VERSION"],
-                assemblyVersion,
-                "dev");
-
-            return Results.Ok(new
-            {
-                serviceName = "Helpdesk.API",
-                displayVersion = FormatDisplayVersion(fullVersion),
-                informationalVersion = fullVersion,
-                assemblyVersion = assembly.GetName().Version?.ToString() ?? "unknown",
-                environment = environment.EnvironmentName
-            });
+            return Results.Ok(BuildInfoProvider.FromAssembly(typeof(SystemTokenEndpoints).Assembly, environment.EnvironmentName));
         })
         .AllowAnonymous()
         .WithName("GetSystemVersion")
@@ -107,39 +87,4 @@ public static class SystemTokenEndpoints
         });
     }
 
-    private static string? ResolveAssemblyVersion(Assembly assembly)
-    {
-        var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        if (!string.IsNullOrWhiteSpace(informational))
-        {
-            return informational;
-        }
-
-        return assembly.GetName().Version?.ToString();
-    }
-
-    private static string FirstNonEmpty(params string?[] values)
-    {
-        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "dev";
-    }
-
-    private static string FormatDisplayVersion(string value)
-    {
-        var trimmed = value.Trim();
-        var metadataStart = trimmed.IndexOf('+', StringComparison.Ordinal);
-        if (metadataStart >= 0)
-        {
-            trimmed = trimmed[..metadataStart];
-        }
-
-        var semanticVersion = Regex.Match(trimmed, @"(?<version>\d+\.\d+\.\d+)");
-        if (semanticVersion.Success)
-        {
-            trimmed = semanticVersion.Groups["version"].Value;
-        }
-
-        return trimmed.StartsWith("v", StringComparison.OrdinalIgnoreCase)
-            ? trimmed
-            : $"v{trimmed}";
-    }
 }
