@@ -1,0 +1,341 @@
+@using Helpdesk.Shared.DTOs.Orchestration
+@using HelpDesk.NewWeb.Services
+
+<MudDialog Class="orchestration-script-library-dialog">
+    <TitleContent>
+        <MudStack Spacing="0">
+            <MudText Typo="Typo.h6">Script Library</MudText>
+            <MudText Typo="Typo.body2" Class="orchestration-script-library-subtitle">@DialogSubtitle</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2">
+            @if (TenantMetadataUnavailable)
+            {
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="orchestration-script-library-note">
+                    <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Color="Color.Info" />
+                    <MudText Typo="Typo.caption">
+                        Tenant metadata is unavailable, so all External orchestration targets are shown. Verify folder and job before saving.
+                    </MudText>
+                </MudStack>
+            }
+
+            <MudGrid Spacing="1">
+                <MudItem xs="12" md="5">
+                    <MudTextField @bind-Value="searchText"
+                                  Label="Search scripts"
+                                  Placeholder="Name, folder, customer, parameter..."
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Dense="true"
+                                  Immediate="true"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" />
+                </MudItem>
+                <MudItem xs="12" sm="4" md="3">
+                    <MudSelect T="string" @bind-Value="tenantFilter" Label="Customer" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                        <MudSelectItem T="string" Value="@AllFilterValue">All customers</MudSelectItem>
+                        @foreach (var tenant in TenantOptions)
+                        {
+                            <MudSelectItem T="string" Value="@tenant">@tenant</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4" md="2">
+                    <MudSelect T="string" @bind-Value="scriptTypeFilter" Label="Script Type" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                        <MudSelectItem T="string" Value="@AllFilterValue">All types</MudSelectItem>
+                        @foreach (var type in ScriptTypeOptions)
+                        {
+                            <MudSelectItem T="string" Value="@type">@type</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4" md="2">
+                    <MudSelect T="string" @bind-Value="clientFilter" Label="Client" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                        <MudSelectItem T="string" Value="@AllFilterValue">All clients</MudSelectItem>
+                        @foreach (var client in ClientOptions)
+                        {
+                            <MudSelectItem T="string" Value="@client">@client</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+
+            <MudText Typo="Typo.caption" Class="orchestration-script-library-count">
+                @($"{FilteredDefinitions.Count} script{(FilteredDefinitions.Count == 1 ? string.Empty : "s")} found")
+            </MudText>
+
+            <div class="orchestration-script-library-results">
+                @if (FilteredDefinitions.Count == 0)
+                {
+                    <MudPaper Outlined="true" Class="pa-3">
+                        <MudText Typo="Typo.body2">No scripts match the current search and filters.</MudText>
+                    </MudPaper>
+                }
+                else
+                {
+                    @foreach (var definition in FilteredDefinitions)
+                    {
+                        var selected = string.Equals(definition.RequestDefinitionId, selectedId, StringComparison.OrdinalIgnoreCase);
+                        var clientLabel = GetClientLabel(definition);
+                        <MudPaper Outlined="true"
+                                  Class="@(selected ? "pa-3 orchestration-script-library-card orchestration-script-library-card-selected" : "pa-3 orchestration-script-library-card")"
+                                  @onclick="@(() => Select(definition))">
+                            <MudStack Spacing="1">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="orchestration-script-library-card-header">
+                                    <MudStack Spacing="0">
+                                        <MudText Typo="Typo.subtitle2">@GetDisplayName(definition)</MudText>
+                                        <MudText Typo="Typo.caption">@OrchestrationCatalogInputResolver.JoinTargetLabel(definition.FolderPath, GetDisplayName(definition))</MudText>
+                                    </MudStack>
+                                    @if (selected)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Primary">Selected</MudChip>
+                                    }
+                                </MudStack>
+
+                                @if (!string.IsNullOrWhiteSpace(definition.Description))
+                                {
+                                    <MudText Typo="Typo.body2" Class="orchestration-script-library-description">@definition.Description</MudText>
+                                }
+
+                                <MudStack Row="true" Spacing="1" Class="orchestration-script-library-chip-row">
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Info">@GetTenantLabel(definition)</MudChip>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default">@GetScriptType(definition)</MudChip>
+                                    @if (!string.IsNullOrWhiteSpace(clientLabel))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Default">@clientLabel</MudChip>
+                                    }
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default">@($"{definition.Inputs.Count} input{(definition.Inputs.Count == 1 ? string.Empty : "s")}")</MudChip>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default">@($"{SecondsToMinutes(definition.ExpectedRuntimeSeconds)} min")</MudChip>
+                                </MudStack>
+                            </MudStack>
+                        </MudPaper>
+                    }
+                }
+            </div>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@SelectedDefinitionMissing" OnClick="Confirm">Select Script</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .orchestration-script-library-dialog {
+        width: min(1100px, 94vw);
+    }
+
+    .orchestration-script-library-subtitle,
+    .orchestration-script-library-count,
+    .orchestration-script-library-description {
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .orchestration-script-library-note {
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .orchestration-script-library-results {
+        display: grid;
+        gap: 0.75rem;
+        max-height: min(58vh, 620px);
+        overflow-y: auto;
+        padding-right: 0.25rem;
+    }
+
+    .orchestration-script-library-card {
+        cursor: pointer;
+        transition: border-color 120ms ease, background 120ms ease;
+    }
+
+    .orchestration-script-library-card:hover {
+        border-color: var(--mud-palette-primary);
+        background: var(--mud-palette-action-default-hover);
+    }
+
+    .orchestration-script-library-card-selected {
+        border-color: var(--mud-palette-primary);
+        background: var(--mud-palette-action-default-hover);
+    }
+
+    .orchestration-script-library-card-header,
+    .orchestration-script-library-chip-row {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+</style>
+
+@code {
+    private const string AllFilterValue = "__all";
+
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter] public IReadOnlyList<OrchestrationCatalogRequestDefinitionDto> Definitions { get; set; } = [];
+    [Parameter] public string? SelectedRequestDefinitionId { get; set; }
+    [Parameter] public string? OrganizationDisplayName { get; set; }
+    [Parameter] public bool TenantMetadataUnavailable { get; set; }
+
+    private string? searchText;
+    private string tenantFilter = AllFilterValue;
+    private string scriptTypeFilter = AllFilterValue;
+    private string clientFilter = AllFilterValue;
+    private string? selectedId;
+
+    private string DialogSubtitle => string.IsNullOrWhiteSpace(OrganizationDisplayName)
+        ? "Search and filter available External orchestration automation jobs."
+        : $"Search and filter available External orchestration automation jobs for {OrganizationDisplayName}.";
+
+    private IReadOnlyList<string> TenantOptions => Definitions
+        .Select(GetTenantLabel)
+        .Where(x => !string.Equals(x, "Unassigned", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private IReadOnlyList<string> ScriptTypeOptions => Definitions
+        .Select(GetScriptType)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private IReadOnlyList<string> ClientOptions => Definitions
+        .Select(GetClientLabel)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Cast<string>()
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private IReadOnlyList<OrchestrationCatalogRequestDefinitionDto> FilteredDefinitions => Definitions
+        .Where(MatchesFilters)
+        .OrderBy(x => x.FolderPath, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(GetDisplayName, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private OrchestrationCatalogRequestDefinitionDto? SelectedDefinition => Definitions.FirstOrDefault(x =>
+        string.Equals(x.RequestDefinitionId, selectedId, StringComparison.OrdinalIgnoreCase));
+
+    private bool SelectedDefinitionMissing => SelectedDefinition is null;
+
+    protected override void OnInitialized()
+    {
+        selectedId = SelectedRequestDefinitionId;
+    }
+
+    private bool MatchesFilters(OrchestrationCatalogRequestDefinitionDto definition)
+    {
+        if (!IsAll(tenantFilter) && !string.Equals(GetTenantLabel(definition), tenantFilter, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!IsAll(scriptTypeFilter) && !string.Equals(GetScriptType(definition), scriptTypeFilter, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!IsAll(clientFilter) && !string.Equals(GetClientLabel(definition), clientFilter, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return string.IsNullOrWhiteSpace(searchText) || BuildSearchText(definition).Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildSearchText(OrchestrationCatalogRequestDefinitionDto definition)
+    {
+        var inputText = string.Join(' ', definition.Inputs.Select(input => $"{input.Key} {input.Label} {input.HelpText}"));
+        return string.Join(' ', new[]
+        {
+            definition.DisplayName,
+            definition.RequestDefinitionName,
+            definition.OrchestrationJobDefinitionName,
+            definition.FolderPath,
+            definition.TenantName,
+            definition.ClientHostName,
+            definition.ClientDisplayName,
+            definition.ClientName,
+            definition.ClientShortId,
+            definition.ClientIdentity,
+            GetScriptType(definition),
+            definition.Description,
+            inputText
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static bool IsAll(string? value) => string.IsNullOrWhiteSpace(value) || string.Equals(value, AllFilterValue, StringComparison.Ordinal);
+
+    private static string GetDisplayName(OrchestrationCatalogRequestDefinitionDto definition)
+        => OrchestrationCatalogInputResolver.FirstReadableName(definition.DisplayName, definition.OrchestrationJobDefinitionName, definition.RequestDefinitionName) ?? "External orchestration target";
+
+    private static string GetTenantLabel(OrchestrationCatalogRequestDefinitionDto definition)
+        => string.IsNullOrWhiteSpace(definition.TenantName) ? "Unassigned" : definition.TenantName.Trim();
+
+    private static string GetScriptType(OrchestrationCatalogRequestDefinitionDto definition)
+    {
+        if (!string.IsNullOrWhiteSpace(definition.ScriptType))
+        {
+            return definition.ScriptType.Trim();
+        }
+
+        var segments = (definition.FolderPath ?? string.Empty)
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return segments.FirstOrDefault(segment => !string.Equals(segment, "helpdesk", StringComparison.OrdinalIgnoreCase))
+            ?? segments.FirstOrDefault()
+            ?? "General";
+    }
+
+    private static string? GetClientLabel(OrchestrationCatalogRequestDefinitionDto definition)
+        => FirstNonEmpty(
+            definition.ClientHostName,
+            definition.ClientDisplayName,
+            definition.ClientName,
+            definition.ClientShortId,
+            BuildClientShortId(definition.ClientIdentity));
+
+    private static string? BuildClientShortId(string? clientIdentity)
+    {
+        if (string.IsNullOrWhiteSpace(clientIdentity))
+        {
+            return null;
+        }
+
+        var value = clientIdentity.Trim();
+        return value.Length <= 12 ? value : value[..12];
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static int SecondsToMinutes(int seconds)
+        => seconds > 0 ? Math.Max(1, (int)Math.Ceiling(seconds / 60.0)) : 0;
+
+    private void Select(OrchestrationCatalogRequestDefinitionDto definition)
+    {
+        selectedId = definition.RequestDefinitionId;
+    }
+
+    private void Confirm()
+    {
+        if (SelectedDefinition is not null)
+        {
+            Dialog.Close(DialogResult.Ok(SelectedDefinition));
+        }
+    }
+
+    private void Cancel()
+    {
+        Dialog.Cancel();
+    }
+}

@@ -1,0 +1,45 @@
+/* Keep full width behavior */
+.w-100 {
+    width: 100%;
+}
+
+.mud-tabs {
+    width: 100%;
+}
+
+
+/* Reduce overall tab bar height */
+:deep(.mud-tabs-toolbar) {
+    min-height: 34px;
+}
+
+
+/* Reduce individual tab height */
+:deep(.mud-tab) {
+    min-height: 34px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    /* KEEP this — prevents badge clipping */
+    overflow: visible !important;
+}
+
+
+/* Reduce tab label padding */
+:deep(.mud-tab-content) {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    font-size: 0.85rem;
+}
+
+
+/* Reduce icon size slightly */
+:deep(.mud-tab .mud-icon-root) {
+    font-size: 18px;
+}
+
+
+/* Keep badge visible and slightly compact */
+:deep(.mud-tab .mud-badge-root) {
+    margin-left: 4px;
+    transform: scale(0.9);
+}

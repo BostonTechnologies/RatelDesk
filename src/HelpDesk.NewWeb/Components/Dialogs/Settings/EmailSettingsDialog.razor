@@ -1,0 +1,261 @@
+@using System.Net.Http.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+
+<MudDialog MaxWidth="MaxWidth.Large" FullWidth="true">
+    <DialogContent>
+
+        <MudStack Spacing="2">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <MudText Typo="Typo.h6">Email Settings</MudText>
+
+                <MudSwitch T="bool"
+                           @bind-Value="Model.Enabled"
+                           Color="Color.Primary"
+                           Disabled="@(Loading || Saving || Testing)"
+                           Label="Mailbox enabled" />
+            </MudStack>
+
+            @if (!Model.Enabled)
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+                    This mailbox is <b>DISABLED</b>. No emails will be ingested until the mailbox is enabled.
+                </MudAlert>
+            }
+            else if (!Model.BackgroundSyncEnabled)
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+                    Background ingestion is <b>DISABLED</b>. The mailbox settings are saved, but the worker will not process mail.
+                </MudAlert>
+            }
+
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudTextField Label="Mail host" @bind-Value="Model.MailHost" Required="true" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudTextField Label="Port" @bind-Value="Model.Port" Required="true" />
+                </MudItem>
+                <MudItem xs="12" md="3" Class="d-flex align-center">
+                    <MudCheckBox T="bool" @bind-Value="Model.UseSsl" Label="Use SSL" />
+                </MudItem>
+
+                <MudItem xs="12" md="6">
+                    <MudTextField Label="Mailbox address" @bind-Value="Model.MailboxAddress" Required="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField Label="Mailbox folder" @bind-Value="Model.MailboxFolder" />
+                </MudItem>
+
+                <MudItem xs="12" md="6">
+                    <MudTextField Label="Tenant Id" @bind-Value="Model.TenantId" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField Label="Client Id" @bind-Value="Model.ClientId" />
+                </MudItem>
+
+                <MudItem xs="12" md="6">
+                    <MudTextField Label="Client Secret"
+                                  @bind-Value="Model.ClientSecret"
+                                  Placeholder="Leave blank to keep existing"
+                                  InputType="InputType.Password" />
+                    <MudText Typo="Typo.caption" Class="mt-1 text-secondary">
+                        Leave blank to keep the existing secret.
+                    </MudText>
+                </MudItem>
+                <MudItem xs="12" md="6" Class="d-flex align-center">
+                    <MudSwitch T="bool"
+                               @bind-Value="Model.BackgroundSyncEnabled"
+                               Color="Color.Primary"
+                               Disabled="@(Loading || Saving || Testing)"
+                               Label="Background ingestion enabled" />
+                </MudItem>
+            </MudGrid>
+
+            @if (Tested)
+            {
+                @if (LastTestOk)
+                {
+                    <MudAlert Severity="Severity.Success" Dense="true">
+                        Connection test passed.
+                    </MudAlert>
+                }
+                else
+                {
+                    <MudAlert Severity="Severity.Error" Dense="true">
+                        Connection test failed. @TestMessage
+                    </MudAlert>
+                }
+            }
+
+        </MudStack>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton Variant="Variant.Text"
+                   Disabled="@(Saving || Testing)"
+                   OnClick="Cancel">Close</MudButton>
+
+        <MudButton Disabled="@(Loading || Saving || Testing)"
+                   OnClick="TestAsync"
+                   StartIcon="@Icons.Material.Filled.Bolt">
+            @if (Testing)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Test Connection
+        </MudButton>
+
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="@(Loading || Saving || Testing)"
+                   OnClick="SaveAsync"
+                   StartIcon="@Icons.Material.Filled.Save">
+            @if (Saving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private sealed class EmailInboxSettingsForm
+    {
+        public Guid Id { get; set; }
+        public string MailHost { get; set; } = "outlook.office365.com";
+        public int Port { get; set; } = 993;
+        public bool UseSsl { get; set; } = true;
+        public string MailboxAddress { get; set; } = string.Empty;
+        public string? TenantId { get; set; }
+        public string? ClientId { get; set; }
+        public string? ClientSecret { get; set; }
+        public string MailboxFolder { get; set; } = "INBOX";
+        public bool Enabled { get; set; }
+        public bool BackgroundSyncEnabled { get; set; }
+        public bool HasClientSecret { get; set; }
+    }
+
+    private EmailInboxSettingsForm Model = new();
+    private bool Loading;
+    private bool Saving;
+    private bool Testing;
+
+    private bool Tested;
+    private bool LastTestOk;
+    private string? TestMessage;
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading = true;
+        try
+        {
+            var settings = await Api.GetFromJsonAsync<List<EmailInboxSettingsForm>>("/api/v1/email-settings");
+            if (settings?.Count > 0)
+            {
+                Model = settings[0];
+                Model.ClientSecret = string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load settings: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            Loading = false;
+        }
+    }
+
+    private async Task TestAsync()
+    {
+        Testing = true;
+        Tested = false;
+        TestMessage = null;
+        try
+        {
+            var res = await Api.PostAsJsonAsync("/api/v1/email-settings/test", BuildPayload());
+            if (res.IsSuccessStatusCode)
+            {
+                LastTestOk = true;
+                TestMessage = "OK";
+                Snackbar.Add("IMAP connection successful.", Severity.Success);
+            }
+            else
+            {
+                LastTestOk = false;
+                TestMessage = await res.Content.ReadAsStringAsync();
+                Snackbar.Add("IMAP connection failed.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            LastTestOk = false;
+            TestMessage = ex.Message;
+            Snackbar.Add($"IMAP test error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            Tested = true;
+            Testing = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        Saving = true;
+        try
+        {
+            var payload = BuildPayload();
+            var res = Model.Id == Guid.Empty
+                ? await Api.PostAsJsonAsync("/api/v1/email-settings", payload)
+                : await Api.PutAsJsonAsync($"/api/v1/email-settings/{Model.Id}", payload);
+            if (res.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Settings saved.", Severity.Success);
+                MudDialog.Close(DialogResult.Ok(true));
+            }
+            else
+            {
+                var err = await res.Content.ReadAsStringAsync();
+                Snackbar.Add($"Save failed: {err}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            Saving = false;
+        }
+    }
+
+    private EmailInboxSettingsForm BuildPayload()
+    {
+        return new EmailInboxSettingsForm
+        {
+            Id = Model.Id,
+            MailHost = Model.MailHost,
+            Port = Model.Port,
+            UseSsl = Model.UseSsl,
+            MailboxAddress = Model.MailboxAddress,
+            TenantId = Model.TenantId,
+            ClientId = Model.ClientId,
+            ClientSecret = string.IsNullOrWhiteSpace(Model.ClientSecret) ? null : Model.ClientSecret,
+            MailboxFolder = Model.MailboxFolder,
+            Enabled = Model.Enabled,
+            BackgroundSyncEnabled = Model.BackgroundSyncEnabled,
+            HasClientSecret = Model.HasClientSecret
+        };
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

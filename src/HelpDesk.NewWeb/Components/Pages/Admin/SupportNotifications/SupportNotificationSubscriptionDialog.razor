@@ -1,0 +1,112 @@
+@using System.ComponentModel.DataAnnotations
+@using Helpdesk.Shared.DTOs.SupportNotifications
+@using Helpdesk.Shared.DTOs.User
+@using Helpdesk.Shared.Enums
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(Subscription is null ? Icons.Material.Filled.AddCircle : Icons.Material.Filled.Edit)" Class="mr-2 mb-n1" />
+            @(Subscription is null ? "Add Notification Rule" : "Edit Notification Rule")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="form" Model="model" Class="mt-2">
+            <MudSelect T="SupportNotificationEventType" @bind-Value="model.EventType" Label="Event" Dense="true">
+                <MudSelectItem Value="SupportNotificationEventType.TicketCreatedUnassigned">@SupportNotificationLabels.Event(SupportNotificationEventType.TicketCreatedUnassigned)</MudSelectItem>
+                @if (Subscription?.EventType == SupportNotificationEventType.TicketAssigned)
+                {
+                    <MudSelectItem Value="SupportNotificationEventType.TicketAssigned">@SupportNotificationLabels.Event(SupportNotificationEventType.TicketAssigned)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="SupportNotificationRecipientType" Value="@model.RecipientType" ValueChanged="OnRecipientTypeChanged" Label="Recipient type" Dense="true">
+                <MudSelectItem Value="SupportNotificationRecipientType.SupportGroup">@SupportNotificationLabels.RecipientType(SupportNotificationRecipientType.SupportGroup)</MudSelectItem>
+                <MudSelectItem Value="SupportNotificationRecipientType.User">@SupportNotificationLabels.RecipientType(SupportNotificationRecipientType.User)</MudSelectItem>
+            </MudSelect>
+            @if (model.RecipientType == SupportNotificationRecipientType.User)
+            {
+                <MudSelect T="string" @bind-Value="model.RecipientId" Label="User" Required="true" Dense="true">
+                    @foreach (var user in Users.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        <MudSelectItem T="string" Value="@user.Id">@DisplayUser(user)</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+            else
+            {
+                <MudSelect T="string" @bind-Value="model.RecipientId" Label="Support group" Required="true" Dense="true">
+                    @foreach (var group in SupportGroups.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        <MudSelectItem T="string" Value="@group.Id">@group.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+            <MudSelect T="SupportNotificationChannel" @bind-Value="model.Channel" Label="Channel" Dense="true" Disabled="true">
+                <MudSelectItem Value="SupportNotificationChannel.Email">@SupportNotificationLabels.Channel(SupportNotificationChannel.Email)</MudSelectItem>
+            </MudSelect>
+            <MudSwitch T="bool" @bind-Value="model.IsEnabled" Label="Enabled" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public SupportNotificationSubscriptionDto? Subscription { get; set; }
+    [Parameter] public string? CustomerOrganizationId { get; set; }
+    [Parameter] public List<SupportGroupDto> SupportGroups { get; set; } = new();
+    [Parameter] public List<UserDto> Users { get; set; } = new();
+
+    private MudForm form = default!;
+    private SubscriptionFormModel model = new();
+
+    protected override void OnInitialized()
+    {
+        model = new SubscriptionFormModel
+        {
+            CustomerOrganizationId = Subscription?.CustomerOrganizationId ?? CustomerOrganizationId ?? string.Empty,
+            EventType = Subscription?.EventType ?? SupportNotificationEventType.TicketCreatedUnassigned,
+            RecipientType = Subscription?.RecipientType ?? SupportNotificationRecipientType.SupportGroup,
+            RecipientId = Subscription?.RecipientId ?? SupportGroups.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault()?.Id ?? string.Empty,
+            Channel = SupportNotificationChannel.Email,
+            IsEnabled = Subscription?.IsEnabled ?? true
+        };
+    }
+
+    private void OnRecipientTypeChanged(SupportNotificationRecipientType recipientType)
+    {
+        model.RecipientType = recipientType;
+        model.RecipientId = recipientType == SupportNotificationRecipientType.User
+            ? Users.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault()?.Id ?? string.Empty
+            : SupportGroups.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault()?.Id ?? string.Empty;
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        Dialog.Close(DialogResult.Ok(model));
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private static string DisplayUser(UserDto user)
+        => string.IsNullOrWhiteSpace(user.Name) ? user.Email : $"{user.Name} ({user.Email})";
+
+    public sealed class SubscriptionFormModel
+    {
+        [Required] public string CustomerOrganizationId { get; set; } = string.Empty;
+        public SupportNotificationEventType EventType { get; set; } = SupportNotificationEventType.TicketCreatedUnassigned;
+        public SupportNotificationRecipientType RecipientType { get; set; } = SupportNotificationRecipientType.SupportGroup;
+        [Required] public string RecipientId { get; set; } = string.Empty;
+        public SupportNotificationChannel Channel { get; set; } = SupportNotificationChannel.Email;
+        public bool IsEnabled { get; set; } = true;
+    }
+}

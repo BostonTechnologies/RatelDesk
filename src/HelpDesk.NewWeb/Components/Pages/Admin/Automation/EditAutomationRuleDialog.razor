@@ -1,0 +1,85 @@
+@using System.ComponentModel.DataAnnotations
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Edit" Class="mr-2 mb-n1" />
+            Edit Automation Rule
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTabs @bind-ActivePanelIndex="activeIndex" Rounded="true" Class="mb-2">
+            <MudTabPanel Text="Trigger">
+                <MudForm @ref="form" Model="model">
+                    <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+                    <MudTextField @bind-Value="model.Trigger" Label="Trigger" Required="true" Class="mt-2" />
+                </MudForm>
+            </MudTabPanel>
+            <MudTabPanel Text="Conditions">
+                <MudTextField @bind-Value="model.Conditions" Label="Conditions" Lines="4" />
+            </MudTabPanel>
+            <MudTabPanel Text="Actions">
+                <MudTextField @bind-Value="model.Actions" Label="Actions" Lines="4" />
+            </MudTabPanel>
+        </MudTabs>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Disabled="@(activeIndex==0)" OnClick="Back">Back</MudButton>
+        @if (activeIndex < 2)
+        {
+            <MudButton OnClick="Next" Color="Color.Primary" Variant="Variant.Filled">Next</MudButton>
+        }
+        else
+        {
+            <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public AutomationRule Rule { get; set; } = default!;
+
+    private MudForm form = default!;
+    private EditModel model = new();
+    private int activeIndex = 0;
+
+    protected override void OnInitialized()
+    {
+        model = new EditModel
+        {
+            Name = Rule.Name,
+            Trigger = Rule.Trigger,
+            Conditions = Rule.Conditions,
+            Actions = Rule.Actions
+        };
+    }
+
+    private void Next() => activeIndex++;
+    private void Back() => activeIndex--;
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/automation/rules/{Rule.Id}", model);
+            if (response.IsSuccessStatusCode)
+            {
+                Dialog.Close(DialogResult.Ok(true));
+            }
+        }
+    }
+
+    public class EditModel
+    {
+        [Required]
+        public string Name { get; set; } = string.Empty;
+        [Required]
+        public string Trigger { get; set; } = string.Empty;
+        public string? Conditions { get; set; }
+        public string? Actions { get; set; }
+    }
+}

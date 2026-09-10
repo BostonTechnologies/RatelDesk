@@ -1,0 +1,13 @@
+{
+  "scripts": {
+    "test:ux:ai-assistant": "playwright test --config playwright.ai-assistant.config.ts",
+    "test:ux": "playwright test",
+    "test:ux:headed": "playwright test --headed"
+  },
+  "dependencies": {
+    "oidc-client-ts": "^3.5.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}

@@ -1,0 +1,135 @@
+﻿@using System.Net.Http.Json
+@using Helpdesk.Shared.DTOs.Service
+@using Helpdesk.Shared.DTOs.Organization
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_isNew ? "New Service" : "Edit Service")</MudText>
+    </TitleContent>
+
+    <DialogContent>
+        <MudForm @ref="form">
+            <MudStack Spacing="2">
+                <MudTextField @bind-Value="model.Name"
+                              Label="Name"
+                              Required="true"
+                              Immediate="true"
+                              Margin="Margin.Dense" />
+                <MudTextField @bind-Value="model.Description"
+                              Label="Description"
+                              Margin="Margin.Dense" />
+
+                @*<!-- Move Organizations picker INTO DialogContent, above buttons -->
+                <MudSelect T="string"
+                           Label="Organizations"
+                           MultiSelection="true"
+                           Dense="true"
+                           SelectedValues="@selectedOrgIds"
+                           SelectedValuesChanged="@(v => selectedOrgIds = v?.ToHashSet() ?? new())">
+                    @foreach (var org in organizations)
+                    {
+                        <MudSelectItem Value="@org.Id">@org.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                *@
+
+            </MudStack>
+        </MudForm>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@saving" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string? ServiceId { get; set; }
+    [Parameter] public string? ParentId { get; set; }
+
+    private MudForm form = default!;
+    private readonly ServiceModel model = new();
+    private bool saving;
+    private bool _isNew => string.IsNullOrWhiteSpace(ServiceId);
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private List<OrganizationDto> organizations = new();
+    private HashSet<string> selectedOrgIds { get; set; } = new();
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        organizations = await Api.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations") ?? new();
+
+        if (!_isNew)
+        {
+            var svc = await Api.GetFromJsonAsync<ServiceDto>($"api/v1/services/{ServiceId}");
+            if (svc is not null)
+            {
+                model.Name = svc.Name;
+                model.Description = svc.Description;
+                selectedOrgIds = new HashSet<string>(svc.AllowedOrganizationIds ?? new());
+            }
+        }
+    }
+
+    private async Task Save()
+    {
+        await form.Validate();
+        if (!form.IsValid) return;
+
+        saving = true;
+        try
+        {
+            HttpResponseMessage resp;
+            if (_isNew)
+            {
+                var dto = new CreateServiceDto
+                {
+                    Name = model.Name!,
+                    Description = model.Description,
+                    ParentId = ParentId,
+                    AllowedOrganizationIds = selectedOrgIds.ToList()
+                };
+                resp = await Api.PostAsJsonAsync("api/v1/services", dto);
+            }
+            else
+            {
+                var dto = new UpdateServiceDto
+                {
+                    Name = model.Name!,
+                    Description = model.Description,
+                    AllowedOrganizationIds = selectedOrgIds.ToList()
+                };
+                resp = await Api.PutAsJsonAsync($"api/v1/services/{ServiceId}", dto);
+            }
+
+            if (resp.IsSuccessStatusCode)
+                MudDialog.Close(DialogResult.Ok(true));
+            else
+            {
+                var txt = await resp.Content.ReadAsStringAsync();
+                Snackbar.Add($"Save failed: {(int)resp.StatusCode} {txt}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally { saving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private sealed class ServiceModel
+    {
+        public string? Name { get; set; }
+        public string? Description { get; set; }
+    }
+}

@@ -1,0 +1,89 @@
+@using Helpdesk.Shared.Models
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<div @onclick:stopPropagation="true">
+    <MudMenu Dense="true"
+             AnchorOrigin="Origin.CenterCenter"
+             TransformOrigin="Origin.CenterCenter">
+        <ActivatorContent>
+            <MudTooltip Text="Update state">
+                <MudChip T="string"
+                         Class="cursor-pointer"
+                         Size="Size.Small"
+                         Variant="Variant.Outlined"
+                         Color="@GetStateColor(State)">
+                    @GetStateLabel(State)
+                </MudChip>
+            </MudTooltip>
+        </ActivatorContent>
+        <ChildContent>
+            @foreach (var state in Enum.GetValues<TicketState>())
+            {
+                <MudMenuItem Disabled="@(state == State)"
+                             OnClick="@(async () => await UpdateState(state))">
+                    @GetStateLabel(state)
+                </MudMenuItem>
+            }
+        </ChildContent>
+    </MudMenu>
+</div>
+
+@code {
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+    [Parameter] public string TicketType { get; set; } = string.Empty;
+    [Parameter] public TicketState State { get; set; }
+    [Parameter] public EventCallback<TicketState> StateChanged { get; set; }
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private async Task UpdateState(TicketState newState)
+    {
+        if (newState == State || string.IsNullOrWhiteSpace(TicketId) || string.IsNullOrWhiteSpace(TicketType))
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await Api.PostAsJsonAsync(
+                $"api/v1/{TicketType}/{TicketId}/state",
+                new { NewState = newState });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"State update failed: {await response.Content.ReadAsStringAsync()}", Severity.Error);
+                return;
+            }
+
+            State = newState;
+            await StateChanged.InvokeAsync(newState);
+            Snackbar.Add($"State updated to {GetStateLabel(newState)}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"State update failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private static string GetStateLabel(TicketState state) => state switch
+    {
+        TicketState.WaitingReply => "Waiting Reply",
+        TicketState.Replied => "Replied",
+        TicketState.InProgress => "In Progress",
+        TicketState.OnHold => "On Hold",
+        TicketState.Resolved => "Resolved",
+        _ => state.ToString()
+    };
+
+    private static Color GetStateColor(TicketState state) => state switch
+    {
+        TicketState.New => Color.Info,
+        TicketState.WaitingReply => Color.Warning,
+        TicketState.Replied => Color.Secondary,
+        TicketState.InProgress => Color.Primary,
+        TicketState.OnHold => Color.Warning,
+        TicketState.Resolved => Color.Success,
+        _ => Color.Default
+    };
+}

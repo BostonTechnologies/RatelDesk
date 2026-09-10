@@ -1,0 +1,81 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />  
+    <script>
+        (function () {
+            const key = "helpdesk.theme.preference";
+            const stored = window.localStorage.getItem(key);
+            const isDark = stored === "dark" || (stored !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+            document.documentElement.dataset.helpdeskTheme = isDark ? "dark" : "light";
+        }());
+    </script>
+    <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap" rel="stylesheet" />
+    <link href=@Assets["_content/MudBlazor/MudBlazor.min.css"] rel="stylesheet" />
+    <link href=@Assets["HelpDesk.NewWeb.styles.css"] rel="stylesheet" />
+    <link href="css/app.css" rel="stylesheet" />
+
+    <ImportMap />
+    <link rel="icon" type="image/svg+xml" href="rateldesk-mark.svg" />
+    <HeadOutlet @rendermode="PageRenderMode" />
+</head>
+
+<body>
+    <Router AppAssembly="typeof(Program).Assembly">
+        <Found Context="routeData">
+            <Routes @rendermode="PageRenderMode" />
+        </Found>
+        <NotFound>
+            <LayoutView Layout="typeof(Layout.PublicLayout)">
+                <MudText Typo="Typo.h5">Sorry, there's nothing at this address.</MudText>
+            </LayoutView>
+        </NotFound>
+    </Router>
+    <script src=@Assets["_framework/blazor.web.js"]></script>
+    <script src=@Assets["_content/MudBlazor/MudBlazor.min.js"]></script>
+    <script src=@Assets["_content/Extensions.MudBlazor.StaticInput/NavigationObserver.js"]></script>
+    <script src="js/global-search-hotkeys.js"></script>
+    <script src="js/theme-preference.js"></script>
+    <script>
+        window.scrollToNotificationRow = function (id) {
+            setTimeout(function () {
+                const row = document.querySelector(`[data-notification-id='${id}']`);
+                if (row) {
+                    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 150);
+        };
+
+        window.scrollToChangeTemplateField = function (id) {
+            setTimeout(function () {
+                const element = document.getElementById(id);
+                if (!element) {
+                    return;
+                }
+
+                element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+                element.classList.remove('change-template-target-active');
+                void element.offsetWidth;
+                element.classList.add('change-template-target-active');
+
+                setTimeout(function () {
+                    element.classList.remove('change-template-target-active');
+                }, 2200);
+            }, 80);
+        };
+    </script>
+    <link href="_content/Gotho.BlazorPdf/blazorpdf.min.css" rel="stylesheet" />
+</body>
+
+</html>
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    private IComponentRenderMode? PageRenderMode =>
+        HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+}

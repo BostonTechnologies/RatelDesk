@@ -1,0 +1,333 @@
+@page "/incidents"
+@attribute [Authorize(Roles = "Incident.User,Incident.Manager,HelpdeskAdmin")]
+@using Helpdesk.Shared.DTOs.User
+
+@inject NavigationManager NavigationManager
+@inject IDialogService DialogService
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Incidents</PageTitle>
+
+<div class="helpdesk-page">
+<MudPaper Class="helpdesk-content-surface pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="helpdesk-page-header">
+        <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Incidents</MudText>
+        <MudSpacer />
+        <MudTooltip Text="Historic">
+            <MudIconButton Icon="@Icons.Material.Filled.History"
+                           Color="@(historicOnly ? Color.Primary : Color.Default)"
+                           Variant="@(historicOnly ? Variant.Filled : Variant.Outlined)"
+                           aria-label="Show historic incidents"
+                           OnClick="ToggleHistoric" />
+        </MudTooltip>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+
+    <div class="helpdesk-list-toolbar">
+        <MudTextField @bind-Value="search"
+                      Placeholder="Search incidents"
+                      Adornment="Adornment.Start"
+                      Icon="@Icons.Material.Filled.Search"
+                      Immediate="true"
+                      OnBlur="Reload"
+                      OnKeyUp="@(async _ => await DebouncedReload())"
+                      Class="helpdesk-list-search" />
+
+        <MudCheckBox T="bool"
+                     @bind-Value="aiInvolvedOnly"
+                     Color="Color.Primary">
+            AI involved only
+        </MudCheckBox>
+    </div>
+
+    <TicketTable TTicket="IncidentDto"
+                 @ref="_table"
+                 TicketType="incidents"
+                 ServerData="LoadServerData"
+                 SelectedItems="_selected"
+                 SelectedItemsChanged="@(x => _selected = x)"
+                 OnRowClick="NavigateToIncident"
+                 BulkStateRequested="ApplyBulkState"
+                 BulkAssignRequested="ApplyBulkAssign"
+                 BulkActions="IncidentBulkActions"
+                 BulkActionRequested="ApplyBulkAction">
+        <SubjectTemplate Context="incident">
+            <MudStack Spacing="0">
+                <IncidentSubjectWithPeek IncidentId="@incident.Id"
+                                         Subject="@incident.Subject" />
+                @if (incident.AiSuggestionCount > 0 || incident.AiAutomationRunCount > 0 || incident.LastAiActivityAt.HasValue)
+                {
+                    <MudStack Row="true" Spacing="1" Class="mt-1">
+                        @if (incident.AiSuggestionCount > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                                @($"{incident.AiSuggestionCount} AI suggestion{(incident.AiSuggestionCount == 1 ? string.Empty : "s")}")
+                            </MudChip>
+                        }
+                        @if (incident.AiAutomationRunCount > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Outlined">
+                                @($"{incident.AiAutomationRunCount} AI automation run{(incident.AiAutomationRunCount == 1 ? string.Empty : "s")}")
+                            </MudChip>
+                        }
+                        @if (incident.LastAiActivityAt.HasValue)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @($"AI active {incident.LastAiActivityAt.Value.ToLocalTime():g}")
+                            </MudChip>
+                        }
+                    </MudStack>
+                }
+            </MudStack>
+        </SubjectTemplate>
+        <AssigneeTemplate Context="incident">
+            <TicketAssigneePicker
+                TicketId="@incident.Id"
+                TicketType="incidents"
+                AssignedToId="@incident.AssignedToId"
+                AssignedToIdChanged="@(x => incident.AssignedToId = x)"
+                TeamMembers="teamMembers" />
+        </AssigneeTemplate>
+        <CustomerTemplate Context="incident">
+            <TicketCustomerPicker
+                TicketId="@incident.Id"
+                TicketType="incidents"
+                OrganizationId="@incident.OrganizationId"
+                CustomerId="@incident.CustomerId"
+                CustomerName="@incident.CustomerName"
+                CustomerEmail="@incident.CustomerEmail"
+                CustomerChanged="@(selection => UpdateCustomer(incident, selection))" />
+        </CustomerTemplate>
+    </TicketTable>
+</MudPaper>
+</div>
+
+@code {
+    [Parameter]
+    [SupplyParameterFromQuery]
+    public string? State { get; set; }
+
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? QuerySearch { get; set; }
+
+    [SupplyParameterFromQuery]
+    public bool ActiveOnly { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private TicketTable<IncidentDto>? _table;
+    private string? search;
+    private CancellationTokenSource? _debounceCts;
+    private HashSet<IncidentDto> _selected = new();
+    private List<UserDto> teamMembers = new();
+    private bool aiInvolvedOnly;
+    private bool historicOnly;
+    private string? appliedQuerySearch;
+    private static readonly IReadOnlyList<TicketTable<IncidentDto>.BulkActionOption> IncidentBulkActions =
+    [
+        new("delete", "Delete"),
+        new("marketing-spam", "Mark as Marketing/Spam")
+    ];
+
+    protected override void OnParametersSet()
+    {
+        if (!string.Equals(appliedQuerySearch, QuerySearch, StringComparison.Ordinal))
+        {
+            appliedQuerySearch = QuerySearch;
+            search = QuerySearch;
+            _ = _table?.ReloadServerData();
+        }
+    }
+
+    // Called by MudTable whenever page/size/sort changes
+    private async Task<TableData<IncidentDto>> LoadServerData(TableState state, CancellationToken token)
+    {
+        var page = state.Page + 1;
+        var pageSize = state.PageSize <= 0 ? 10 : state.PageSize;
+
+        var url = $"api/v1/incidents?page={page}&pageSize={pageSize}";
+
+        if (!string.IsNullOrEmpty(State))
+            url += $"&state={Uri.EscapeDataString(State)}";
+        else if (historicOnly)
+            url += "&historicOnly=true";
+        else if (ActiveOnly)
+            url += "&activeOnly=true";
+
+        if (aiInvolvedOnly)
+            url += "&aiInvolved=true";
+
+        if (!string.IsNullOrWhiteSpace(search))
+            url += $"&q={Uri.EscapeDataString(search)}";
+
+        // Ensure team members are loaded (once)
+        if (teamMembers.Count == 0)
+        {
+            try { teamMembers = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users", token) ?? new(); }
+            catch { teamMembers = new(); }
+        }
+
+        var resp = await HelpdeskApi.GetFromJsonAsync<PagedResponse<IncidentDto>>(url, token);
+
+        return new TableData<IncidentDto>
+        {
+            Items = resp?.Items ?? new List<IncidentDto>(),
+            TotalItems = resp?.TotalCount ?? 0
+        };
+    }
+
+    private void NavigateToDetail(string ticketType, string id) =>
+        NavigationManager.NavigateTo($"/{ticketType}/{id}");
+
+    private void NavigateToIncident(string id) => NavigateToDetail("incidents", id);
+
+    private static void UpdateCustomer(IncidentDto incident, TicketCustomerPicker.CustomerSelection selection)
+    {
+        incident.CustomerId = selection.CustomerId;
+        incident.CustomerName = selection.CustomerName;
+        incident.CustomerEmail = selection.CustomerEmail;
+        incident.RequesterEmail = selection.CustomerEmail;
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<CreateIncidentDialog>(
+            "Create Incident",
+            options);
+
+        var result = await dialog.Result;
+
+        if (!result.Canceled && _table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private Task Reload()
+    {
+        _selected.Clear();
+        return _table?.ReloadServerData() ?? Task.CompletedTask;
+    }
+
+    private async Task ToggleHistoric()
+    {
+        historicOnly = !historicOnly;
+        await Reload();
+    }
+
+    private async Task ApplyBulkState()
+    {
+        if (_selected.Count == 0 || _table is null) return;
+        var selectedState = _table.SelectedBulkState;
+        var ids = _selected.Select(x => x.Id).ToList();
+        var resp = await HelpdeskApi.PostAsJsonAsync("/api/v1/incidents/bulk/state", new { Ids = ids, NewState = selectedState, Comment = (string?)null });
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Updated {_selected.Count} incident(s) to {selectedState}", Severity.Success);
+            await Reload();
+        }
+        else
+        {
+            Snackbar.Add("Bulk update failed", Severity.Error);
+        }
+    }
+
+    private async Task ApplyBulkAssign()
+    {
+        if (_selected.Count == 0 || _table is null) return;
+        var assigneeId = _table.SelectedBulkAssigneeId;
+        var ids = _selected.Select(x => x.Id).ToList();
+        var resp = await HelpdeskApi.PostAsJsonAsync("/api/v1/incidents/bulk/assign", new { Ids = ids, AssignedToId = assigneeId });
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Assigned {_selected.Count} incident(s)", Severity.Success);
+            await Reload();
+        }
+        else
+        {
+            Snackbar.Add("Bulk assign failed", Severity.Error);
+        }
+    }
+
+    private Task ApplyBulkAction(string action) => action switch
+    {
+        "delete" => ApplyBulkDelete(),
+        "marketing-spam" => ApplyBulkMarketingSpam(),
+        _ => Task.CompletedTask
+    };
+
+    private async Task ApplyBulkDelete()
+    {
+        if (_selected.Count == 0) return;
+        var count = _selected.Count;
+        var confirm = await DialogService.ShowMessageBox(
+            $"Delete {count} selected tickets?",
+            "This action will remove the selected tickets and will not notify the requester.",
+            yesText: "Delete",
+            cancelText: "Cancel",
+            options: new DialogOptions { CloseOnEscapeKey = true });
+        if (confirm != true)
+        {
+            return;
+        }
+
+        var ids = _selected.Select(x => x.Id).ToList();
+        var resp = await HelpdeskApi.PostAsJsonAsync("/api/v1/incidents/bulk/delete", new { Ids = ids });
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Deleted {count} incident(s)", Severity.Success);
+            await Reload();
+        }
+        else
+        {
+            Snackbar.Add("Bulk delete failed", Severity.Error);
+        }
+    }
+
+    private async Task ApplyBulkMarketingSpam()
+    {
+        if (_selected.Count == 0) return;
+        var count = _selected.Count;
+        var confirm = await DialogService.ShowMessageBox(
+            $"Mark {count} selected tickets as Marketing/Spam?",
+            "This action will silently close the selected tickets and will not notify the requester.",
+            yesText: "Mark as Marketing/Spam",
+            cancelText: "Cancel",
+            options: new DialogOptions { CloseOnEscapeKey = true });
+        if (confirm != true)
+        {
+            return;
+        }
+
+        var ids = _selected.Select(x => x.Id).ToList();
+        var resp = await HelpdeskApi.PostAsJsonAsync("/api/v1/incidents/bulk/marketing-spam", new { Ids = ids });
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Marked {count} incident(s) as marketing/spam", Severity.Success);
+            await Reload();
+        }
+        else
+        {
+            Snackbar.Add("Bulk marketing/spam update failed", Severity.Error);
+        }
+    }
+
+    // Tiny debounce so typing in search doesn’t fetch on every keystroke
+    private async Task DebouncedReload()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(300, _debounceCts.Token);
+            await Reload();
+        }
+        catch (TaskCanceledException) { }
+    }
+}

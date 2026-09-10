@@ -1,0 +1,136 @@
+@using Helpdesk.Shared.DTOs.EmailRules
+@using Helpdesk.Shared.Enums
+
+<MudDialog>
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.Rule" />
+            <MudText Typo="Typo.h6">@Rule.Name</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+                <MudChip T="string" Color="@EnabledColor" Variant="Variant.Filled" Size="Size.Small">
+                    @(Rule.Enabled ? "Enabled" : "Disabled")
+                </MudChip>
+                <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined" Size="Size.Small">
+                    @InboundEmailRuleLabels.Scope(Rule.ScopeType)
+                </MudChip>
+                <MudChip T="string" Color="Color.Secondary" Variant="Variant.Outlined" Size="Size.Small">
+                    Priority @Rule.Priority
+                </MudChip>
+                @if (Rule.StopProcessing)
+                {
+                    <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">
+                        Stop processing
+                    </MudChip>
+                }
+            </MudStack>
+
+            @if (!string.IsNullOrWhiteSpace(Rule.Description))
+            {
+                <MudText Typo="Typo.body2">@Rule.Description</MudText>
+            }
+
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudText Typo="Typo.overline">Tenant</MudText>
+                    <MudText Typo="Typo.body2">@TenantDisplay</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText Typo="Typo.overline">Mailbox</MudText>
+                    <MudText Typo="Typo.body2">@(Rule.MailboxId?.ToString() ?? "-")</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText Typo="Typo.overline">Created</MudText>
+                    <MudText Typo="Typo.body2">@Rule.CreatedAtUtc.ToLocalTime().ToString("g")</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText Typo="Typo.overline">Updated</MudText>
+                    <MudText Typo="Typo.body2">@Rule.UpdatedAtUtc.ToLocalTime().ToString("g")</MudText>
+                </MudItem>
+            </MudGrid>
+
+            <MudDivider />
+
+            <div>
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Conditions</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var condition in Rule.Conditions)
+                    {
+                        <MudListItem Icon="@Icons.Material.Filled.CheckCircleOutline">
+                            @InboundEmailRuleLabels.Condition(condition)
+                        </MudListItem>
+                    }
+                </MudList>
+            </div>
+
+            <div>
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Actions</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var action in Rule.Actions)
+                    {
+                        <MudListItem Icon="@Icons.Material.Filled.PlayArrow">
+                            <MudStack Spacing="0">
+                                <MudText Typo="Typo.body2">@InboundEmailRuleLabels.Action(action)</MudText>
+                                @if (!string.IsNullOrWhiteSpace(InboundEmailRuleLabels.ActionDescription(action)))
+                                {
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                        @InboundEmailRuleLabels.ActionDescription(action)
+                                    </MudText>
+                                }
+                            </MudStack>
+                        </MudListItem>
+                    }
+                </MudList>
+            </div>
+
+            <MudExpansionPanels Elevation="0" Class="mt-2">
+                <MudExpansionPanel Text="Advanced">
+                    <MudTable Items="Rule.Conditions" Dense="true" Hover="true" Breakpoint="Breakpoint.None">
+                        <HeaderContent>
+                            <MudTh>Condition</MudTh>
+                            <MudTh>Mailbox</MudTh>
+                            <MudTh>Permissions</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Condition">@context.Type</MudTd>
+                            <MudTd DataLabel="Mailbox">@(context.MailboxId ?? "-")</MudTd>
+                            <MudTd DataLabel="Permissions">@FormatList(context.Permissions)</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    <MudTable Items="Rule.Actions" Dense="true" Hover="true" Breakpoint="Breakpoint.None" Class="mt-3">
+                        <HeaderContent>
+                            <MudTh>Action</MudTh>
+                            <MudTh>Action key</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Action">@context.Type</MudTd>
+                            <MudTd DataLabel="Action key">@(context.ActionKey ?? "-")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public InboundEmailRuleDto Rule { get; set; } = default!;
+    [Parameter] public string? TenantDisplay { get; set; }
+
+    private Color EnabledColor => Rule.Enabled ? Color.Success : Color.Default;
+
+    private static string FormatList(IEnumerable<string>? values)
+    {
+        var list = values?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? [];
+        return list.Count == 0 ? "-" : string.Join(", ", list);
+    }
+
+    private void Close() => Dialog.Close();
+}

@@ -1,0 +1,445 @@
+﻿@page "/submit-ticket"
+@layout PublicLayout
+@attribute [AllowAnonymous]
+@rendermode InteractiveServer
+
+@using FluentValidation
+@using System.Net.Http.Json
+@using FormCraft
+@using FormCraft.Components
+@using FormCraft.ForMudBlazor
+@using Helpdesk.Shared.DTOs
+
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@inject IHttpClientFactory HttpClientFactory
+
+@if (_ticketSuccessfullyCreated)
+{
+    <MudContainer MaxWidth="MaxWidth.Small" Class="mt-12">
+        <MudPaper Class="pa-8">
+            <MudStack Spacing="3">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle"
+                             Color="Color.Success"
+                             Size="Size.Large" />
+                    <MudText Typo="Typo.h5">
+                        Ticket submitted successfully
+                    </MudText>
+                </MudStack>
+
+                <MudDivider />
+
+                <MudPaper Class="pa-4" Elevation="0" Style="background-color:#f5f7fa;">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Ticket reference
+                    </MudText>
+                    <MudText Typo="Typo.h6">
+                        @_createdTicketId
+                    </MudText>
+                </MudPaper>
+
+                <MudSimpleTable Dense="true">
+                    <tbody>
+                        <tr>
+                            <td><MudText Color="Color.Secondary">Name</MudText></td>
+                            <td>@_model.Name</td>
+                        </tr>
+                        <tr>
+                            <td><MudText Color="Color.Secondary">Email</MudText></td>
+                            <td>@_model.Email</td>
+                        </tr>
+                        <tr>
+                            <td><MudText Color="Color.Secondary">Subject</MudText></td>
+                            <td>@_model.Subject</td>
+                        </tr>
+                        <tr>
+                            <td><MudText Color="Color.Secondary">Priority</MudText></td>
+                            <td>@_model.Priority</td>
+                        </tr>
+                    </tbody>
+                </MudSimpleTable>
+
+                <MudDivider />
+
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    A confirmation email containing your ticket reference has been sent.
+                    A member of the support team will review your request and contact you shortly.
+                </MudText>
+
+                <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="2" Class="mt-4">
+                    <MudButton Variant="Variant.Outlined"
+                               OnClick='() => NavigationManager.NavigateTo("/")'>
+                        Return to Home
+                    </MudButton>
+                </MudStack>
+            </MudStack>
+        </MudPaper>
+    </MudContainer>
+}
+else
+{
+    <MudPaper Class="pa-4 pa-md-8 mx-auto mt-8" MaxWidth="MaxWidth.Medium">
+        @if (_contactInfoConfig is null || _ticketDetailsConfig is null || _attachmentsConfig is null)
+        {
+            <MudProgressCircular Indeterminate="true" />
+        }
+        else
+        {
+            <MudContainer MaxWidth="MaxWidth.Large" Class="px-4">
+
+                <MudGrid Justify="Justify.Center">
+                    <MudItem xs="12" md="10" lg="8">
+                        <MudPaper Class="pa-4 pa-md-6 mt-6">
+                            <MudText Typo="Typo.h4" GutterBottom="true">Submit a New Ticket</MudText>
+                            <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mb-6">
+                                Please follow the steps below to create your support ticket.
+                            </MudText>
+                            <!-- your title, text, and the stepper go here -->
+                            <MudStepper @ref="_stepper" @bind-ActiveIndex="_currentStepIndex" NonLinear=false>
+                                <ChildContent>
+                                    <MudStep Title="Contact Info">
+                                        <FormCraftComponent @ref="_contactInfoForm"
+                                                            TModel="SubmitTicketModel"
+                                                            Model="@_model"
+                                                            Configuration="@_contactInfoConfig"
+                                                            ShowSubmitButton="false" />
+                                    </MudStep>
+
+                                    <MudStep Title="Ticket Details">
+                                        <FormCraftComponent @ref="_ticketDetailsForm"
+                                                            TModel="SubmitTicketModel"
+                                                            Model="@_model"
+                                                            Configuration="@_ticketDetailsConfig"
+                                                            ShowSubmitButton="false" />
+                                    </MudStep>
+
+                                    <MudStep Title="Attachments (Optional)">
+                                        <FormCraftComponent @ref="_attachmentsForm"
+                                                            TModel="SubmitTicketModel"
+                                                            Model="@_model"
+                                                            Configuration="@_attachmentsConfig"
+                                                            ShowSubmitButton="false" />
+                                    </MudStep>
+
+                                    <MudStep Title="Review & Submit">
+                                        <MudText Typo="Typo.h6" GutterBottom="true">Please review your details:</MudText>
+                                        <MudSimpleTable Dense="true" Hover="true">
+                                            <tbody>
+                                                <tr><td><MudText><strong>Name:</strong></MudText></td><td><MudText>@_model.Name</MudText></td></tr>
+                                                <tr><td><MudText><strong>Email:</strong></MudText></td><td><MudText>@_model.Email</MudText></td></tr>
+                                                <tr><td><MudText><strong>Subject:</strong></MudText></td><td><MudText>@_model.Subject</MudText></td></tr>
+                                                <tr><td><MudText><strong>Attachments:</strong></MudText></td><td><MudText>@(_model.Attachments.Count) file(s)</MudText></td></tr>
+                                            </tbody>
+                                        </MudSimpleTable>
+                                        
+                                        <MudStack Class="mt-4 mb-2" Row="true" Spacing="2">
+                                            <MudText Typo="Typo.subtitle2">Enter this text:</MudText>
+                                            @if (!string.IsNullOrEmpty(_captchaImageBase64))
+                                            {
+                                                <MudPaper Class="pa-2">
+                                                    <img src="@_captchaImageBase64"
+                                                         alt="CAPTCHA"
+                                                         style="height: 50px; user-select: none;" />
+                                                </MudPaper>
+                                            }
+                                            <MudButton Variant="Variant.Text" OnClick="RefreshCaptcha">New code</MudButton>
+                                        </MudStack>
+
+                                        <MudTextField T="string"
+                                                      @bind-Value="_model.Captcha"
+                                                      Label="CAPTCHA"
+                                                      Placeholder="Type the text above"
+                                                      Variant="Variant.Outlined"
+                                                      Immediate="true"
+                                                      DebounceInterval="150"
+                                                      Error="_captchaError"
+                                                      ErrorText="_captchaErrorText" />
+
+                                    </MudStep>
+                                </ChildContent>
+                                <ActionContent>
+                                    <MudButton OnClick="GoToPreviousStep" Disabled="@(_currentStepIndex == 0 || _isSubmitting)" Class="ml-auto">Previous</MudButton>
+
+                                    @if (_currentStepIndex < 3)
+                                    {
+                                        <MudButton OnClick="GoToNextStepAsync" Variant="Variant.Filled" Color="Color.Primary" Class="ml-4">Next</MudButton>
+                                    }
+                                    else
+                                    {
+                                        <MudButton OnClick="HandleFinalSubmitAsync"
+                                                   Variant="Variant.Filled"
+                                                   Color="Color.Success"
+                                                   Disabled="@(_isSubmitting || !CaptchaMatches())"
+                                                   Class="ml-4">
+
+                                            @if (_isSubmitting)
+                                            {
+                                                <MudProgressCircular Class="mr-2" Size="Size.Small" Indeterminate="true" />
+                                                <span>Submitting...</span>
+                                            }
+                                            else
+                                            {
+                                                <span>Submit Ticket</span>
+                                            }
+                                        </MudButton>
+                                    }
+                                </ActionContent>
+                            </MudStepper>
+
+                        </MudPaper>
+                    </MudItem>
+                </MudGrid>
+            </MudContainer>
+        }
+    </MudPaper>
+}
+
+<style>
+    .divCaptach .btn-refresh {
+        display: none !important;
+    }
+</style>
+
+@code {
+    private MudStepper? _stepper;
+    private int _currentStepIndex = 0;
+    private bool _isSubmitting = false;
+    private bool _ticketSuccessfullyCreated = false;
+    private string _createdIncidentId = string.Empty;
+    private string _createdTicketId = string.Empty;
+    private record BufferedFile(string FileName, string? ContentType, byte[] Bytes);
+    private readonly List<BufferedFile> _bufferedAttachments = new();
+
+    private FormCraftComponent<SubmitTicketModel>? _contactInfoForm;
+    private FormCraftComponent<SubmitTicketModel>? _ticketDetailsForm;
+    private FormCraftComponent<SubmitTicketModel>? _attachmentsForm;
+
+    private SubmitTicketModel _model = new();
+    private SubmitTicketValidator _validator = new();
+
+    private IFormConfiguration<SubmitTicketModel> _contactInfoConfig = default!;
+    private IFormConfiguration<SubmitTicketModel> _ticketDetailsConfig = default!;
+    private IFormConfiguration<SubmitTicketModel> _attachmentsConfig = default!;
+
+    private string _captchaChallenge = string.Empty;
+    private string _captchaImageBase64 = string.Empty;
+    private Guid _captchaId;
+    private bool _captchaError;
+    private string? _captchaErrorText;
+    private bool CaptchaMatches() =>
+    !string.IsNullOrWhiteSpace(_model.Captcha) &&
+    string.Equals(_model.Captcha.Trim(), _captchaChallenge.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private HttpClient SystemApi => HttpClientFactory.CreateClient("SystemApi");
+
+    protected override async Task OnInitializedAsync()
+    {
+        BuildContactInfoConfig();
+        BuildTicketDetailsConfig();
+        BuildAttachmentsConfig();
+
+        var captcha = await SystemApi.GetFromJsonAsync<CaptchaResponse>("api/v1/captcha");
+        if (captcha is not null)
+        {
+            _captchaChallenge = captcha.challenge;
+            _captchaId = captcha.id;
+            _captchaImageBase64 = captcha.imageBase64;
+        }
+    }
+
+    #region FormCraft Configuration Builders
+    private void BuildContactInfoConfig()
+    {
+        _contactInfoConfig = FormBuilder<SubmitTicketModel>.Create()
+            .AddRequiredTextField(x => x.Name, "Your Name")
+            // Email + required
+            .AddEmailField(x => x.Email)
+            // Confirm email + cross-field match
+            .AddRequiredTextField(x => x.ConfirmEmail, "Confirm Email Address")
+            .Build();
+    }
+
+    private void BuildTicketDetailsConfig()
+    {
+        _ticketDetailsConfig = FormBuilder<SubmitTicketModel>.Create()
+            .AddRequiredTextField(x => x.Subject, "Subject of your issue")
+            .AddField(x => x.Message, field => field
+                .WithLabel("Please describe the issue in detail")
+                .AsTextArea(lines: 5))
+            .AddField(x => x.Priority, field => field
+                .WithLabel("Priority")
+                .WithOptions(
+                    (TicketPriority.Low, "Low"),
+                    (TicketPriority.Medium, "Medium"),
+                    (TicketPriority.High, "High")
+                ))
+            .Build();
+    }
+
+    private void BuildAttachmentsConfig()
+    {
+        _attachmentsConfig = FormBuilder<SubmitTicketModel>.Create()
+            .AddMultipleFileUploadField(x => x.Attachments, "Attachments (Max 5MB each)",
+                maxFiles: 5,
+                acceptedFileTypes: new[] { ".pdf", ".jpg", ".jpeg", ".png", ".zip", ".log", ".txt" },
+                maxFileSize: 5 * 1024 * 1024)
+            .Build();
+    }
+    #endregion
+
+    #region Stepper Navigation
+    private async Task GoToNextStepAsync()
+    {
+        var isValid = _currentStepIndex switch
+        {
+            0 => _contactInfoForm?.Validate() ?? false,
+            1 => _ticketDetailsForm?.Validate() ?? false,
+            2 => _attachmentsForm?.Validate() ?? false,
+            _ => true
+        };
+
+        if (!isValid || _stepper is null) return;
+
+        // Attachments step index == 2
+        if (_currentStepIndex == 2 && _model.Attachments.Any())
+            await BufferAttachmentsAsync();
+
+        await _stepper.NextStepAsync();
+    }
+
+    private async Task GoToPreviousStep()
+    {
+        if (_stepper is not null)
+        {
+            await _stepper.PreviousStepAsync();
+        }
+    }
+    #endregion
+
+    #region Final Submission
+    private async Task HandleFinalSubmitAsync()
+    {
+        _captchaError = false; _captchaErrorText = null;
+
+        if (!CaptchaMatches())
+        {
+            _captchaError = true;
+            _captchaErrorText = "CAPTCHA is incorrect.";
+            Snackbar.Add(_captchaErrorText, MudBlazor.Severity.Error);
+            return;
+        }
+
+        _isSubmitting = true;
+
+        var request = new SubmitTicketRequest
+        {
+            Name = _model.Name,
+            Email = _model.Email,
+            Subject = _model.Subject,
+            Message = _model.Message,
+            Priority = _model.Priority,
+            CaptchaId = _captchaId,
+            CaptchaAnswer = _model.Captcha
+        };
+
+        var response = await SystemApi.PostAsJsonAsync("api/v1/public/tickets/submit", request);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Error: Could not create the ticket.", MudBlazor.Severity.Error);
+            _isSubmitting = false;
+            return;
+        }
+
+        var createdTicket = await response.Content.ReadFromJsonAsync<CreateTicketResponse>();
+        if (createdTicket == null || string.IsNullOrEmpty(createdTicket.Id))
+        {
+            Snackbar.Add("Error: Did not receive a valid ticket ID from the server.", MudBlazor.Severity.Error);
+            _isSubmitting = false;
+            return;
+        }
+
+        _createdIncidentId = createdTicket.Id;
+        _createdTicketId = string.IsNullOrWhiteSpace(createdTicket.TrackingId)
+            ? createdTicket.Id
+            : createdTicket.TrackingId;
+
+        if (_bufferedAttachments.Any())
+        {
+            using var content = new MultipartFormDataContent();
+            foreach (var f in _bufferedAttachments)
+            {
+                var part = new ByteArrayContent(f.Bytes);
+                if (!string.IsNullOrWhiteSpace(f.ContentType))
+                    part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(f.ContentType);
+                content.Add(part, "files", f.FileName);
+            }
+
+            var attachmentResponse =
+                await SystemApi.PostAsync($"api/v1/tickets/{_createdIncidentId}/attachments", content);
+
+            if (!attachmentResponse.IsSuccessStatusCode)
+                Snackbar.Add("Ticket created, but failed to upload attachments.", MudBlazor.Severity.Warning);
+        }
+
+        _isSubmitting = false;
+        _ticketSuccessfullyCreated = true;
+    }
+
+    private async Task RefreshCaptcha()
+    {
+        var captcha = await SystemApi.GetFromJsonAsync<CaptchaResponse>("api/v1/captcha");
+        if (captcha is not null)
+        {
+            _captchaChallenge = captcha.challenge;
+            _captchaId = captcha.id;
+            _captchaImageBase64 = captcha.imageBase64;
+            _model.Captcha = string.Empty;
+            _captchaError = false; _captchaErrorText = null;
+        }
+    }
+
+    private async Task BufferAttachmentsAsync()
+    {
+        _bufferedAttachments.Clear();
+
+        foreach (var file in _model.Attachments)
+        {
+            // pick a sensible limit (or read from config)
+            const long maxAllowed = 20 * 1024 * 1024; // 20 MB
+            await using var src = file.OpenReadStream(maxAllowed);
+            using var ms = new MemoryStream();
+            await src.CopyToAsync(ms);
+            _bufferedAttachments.Add(new BufferedFile(file.Name, file.ContentType, ms.ToArray()));
+        }
+    }
+    #endregion
+
+    private class SubmitTicketModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string ConfirmEmail { get; set; } = string.Empty;
+        public TicketPriority Priority { get; set; } = TicketPriority.Low;
+        public string Subject { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public IReadOnlyList<IBrowserFile> Attachments { get; set; } = new List<IBrowserFile>();
+        public string Captcha { get; set; } = string.Empty;
+    }
+
+    private class SubmitTicketValidator : AbstractValidator<SubmitTicketModel>
+    {
+        public SubmitTicketValidator()
+        {
+            RuleFor(x => x.Name).NotEmpty();
+            RuleFor(x => x.Email).NotEmpty().EmailAddress();
+            RuleFor(x => x.ConfirmEmail).NotEmpty().Equal(x => x.Email).WithMessage("Email addresses do not match.");
+            RuleFor(x => x.Subject).NotEmpty().Length(5, 100);
+            RuleFor(x => x.Message).NotEmpty().MinimumLength(20);
+            RuleFor(x => x.Priority).IsInEnum();
+        }
+    }
+
+    private record CreateTicketResponse(string Id, string? TrackingId);
+    private record CaptchaResponse(Guid id, string challenge, string imageBase64);
+}

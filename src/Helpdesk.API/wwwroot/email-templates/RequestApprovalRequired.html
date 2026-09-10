@@ -1,0 +1,36 @@
+<p style="margin:0 0 16px 0;">Hello {{{USER_NAME}}},</p>
+<p style="margin:0 0 18px 0;">The request below requires your approval to proceed.</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%; border-collapse:collapse; margin:0 0 22px 0; background:#f6fbff; border:1px solid #c9e6f7; border-left:4px solid {{PRIMARY_COLOR}}; border-radius:6px;">
+  <tr>
+    <td style="padding:16px 18px;">
+      <div style="font-size:12px; line-height:16px; color:#526173; text-transform:uppercase;">Approval required</div>
+      <div style="font-size:22px; line-height:30px; color:#0f2438; font-weight:700;">{{{TICKET_REF}}}</div>
+      <div style="margin-top:10px; font-size:16px; line-height:24px; color:#152033; font-weight:700;">{{{REQUEST_TITLE}}}</div>
+      <div style="margin-top:8px; color:#152033; font-size:15px; line-height:23px;">{{{REQUEST_DESCRIPTION}}}</div>
+    </td>
+  </tr>
+</table>
+
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%; border-collapse:collapse; margin:0 0 20px 0; border:1px solid #dbe5ee;">
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; width:36%; border-bottom:1px solid #dbe5ee;">Requested by</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{REQUEST_REQUESTED_BY}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Requested for</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{REQUEST_REQUESTED_FOR}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Approvers</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{REQUEST_APPROVERS}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173;">Approval due</td><td style="padding:10px 12px; color:#152033;">{{REQUEST_APPROVAL_DUE_AT}}</td></tr>
+</table>
+
+<p style="margin:0 0 10px 0; font-weight:700;">Submitted details</p>
+<div style="margin:0 0 22px 0;">{{{REQUEST_PAYLOAD_HTML}}}</div>
+
+<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin:0 0 8px 0;">
+  <tr>
+    <td style="background:#f59e0b; border-radius:6px;">
+      <a href="{{{REQUEST_APPROVAL_LINK}}}" style="display:inline-block; padding:12px 18px; background:#f59e0b; border:1px solid #d97706; color:#111827 !important; text-decoration:none !important; font-weight:700; line-height:20px; border-radius:6px;">Review / Approve Request</a>
+    </td>
+    <td style="width:10px;">&nbsp;</td>
+    <td style="background:#ffffff; border-radius:6px;">
+      <a href="{{{REQUEST_REJECT_LINK}}}" style="display:inline-block; padding:12px 18px; background:#ffffff; border:1px solid #dc2626; color:#991b1b !important; text-decoration:none !important; font-weight:700; line-height:20px; border-radius:6px;">Reject Request</a>
+    </td>
+  </tr>
+</table>
+<p style="margin:0; color:#526173; font-size:13px; line-height:19px;">This secure link is unique to your email address.</p>

@@ -1,0 +1,173 @@
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Select Incident</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudTextField T="string"
+                          @bind-Value="search"
+                          Placeholder="Search"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="true"
+                          OnBlur="ReloadAsync"
+                          OnKeyUp="@(async _ => await DebouncedReloadAsync())" />
+
+            <MudTable T="IncidentDto"
+                      @ref="table"
+                      ServerData="LoadServerData"
+                      Dense="true"
+                      Hover="true"
+                      Elevation="0"
+                      MultiSelection="true"
+                      SelectOnRowClick="false"
+                      SelectionChangeable="true"
+                      Comparer="IncidentIdentityComparer.Instance"
+                      RowsPerPage="10"
+                      @bind-SelectedItems="selected">
+                <HeaderContent>
+                    <MudTh>Tracking ID</MudTh>
+                    <MudTh>Updated</MudTh>
+                    <MudTh>Subject</MudTh>
+                    <MudTh>State</MudTh>
+                    <MudTh>Priority</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Tracking ID">@context.TrackingId</MudTd>
+                    <MudTd DataLabel="Updated">@context.UpdatedAt?.ToLocalTime().ToString("g")</MudTd>
+                    <MudTd DataLabel="Subject">@context.Subject</MudTd>
+                    <MudTd DataLabel="State">@context.State</MudTd>
+                    <MudTd DataLabel="Priority">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@GetPriorityColor(context.Priority)">
+                            @context.Priority
+                        </MudChip>
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 20, 50 }" />
+                </PagerContent>
+            </MudTable>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   OnClick="SelectAsync"
+                   Disabled="@(selected.Count == 0)">
+            Select
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public string SourceIncidentId { get; set; } = string.Empty;
+    [Parameter] public string SourceOrganizationId { get; set; } = string.Empty;
+    [Parameter] public IReadOnlyCollection<IncidentDto> InitialSelectedTargets { get; set; } = Array.Empty<IncidentDto>();
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private MudTable<IncidentDto>? table;
+    private HashSet<IncidentDto> selected = new(IncidentIdentityComparer.Instance);
+    private string? search;
+    private CancellationTokenSource? debounceCts;
+
+    protected override void OnInitialized()
+    {
+        selected = InitialSelectedTargets.ToHashSet(IncidentIdentityComparer.Instance);
+    }
+
+    private async Task<TableData<IncidentDto>> LoadServerData(TableState state, CancellationToken token)
+    {
+        var page = state.Page + 1;
+        var pageSize = state.PageSize <= 0 ? 10 : state.PageSize;
+        var url = $"api/v1/incidents?page={page}&pageSize={pageSize}&activeOnly=true&summaryOnly=true";
+
+        if (!string.IsNullOrWhiteSpace(SourceOrganizationId))
+        {
+            url += $"&organizationId={Uri.EscapeDataString(SourceOrganizationId)}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(SourceIncidentId))
+        {
+            url += $"&excludeId={Uri.EscapeDataString(SourceIncidentId)}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            url += $"&q={Uri.EscapeDataString(search)}";
+        }
+
+        try
+        {
+            var response = await HelpdeskApi.GetFromJsonAsync<PagedResponse<IncidentDto>>(url, token);
+            return new TableData<IncidentDto>
+            {
+                Items = response?.Items ?? new List<IncidentDto>(),
+                TotalItems = response?.TotalCount ?? 0
+            };
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load incidents: {ex.Message}", Severity.Error);
+            return new TableData<IncidentDto>
+            {
+                Items = Array.Empty<IncidentDto>(),
+                TotalItems = 0
+            };
+        }
+    }
+
+    private Task ReloadAsync()
+    {
+        return table?.ReloadServerData() ?? Task.CompletedTask;
+    }
+
+    private async Task DebouncedReloadAsync()
+    {
+        debounceCts?.Cancel();
+        debounceCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(300, debounceCts.Token);
+            await ReloadAsync();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private Task SelectAsync()
+    {
+        Dialog.Close(DialogResult.Ok(selected.OrderBy(x => x.TrackingId, StringComparer.OrdinalIgnoreCase).ToList()));
+        return Task.CompletedTask;
+    }
+
+    private void Cancel()
+    {
+        Dialog.Cancel();
+    }
+
+    private static Color GetPriorityColor(TicketPriority priority) => priority switch
+    {
+        TicketPriority.Low => Color.Info,
+        TicketPriority.Medium => Color.Warning,
+        TicketPriority.High => Color.Error,
+        TicketPriority.Critical => Color.Error,
+        _ => Color.Default
+    };
+
+    private sealed class IncidentIdentityComparer : IEqualityComparer<IncidentDto>
+    {
+        public static IncidentIdentityComparer Instance { get; } = new();
+
+        public bool Equals(IncidentDto? x, IncidentDto? y) =>
+            string.Equals(x?.Id, y?.Id, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode(IncidentDto obj) =>
+            StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Id);
+    }
+}

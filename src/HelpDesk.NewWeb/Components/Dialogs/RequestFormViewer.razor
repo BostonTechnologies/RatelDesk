@@ -1,0 +1,210 @@
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Helpdesk.Shared.DTOs.RequestForm
+@using Helpdesk.Shared.DTOs.Request
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_requestForm?.Title ?? "Request Form")</MudText>
+    </TitleContent>
+
+    <DialogContent>
+        @if (_requestForm is null)
+        {
+            <MudProgressCircular Indeterminate="true" Class="mx-auto my-8" />
+        }
+        else
+        {
+            <MudForm @ref="form" OnValidSubmit="Submit">
+                <MudGrid>
+                    @foreach (var field in _fields)
+                    {
+                        var key = field.Label;  // capture to avoid closures
+                                                <MudItem xs="12">
+                            @switch (field.Type)
+                            {
+                                case "text":
+                                    <MudTextField Value="GetString(key)"
+                                                  ValueChanged="(string v) => SetString(key, v)"
+                                                  Label="@field.Label"
+                                                  Variant="Variant.Outlined"
+                                                  Required="@field.Required" />
+                                    break;
+
+                                case "textarea":
+                                    <MudTextField Value="GetString(key)"
+                                                  ValueChanged="(string v) => SetString(key, v)"
+                                                  Label="@field.Label"
+                                                  Lines="4"
+                                                  Variant="Variant.Outlined"
+                                                  Required="@field.Required" />
+                                    break;
+
+                                case "number":
+                                    <MudNumericField T="decimal?" Value="GetDecimal(key)"
+                                                     ValueChanged="(decimal? v) => SetDecimal(key, v)"
+                                                     Label="@field.Label"
+                                                     Variant="Variant.Outlined" />
+                                    @* numeric doesn't have Required in Mud; enforce in Submit if needed *@
+                                    break;
+
+                                case "boolean":
+                                    <MudSwitch T="bool"
+                                               Value="GetBool(key)"
+                                               ValueChanged="(bool v) => SetBool(key, v)"
+                                               Color="Color.Primary"
+                                               Label="@field.Label" />
+                                    break;
+                            }
+                        </MudItem>
+                    }
+                </MudGrid>
+            </MudForm>
+        }
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit"
+                   Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="Submit">Submit</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public string RequestFormId { get; set; } = default!;
+    [Parameter] public string? ServiceId { get; set; }
+
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private MudForm form = default!;
+    private RequestFormDto? _requestForm;
+    private List<FormField> _fields = new();
+    private readonly Dictionary<string, object?> _values = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _requestForm = await Api.GetFromJsonAsync<RequestFormDto>($"api/v1/request-forms/{RequestFormId}");
+            if (_requestForm is not null)
+                ParseSchema(_requestForm.JsonSchema);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load form: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void ParseSchema(string schema)
+    {
+        try
+        {
+            var node = JsonNode.Parse(schema) as JsonObject;
+            if (node?["fields"] is JsonArray arr)
+            {
+                var fields = arr.Deserialize<List<FormField>>(JsonOptions);
+                if (fields is not null) _fields = fields;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Invalid form schema: {ex.Message}", Severity.Error);
+        }
+    }
+
+    // ----- typed helpers to avoid generic calls in markup -----
+    private string? GetString(string key) => _values.TryGetValue(key, out var v) ? v as string : null;
+    private void SetString(string key, string? v) => _values[key] = v;
+
+    private decimal? GetDecimal(string key)
+        => _values.TryGetValue(key, out var v) ? v as decimal? ?? (v is double d ? (decimal?)d : null) : null;
+    private void SetDecimal(string key, decimal? v) => _values[key] = v;
+
+    private bool GetBool(string key)
+        => _values.TryGetValue(key, out var v) && v is bool b ? b : false;
+    private void SetBool(string key, bool v) => _values[key] = v;
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!form.IsValid) return;
+
+        if (string.IsNullOrWhiteSpace(ServiceId))
+        {
+            Snackbar.Add("ServiceId is required.", Severity.Error);
+            return;
+        }
+
+        // Enforce "required" fields manually for number/bool (MudSwitch/Numeric don't have Required)
+        var missing = _fields
+            .Where(f => f.Required)
+            .Where(f =>
+            {
+                if (!_values.TryGetValue(f.Label, out var val) || val is null) return true;
+                return f.Type switch
+                {
+                    "text" or "textarea" => string.IsNullOrWhiteSpace(val as string),
+                    "number" => val is not decimal and not double,
+                    "boolean" => false, // switch can't be "missing"; treat false as provided
+                    _ => true
+                };
+            })
+            .Select(f => f.Label)
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            Snackbar.Add($"Please complete required: {string.Join(", ", missing)}", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            // Good default title: form title or first string field value
+            string? title = _requestForm?.Title;
+            var firstTextKey = _fields.FirstOrDefault(f => f.Type is "text" or "textarea")?.Label;
+            if (firstTextKey is not null && string.IsNullOrWhiteSpace(title))
+                title = GetString(firstTextKey);
+
+            var dto = new CreateRequestDto
+            {
+                ServiceId = ServiceId!,
+                RequestFormId = RequestFormId,
+                Title = string.IsNullOrWhiteSpace(title) ? "Request" : title,
+                PayloadJson = JsonSerializer.Serialize(_values, JsonOptions)
+            };
+
+            var resp = await Api.PostAsJsonAsync("api/v1/requests", dto);
+            if (resp.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Request submitted.", Severity.Success);
+                Dialog.Close(DialogResult.Ok(true));
+            }
+            else
+            {
+                var error = await resp.Content.ReadAsStringAsync();
+                Snackbar.Add($"Submit failed: {error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Submit failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+}

@@ -1,0 +1,29 @@
+@inherits LayoutComponentBase
+
+<ThemePreferenceProvider Context="themePreference">
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <div class="helpdesk-public-theme-control">
+        <MudMenu Icon="@themePreference.Icon" Color="Color.Inherit" aria-label="Choose colour theme" data-testid="theme-preference-menu">
+            <MudMenuItem Icon="@Icons.Material.Rounded.AutoMode" data-testid="theme-option-system" OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.System))">
+                System@(themePreference.Mode is ThemePreferenceMode.System ? " (current)" : string.Empty)
+            </MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Outlined.LightMode" data-testid="theme-option-light" OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.Light))">
+                Light@(themePreference.Mode is ThemePreferenceMode.Light ? " (current)" : string.Empty)
+            </MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Outlined.DarkMode" data-testid="theme-option-dark" OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.Dark))">
+                Dark@(themePreference.Mode is ThemePreferenceMode.Dark ? " (current)" : string.Empty)
+            </MudMenuItem>
+        </MudMenu>
+    </div>
+    <MudMainContent Class="helpdesk-public-main">
+        @Body
+    </MudMainContent>
+</MudLayout>
+</ThemePreferenceProvider>
+
+@code {
+}

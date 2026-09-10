@@ -1,0 +1,197 @@
+﻿@inherits LayoutComponentBase
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
+
+<ThemePreferenceProvider Context="themePreference">
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true" Class="helpdesk-app-bar">
+        <div class="helpdesk-appbar-left">
+            <AuthorizeView>
+                <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                               Color="Color.Inherit"
+                               Edge="Edge.Start"
+                               OnClick="ToggleDrawer"
+                               aria-label="Toggle navigation"
+                               data-testid="navigation-toggle" />
+            </AuthorizeView>
+            <MudText Typo="Typo.h6" Class="helpdesk-appbar-title">RatelDesk</MudText>
+        </div>
+        <AuthorizeView>
+            <Authorized>
+                <div class="helpdesk-appbar-search-wrap">
+                    <button type="button" class="helpdesk-appbar-search" @onclick="OpenSearch">
+                        <MudIcon Icon="@Icons.Material.Filled.Search" Size="Size.Small" />
+                        <span>Search</span>
+                        <kbd>Shift + S</kbd>
+                    </button>
+                </div>
+                <div class="helpdesk-appbar-actions">
+                    <MudChip T="string"
+                             Class="helpdesk-appbar-chip helpdesk-appbar-api-chip"
+                             Size="Size.Small"
+                             Variant="Variant.Outlined"
+                             Color="Color.Default"
+                             Href="/api/docs/">
+                        API
+                    </MudChip>
+                    <AppBarVersionChip Version="_appBarVersion" />
+                    <MudIcon Icon="@Icons.Material.Filled.LockPerson" Color="Color.Success" />
+                    <NotificationBell />
+                    <MudTooltip Text="@themePreference.Label">
+                        <MudMenu Icon="@themePreference.Icon" Color="Color.Inherit" aria-label="Choose colour theme" data-testid="theme-preference-menu">
+                            <MudMenuItem Icon="@Icons.Material.Rounded.AutoMode" data-testid="theme-option-system" OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.System))">
+                                System@(themePreference.Mode is ThemePreferenceMode.System ? " (current)" : string.Empty)
+                            </MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Outlined.LightMode" data-testid="theme-option-light" OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.Light))">
+                                Light@(themePreference.Mode is ThemePreferenceMode.Light ? " (current)" : string.Empty)
+                            </MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Outlined.DarkMode" data-testid="theme-option-dark" OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.Dark))">
+                                Dark@(themePreference.Mode is ThemePreferenceMode.Dark ? " (current)" : string.Empty)
+                            </MudMenuItem>
+                        </MudMenu>
+                    </MudTooltip>
+                    <MudMenu Icon="@Icons.Material.Filled.Settings">
+                        <MudMenuItem>Profile</MudMenuItem>
+                        <MudMenuItem>Preferences</MudMenuItem>
+                        <MudMenuItem OnClick="OpenEmailSettings">Email Settings</MudMenuItem>
+                        <MudMenuItem OnClick="OpenAiSettings">AI / Model Settings</MudMenuItem>
+                        <MudDivider />
+                        <MudMenuItem Href="/logout">Logout</MudMenuItem>
+                    </MudMenu>
+                </div>
+                <div class="helpdesk-appbar-mobile-actions">
+                    <MudMenu Icon="@Icons.Material.Filled.MoreVert"
+                             Color="Color.Inherit"
+                             AnchorOrigin="Origin.BottomRight"
+                             TransformOrigin="Origin.TopRight"
+                             Class="helpdesk-appbar-mobile-menu">
+                        <MudMenuItem Href="/api/docs/" Icon="@Icons.Material.Filled.Api">API Docs</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Filled.NewReleases">
+                            @_appBarVersion.DisplayVersion
+                        </MudMenuItem>
+                        <MudMenuItem Href="/notifications" Icon="@Icons.Material.Filled.Notifications">Notifications</MudMenuItem>
+                        <MudMenuItem Icon="@themePreference.Icon" Disabled="true">Theme: @themePreference.Label</MudMenuItem>
+                        <MudMenuItem OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.System))" Icon="@Icons.Material.Rounded.AutoMode">System</MudMenuItem>
+                        <MudMenuItem OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.Light))" Icon="@Icons.Material.Outlined.LightMode">Light</MudMenuItem>
+                        <MudMenuItem OnClick="@(() => themePreference.SetModeAsync(ThemePreferenceMode.Dark))" Icon="@Icons.Material.Outlined.DarkMode">Dark</MudMenuItem>
+                        <MudDivider />
+                        <MudMenuItem Icon="@Icons.Material.Filled.Person">Profile</MudMenuItem>
+                        <MudMenuItem Icon="@Icons.Material.Filled.Tune">Preferences</MudMenuItem>
+                        <MudMenuItem OnClick="OpenEmailSettings" Icon="@Icons.Material.Filled.Email">Email Settings</MudMenuItem>
+                        <MudMenuItem OnClick="OpenAiSettings" Icon="@Icons.Material.Filled.Psychology">AI / Model Settings</MudMenuItem>
+                        <MudDivider />
+                        <MudMenuItem Href="/logout" Icon="@Icons.Material.Filled.Logout">Logout</MudMenuItem>
+                    </MudMenu>
+                </div>
+            </Authorized>
+        </AuthorizeView>
+    </MudAppBar>
+    <AuthorizeView>
+        <MudDrawer id="nav-drawer"
+                   @bind-Open="_drawerOpen"
+                   Variant="DrawerVariant.Responsive"
+                   Breakpoint="Breakpoint.Lg"
+                   Overlay="true"
+                   OverlayAutoClose="true"
+                   ClipMode="DrawerClipMode.Always"
+                   Elevation="2"
+                   Class="helpdesk-nav-drawer"
+                   data-testid="app-navigation-drawer">
+            <NavMenu />
+        </MudDrawer>
+    </AuthorizeView>
+
+    <MudMainContent Class="helpdesk-main-content pa-4" data-testid="app-main-content">
+        @Body
+    </MudMainContent>
+    <GlobalSearchOverlay Open="searchOpen" OpenChanged="OnSearchOpenChanged" />
+</MudLayout>
+</ThemePreferenceProvider>
+
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    [Inject] private IDialogService DialogService { get; set; } = default!;
+    private bool _drawerOpen = true;
+    private bool searchOpen;
+    private AppBarVersionDetails _appBarVersion = new("HelpDesk.NewWeb", "vdev", "dev", "Fallback", "unknown");
+    private DotNetObjectReference<MainLayout>? dotNetRef;
+    private int? hotkeyRegistrationId;
+
+    protected override void OnInitialized()
+    {
+        _appBarVersion = AppBarVersionResolver.ResolveDetails(Configuration, typeof(MainLayout).Assembly);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        dotNetRef = DotNetObjectReference.Create(this);
+        hotkeyRegistrationId = await JS.InvokeAsync<int>("helpdeskGlobalSearchHotkeys.register", dotNetRef);
+    }
+
+    private void OpenSearch()
+    {
+        searchOpen = true;
+    }
+
+    private void ToggleDrawer()
+    {
+        _drawerOpen = !_drawerOpen;
+    }
+
+    [JSInvokable]
+    public Task OpenGlobalSearchFromShortcut()
+    {
+        searchOpen = true;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private Task OnSearchOpenChanged(bool value)
+    {
+        searchOpen = value;
+        return Task.CompletedTask;
+    }
+
+    private async Task OpenEmailSettings()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        await DialogService.ShowAsync<Dialogs.Settings.EmailSettingsDialog>("IMAP Settings", options);
+    }
+
+    private async Task OpenAiSettings()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true };
+        await DialogService.ShowAsync<Dialogs.Settings.AiSettingsDialog>("AI / Model Settings", options);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hotkeyRegistrationId.HasValue)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("helpdeskGlobalSearchHotkeys.dispose", hotkeyRegistrationId.Value);
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+
+        dotNetRef?.Dispose();
+    }
+}

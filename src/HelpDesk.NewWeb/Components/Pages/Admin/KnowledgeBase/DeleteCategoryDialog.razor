@@ -1,0 +1,43 @@
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IErrorLoggingService ErrorLogger
+@using HelpDesk.NewWeb.Services
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Helpdesk.Shared.DTOs.Category.CategoryDto Category { get; set; } = default!;
+
+    private async Task Delete()
+    {
+        try
+        {
+            var response = await HelpdeskApi.DeleteAsync($"api/v1/knowledgebase/categories/{Category.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                Dialog.Close(DialogResult.Ok(true));
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Error deleting category: {error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Unexpected error", Severity.Error);
+            await ErrorLogger.LogAsync(ex, nameof(DeleteCategoryDialog));
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body1">Are you sure you want to delete @Category.Name?</MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Delete" Color="Color.Error" Variant="Variant.Filled">Delete</MudButton>
+    </DialogActions>
+</MudDialog>

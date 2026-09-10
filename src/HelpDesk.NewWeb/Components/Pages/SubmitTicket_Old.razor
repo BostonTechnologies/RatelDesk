@@ -1,0 +1,89 @@
+@page "/submit-ticket-old"
+@layout PublicLayout
+@attribute [AllowAnonymous]
+
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-6 mx-auto mt-8" MaxWidth="500px">
+    <MudForm @ref="form" Model="model" OnValidSubmit="HandleSubmit">
+        <MudText Typo="Typo.h5" Class="mb-4">Submit a Ticket</MudText>
+        <MudTextField @bind-Value="model.Name" Label="Name" Variant="Variant.Outlined" Required="true" Class="mb-3" />
+        <MudTextField @bind-Value="model.Email" Label="Email" Variant="Variant.Outlined" Required="true" Class="mb-3" />
+        <MudTextField @bind-Value="model.ConfirmEmail" Label="Confirm Email" Variant="Variant.Outlined" Required="true" Class="mb-3" />
+        <MudSelect T="TicketPriority" @bind-Value="model.Priority" Label="Priority" Variant="Variant.Outlined" Class="mb-3">
+            @foreach (TicketPriority priority in Enum.GetValues(typeof(TicketPriority)))
+            {
+                <MudSelectItem Value="priority">@priority.ToString()</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="model.Subject" Label="Subject" Variant="Variant.Outlined" Required="true" Class="mb-3" />
+        <MudTextField @bind-Value="model.Message" Label="Message" Variant="Variant.Outlined" Lines="4" Required="true" Class="mb-3" />
+        <InputFile OnChange="OnAttachmentsSelected" multiple class="mb-3" />
+        @if (model.Attachments.Count > 0)
+        {
+            <MudList T="IBrowserFile" Dense="true" Class="mb-3">
+                @foreach (var attachment in model.Attachments)
+                {
+                    <MudListItem T="IBrowserFile">@attachment.Name (@attachment.Size bytes)</MudListItem>
+                }
+            </MudList>
+        }
+        <MudText Typo="Typo.body2" Class="mt-4">What is @num1 + @num2 ?</MudText>
+        <MudTextField T="int" @bind-Value="model.Captcha" Variant="Variant.Outlined" Class="mb-3" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" ButtonType="ButtonType.Submit">Submit</MudButton>
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <MudText Color="Color.Error" Class="mt-2">@errorMessage</MudText>
+        }
+    </MudForm>
+</MudPaper>
+
+@code {
+    private MudForm form = default!;
+    private SubmitTicketModel model = new();
+    private int num1;
+    private int num2;
+    private string? errorMessage;
+
+    protected override void OnInitialized()
+    {
+        var rng = new Random();
+        num1 = rng.Next(0, 10);
+        num2 = rng.Next(0, 10);
+    }
+
+    private void OnAttachmentsSelected(InputFileChangeEventArgs args)
+    {
+        model.Attachments = args.GetMultipleFiles().ToList();
+    }
+
+    private async Task HandleSubmit()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        if (model.Captcha != num1 + num2)
+        {
+            errorMessage = "Incorrect sum. Please try again.";
+            return;
+        }
+
+        errorMessage = null;
+        Snackbar.Add("Ticket submitted!", Severity.Success);
+    }
+
+    private class SubmitTicketModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string ConfirmEmail { get; set; } = string.Empty;
+        public TicketPriority Priority { get; set; } = TicketPriority.Low;
+        public string Subject { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public List<IBrowserFile> Attachments { get; set; } = new();
+        public int Captcha { get; set; }
+    }
+}

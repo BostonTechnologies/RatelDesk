@@ -1,0 +1,731 @@
+@using System.Text.Json
+@using Helpdesk.Shared.DTOs.Worklog
+@using Helpdesk.Shared.Enums
+@using Microsoft.Extensions.Logging
+@using HelpDesk.NewWeb.Services
+
+@implements IAsyncDisposable
+
+@inject IDialogService DialogService
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject ILogger<TicketTimeline> Logger
+@inject ITimelineApiClient TimelineClient
+@inject TimelineStreamService TimelineStream
+@inject IJSRuntime JS
+
+<MudPaper Class="pa-4 mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+        <MudText Typo="Typo.h6">Timeline</MudText>
+
+        @if (!PublicMode)
+        {
+            <MudButton Variant="Variant.Outlined"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.ViewAgenda"
+                       OnClick="ToggleTimelineAlignment">
+                @(_timelinePosition == TimelinePosition.Left
+                    ? "Switch to Conversational View"
+                    : "Switch to Readable View")
+            </MudButton>
+        }
+    </MudStack>
+
+    @if (!PublicMode)
+    {
+        <div class="d-flex justify-end mb-3">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.AddComment"
+                       OnClick="OpenAddWorklogDialog">
+                Add Note
+            </MudButton>
+        </div>
+    }
+
+    @if (loading)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-4" />
+    }
+    else if (timeline is not null && timeline.Any())
+    {
+        <div @ref="timelineContainerRef" style="overflow-y:auto; max-height:600px">
+            <MudTimeline TimelineOrientation="TimelineOrientation.Vertical"
+                         TimelinePosition="@_timelinePosition"
+                         Class="helpdesk-timeline">
+
+                @foreach (var ev in timeline)
+                {
+                    if (PublicMode && ev.EventType == TimelineEventType.InternalNote)
+                        continue;
+
+                    if (PublicMode && IsSystemEvent(ev) && ev.EventType != TimelineEventType.SystemNotification)
+                        continue;
+
+                    if (IsSystemEvent(ev))
+                    {
+                        @RenderSystemEvent(ev)
+                    }
+                    else
+                    {
+                        @RenderHumanEvent(ev)
+                    }
+                }
+            </MudTimeline>
+        </div>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2">No timeline events yet.</MudText>
+    }
+</MudPaper>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private HttpClient SystemApi => HttpClientFactory.CreateClient("SystemApi");
+
+    [Parameter] public string? TicketId { get; set; }
+    [Parameter] public string TicketType { get; set; } = "incidents";
+
+    [Parameter] public bool PublicMode { get; set; }
+
+    [Parameter] public string? TrackingId { get; set; }
+    [Parameter] public string? Email { get; set; }
+    [Parameter] public string? Token { get; set; }
+
+    [Parameter] public EventCallback OnWorklogAdded { get; set; }
+    [Parameter] public EventCallback<List<TicketTimelineEventDto>> OnTimelineLoaded { get; set; }
+
+    private List<TicketTimelineEventDto>? timeline;
+    private CreateWorkLogDto newWorklog = new();
+    private bool loading = true;
+    private ElementReference timelineContainerRef;
+    private bool shouldScrollTimelineToTop;
+    private TimelinePosition _timelinePosition = TimelinePosition.Alternate;
+    private bool _streamStarted;
+    private string? _loadKey;
+
+    private void ToggleTimelineAlignment()
+    {
+        _timelinePosition = _timelinePosition == TimelinePosition.Alternate
+            ? TimelinePosition.Left
+            : TimelinePosition.Alternate;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var nextLoadKey = PublicMode
+            ? $"public:{TrackingId}:{Email}:{Token}"
+            : $"internal:{TicketId}:{TicketType}";
+
+        if (string.Equals(nextLoadKey, _loadKey, StringComparison.Ordinal))
+            return;
+
+        if (_streamStarted)
+        {
+            await TimelineStream.StopAsync();
+            _streamStarted = false;
+        }
+
+        _loadKey = nextLoadKey;
+        await LoadTimelineAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!PublicMode && !_streamStarted && !string.IsNullOrWhiteSpace(TicketId))
+        {
+            _streamStarted = true;
+
+            try
+            {
+                await TimelineStream.StartAsync(
+                    TicketId,
+                    async evt =>
+                    {
+                        await InvokeAsync(() =>
+                        {
+                            InsertEvent(evt);
+                            _ = NotifyTimelineLoadedAsync();
+                            shouldScrollTimelineToTop = true;
+                            StateHasChanged();
+                        });
+                    },
+                    TicketType);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Unable to connect timeline SSE stream for ticket {TicketId}", TicketId);
+            }
+        }
+
+        if (shouldScrollTimelineToTop)
+        {
+            shouldScrollTimelineToTop = false;
+            await JS.InvokeVoidAsync(
+                "eval",
+                "window.helpdeskTimelineScrollToTop = window.helpdeskTimelineScrollToTop || function (el) { if (el) { el.scrollTo({ top: 0, behavior: 'smooth' }); } };");
+            await JS.InvokeVoidAsync("helpdeskTimelineScrollToTop", timelineContainerRef);
+        }
+    }
+
+    private async Task LoadTimelineAsync()
+    {
+        loading = true;
+
+        try
+        {
+            if (PublicMode)
+            {
+                if (string.IsNullOrWhiteSpace(TrackingId) ||
+                    string.IsNullOrWhiteSpace(Email) ||
+                    string.IsNullOrWhiteSpace(Token))
+                {
+                    timeline = new();
+                    return;
+                }
+
+                var api = PublicMode ? SystemApi : HelpdeskApi;
+                var url =
+                    $"api/v1/tickets/public/timeline?trackingId={Uri.EscapeDataString(TrackingId)}&email={Uri.EscapeDataString(Email)}&token={Uri.EscapeDataString(Token)}";
+
+                timeline = (await api.GetFromJsonAsync<List<TicketTimelineEventDto>>(url))
+                    ?.OrderByDescending(x => x.CreatedUtc)
+                    .ToList();
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(TicketId))
+                {
+                    timeline = new();
+                    return;
+                }
+
+                timeline = (await TimelineClient.GetTimelineAsync(TicketId, "desc", TicketType))
+                    ?.OrderByDescending(x => x.CreatedUtc)
+                    .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load timeline: {ex.Message}", Severity.Error);
+            timeline = new();
+        }
+        finally
+        {
+            loading = false;
+            await NotifyTimelineLoadedAsync();
+        }
+    }
+
+    private async Task NotifyTimelineLoadedAsync()
+    {
+        if (!OnTimelineLoaded.HasDelegate)
+            return;
+
+        await OnTimelineLoaded.InvokeAsync(timeline ?? new List<TicketTimelineEventDto>());
+    }
+
+    private string? GetWorklogApiUrl()
+    {
+        if (string.IsNullOrWhiteSpace(TicketId))
+            return null;
+
+        return $"api/v1/{TicketType.ToLowerInvariant()}/{TicketId}/worklogs";
+    }
+
+    private async Task AddWorklogAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newWorklog.Notes))
+        {
+            return;
+        }
+
+        var worklogApiUrl = GetWorklogApiUrl();
+        if (string.IsNullOrWhiteSpace(worklogApiUrl))
+        {
+            Snackbar.Add("Unable to resolve worklog endpoint.", Severity.Error);
+            return;
+        }
+
+        var payload = JsonSerializer.Serialize(newWorklog);
+        Logger.LogInformation("POST {Url} payload {Payload}", worklogApiUrl, payload);
+
+        try
+        {
+            var api = PublicMode ? SystemApi : HelpdeskApi;
+            var submittedAt = DateTimeOffset.UtcNow;
+            var internalNote = newWorklog.IsInternalNote;
+            var response = await api.PostAsJsonAsync(worklogApiUrl, newWorklog);
+            Logger.LogInformation("Response {StatusCode} from {Url}", response.StatusCode, worklogApiUrl);
+
+            if (response.IsSuccessStatusCode)
+            {
+                newWorklog = new();
+                await LoadTimelineAsync();
+                ShowWorklogDeliverySnackbar(submittedAt, internalNote);
+
+                if (OnWorklogAdded.HasDelegate)
+                {
+                    await OnWorklogAdded.InvokeAsync();
+                }
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Failed to add worklog: {error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"A client error occurred: {ex.Message}", Severity.Error);
+            Logger.LogError(ex, "Error posting worklog to {Url}", worklogApiUrl);
+        }
+
+        StateHasChanged();
+    }
+
+    private void ShowWorklogDeliverySnackbar(DateTimeOffset submittedAt, bool internalNote)
+    {
+        if (internalNote)
+        {
+            Snackbar.Add("Internal note added.", Severity.Success);
+            return;
+        }
+
+        var delivery = timeline?
+            .Where(x => x.EventType == TimelineEventType.EmailDelivery && x.CreatedUtc >= submittedAt.AddSeconds(-5))
+            .OrderByDescending(x => x.CreatedUtc)
+            .FirstOrDefault();
+
+        if (delivery is null)
+        {
+            Snackbar.Add("Worklog added; email delivery status is pending.", Severity.Info);
+            return;
+        }
+
+        var recipients = GetRecipientList(delivery);
+        var recipientText = recipients.Count > 0 ? string.Join(", ", recipients) : "the customer";
+
+        switch (delivery.EmailStatus)
+        {
+            case EmailDeliveryStatus.Delivered:
+                Snackbar.Add($"Worklog added; email sent to {recipientText}.", Severity.Success);
+                break;
+            case EmailDeliveryStatus.Failed:
+                Snackbar.Add($"Worklog added; email delivery failed for {recipientText}.", Severity.Warning);
+                break;
+            case EmailDeliveryStatus.Pending:
+                Snackbar.Add($"Worklog added; email delivery is pending for {recipientText}.", Severity.Info);
+                break;
+            default:
+                Snackbar.Add("Worklog added; email delivery status recorded.", Severity.Info);
+                break;
+        }
+    }
+
+    private async Task OpenAddWorklogDialog()
+    {
+        if (PublicMode || string.IsNullOrWhiteSpace(TicketId))
+            return;
+
+        const string dialogTitle = "Add a new Worklog or Note";
+        if (string.IsNullOrWhiteSpace(dialogTitle))
+            return;
+
+        var options = new DialogOptions
+        {
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseButton = true,
+            CloseOnEscapeKey = true
+        };
+
+        var dialog = await DialogService.ShowAsync<AddWorklogDialog>(dialogTitle, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is CreateWorkLogDto newLog)
+        {
+            newWorklog = newLog;
+            await AddWorklogAsync();
+        }
+    }
+
+    private async Task Retry(Guid id)
+    {
+        try
+        {
+            await TimelineClient.RetryAsync(id);
+            Snackbar.Add("Retry requested.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Retry failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void InsertEvent(TicketTimelineEventDto item)
+    {
+        timeline ??= new List<TicketTimelineEventDto>();
+
+        var existingIndex = timeline.FindIndex(x => x.Id == item.Id);
+        if (existingIndex >= 0)
+        {
+            timeline[existingIndex] = item;
+        }
+        else
+        {
+            timeline.Insert(0, item);
+        }
+    }
+
+    private static bool IsSystemEvent(TicketTimelineEventDto e)
+    {
+        var eventTypeName = GetEventTypeName(e);
+        if (eventTypeName.Equals("System", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (string.Equals(e.CreatedByUserId, "system", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return e.EventType is TimelineEventType.EmailDelivery
+            or TimelineEventType.StatusChange
+            or TimelineEventType.AssignmentChange
+            or TimelineEventType.SystemNotification;
+    }
+
+    private RenderFragment RenderSystemEvent(TicketTimelineEventDto ev) => @<MudTimelineItem TimelineAlign="@(_timelinePosition == TimelinePosition.Left ? TimelineAlign.Start : TimelineAlign.Start)" Class="timeline-item">
+        <div class="timeline-row">
+            <div class="timeline-left">
+                <MudPaper Class="timeline-system-card" Elevation="0" Outlined="true">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudAvatar Icon="@GetSystemIcon(ev)"
+                                   Color="@GetSystemColor(ev)"
+                                   Variant="Variant.Outlined"
+                                   Size="Size.Small" />
+
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.subtitle2">
+                                @GetSystemHeader(ev)
+                            </MudText>
+
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @GetSystemSubtext(ev)
+                            </MudText>
+                        </MudStack>
+
+                        <MudSpacer />
+
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="timeline-system-time">
+                            @ev.CreatedUtc.ToLocalTime().ToString("g")
+                        </MudText>
+
+                        @RenderSystemStatusChip(ev)
+                    </MudStack>
+
+                    @if (!string.IsNullOrWhiteSpace(ev.MessageText))
+                    {
+                        <MudText Typo="Typo.body2" Class="timeline-system-message">
+                            @ev.MessageText
+                        </MudText>
+                    }
+
+                </MudPaper>
+            </div>
+
+            <div class="timeline-right-empty"></div>
+
+        </div>
+    </MudTimelineItem>;
+
+    private RenderFragment RenderHumanEvent(TicketTimelineEventDto ev) => @<MudTimelineItem TimelineAlign="@(_timelinePosition == TimelinePosition.Left ? TimelineAlign.Start : TimelineAlign.End)" Class="timeline-item">
+        <div class="timeline-row">
+
+            <div class="timeline-left-empty"></div>
+
+            <div class="timeline-right">
+
+                <MudPaper Class="timeline-human-card"
+                          Elevation="1"
+                          Outlined="true">
+
+                    <MudStack Spacing="1">
+
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+
+                            <MudAvatar Size="Size.Small">
+                                @GetInitials(PublicMode ? GetHumanHeader(ev) : ev.CreatedByUserName)
+                            </MudAvatar>
+
+                            <MudText Typo="Typo.subtitle2">
+                                @GetHumanHeader(ev)
+                            </MudText>
+
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @ev.CreatedUtc.ToLocalTime().ToString("g")
+                            </MudText>
+
+                        </MudStack>
+
+                        <div class="timeline-human-message ticket-message-body">
+                            @((MarkupString)(ev.MessageHtml ?? ev.MessageText ?? string.Empty))
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(ev.MessageHtml))
+                        {
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Outlined"
+                                       Dense="true"
+                                       Class="mt-1"
+                                       Style="padding:2px 8px; font-size:0.75rem;"
+                                       OnClick="@(() => OpenHtmlDialog(ev))">
+                                View Full
+                            </MudButton>
+                        }
+
+                        @RenderHumanFooter(ev)
+
+                    </MudStack>
+
+                </MudPaper>
+
+            </div>
+
+        </div>
+    </MudTimelineItem>;
+
+    private string GetSystemHeader(TicketTimelineEventDto ev)
+    {
+        return ev.EventType switch
+        {
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Delivered => "Outbound Email",
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Failed => "Outbound Email Failed",
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Pending => "Retrying Email Delivery",
+            TimelineEventType.EmailDelivery => "Outbound Email",
+            TimelineEventType.StatusChange => "Ticket Status Updated",
+            TimelineEventType.SystemNotification => "System Notification",
+            _ => "System Event"
+        };
+    }
+
+    private string GetSystemSubtext(TicketTimelineEventDto ev)
+    {
+        var recipients = GetRecipientList(ev);
+        if (recipients.Count > 0)
+            return $"Recipients: {string.Join(", ", recipients)}";
+
+        return ev.CreatedUtc.ToLocalTime().ToString("g");
+    }
+
+    private string GetSystemIcon(TicketTimelineEventDto ev)
+    {
+        return ev.EventType switch
+        {
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Delivered => Icons.Material.Filled.MarkEmailRead,
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Failed => Icons.Material.Filled.Error,
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Pending => Icons.Material.Filled.Refresh,
+            TimelineEventType.EmailDelivery => Icons.Material.Filled.Email,
+            TimelineEventType.StatusChange => Icons.Material.Filled.Update,
+            TimelineEventType.SystemNotification => Icons.Material.Filled.Notifications,
+            _ => Icons.Material.Filled.Info
+        };
+    }
+
+    private Color GetSystemColor(TicketTimelineEventDto ev)
+    {
+        return ev.EventType switch
+        {
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Delivered => Color.Success,
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Failed => Color.Error,
+            TimelineEventType.EmailDelivery when ev.EmailStatus == EmailDeliveryStatus.Pending => Color.Warning,
+            TimelineEventType.EmailDelivery => Color.Info,
+            TimelineEventType.SystemNotification => Color.Warning,
+            _ => Color.Default
+        };
+    }
+
+    private RenderFragment RenderSystemStatusChip(TicketTimelineEventDto ev) => @<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+        @if (ev.RetryCount > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                Retries: @ev.RetryCount
+            </MudChip>
+        }
+
+        @if (ev.EmailStatus == EmailDeliveryStatus.Delivered)
+        {
+            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" />
+        }
+    </MudStack>;
+
+    private string GetHumanHeader(TicketTimelineEventDto ev)
+    {
+        if (ev.EventType == TimelineEventType.InternalNote)
+            return "Internal Note";
+
+        if (PublicMode)
+        {
+            return IsCustomerReplyEvent(ev) ? "You" : "Helpdesk";
+        }
+
+        if (IsCustomerReplyEvent(ev))
+            return "Customer Reply";
+
+        if (IsTechnicianReplyEvent(ev))
+            return "Technician Reply";
+
+        if (ev.EventType == TimelineEventType.Worklog || !string.IsNullOrWhiteSpace(ev.TechnicianName))
+            return "Technician Worklog";
+
+        return string.IsNullOrWhiteSpace(ev.CreatedByUserName) ? "User" : ev.CreatedByUserName;
+    }
+
+    private RenderFragment RenderHumanFooter(TicketTimelineEventDto ev) => @<MudStack Row="true" Spacing="1">
+        @if (ev.Hours > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Text" Icon="@Icons.Material.Filled.Timer">
+                @ev.Hours.ToString("F1")h
+            </MudChip>
+        }
+    </MudStack>;
+
+    private static string GetTimelineCardClass(TicketTimelineEventDto ev)
+    {
+        if (string.Equals(ev.CreatedByUserId, "system", StringComparison.OrdinalIgnoreCase))
+            return "timeline-system";
+
+        return ev.EventType switch
+        {
+            TimelineEventType.CustomerReply => "timeline-customer",
+            TimelineEventType.TechnicianReply => "timeline-technician",
+            TimelineEventType.InternalNote => "timeline-system",
+            TimelineEventType.Worklog => "timeline-worklog",
+            _ => "timeline-default"
+        };
+    }
+
+    private async Task OpenHtmlDialog(TicketTimelineEventDto ev)
+    {
+        if (ev is null || string.IsNullOrWhiteSpace(ev.MessageHtml))
+            return;
+
+        const string dialogTitle = "Worklog Details";
+        if (string.IsNullOrWhiteSpace(dialogTitle))
+            return;
+
+        var parameters = new DialogParameters
+        {
+            ["Html"] = ev.MessageHtml
+        };
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.ExtraLarge,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+
+        await DialogService.ShowAsync<WorklogHtmlDialog>(dialogTitle, parameters, options);
+    }
+
+    private static string GetEventTypeName(TicketTimelineEventDto e)
+    {
+        return Enum.GetName(typeof(TimelineEventType), e.EventType) ?? string.Empty;
+    }
+
+    private static bool IsReplyEvent(TicketTimelineEventDto ev)
+    {
+        return IsCustomerReplyEvent(ev) || IsTechnicianReplyEvent(ev);
+    }
+
+    private static bool IsCustomerReplyEvent(TicketTimelineEventDto ev)
+    {
+        var eventTypeName = GetEventTypeName(ev);
+        if (eventTypeName.Equals("CustomerReply", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (string.Equals(ev.CreatedByUserId, "system", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (ev.EventType is TimelineEventType.Worklog or TimelineEventType.InternalNote)
+            return false;
+
+        if (ev.Hours > 0 || !string.IsNullOrWhiteSpace(ev.TechnicianName))
+            return false;
+
+        return !string.IsNullOrWhiteSpace(ev.CreatedByUserName) && ev.CreatedByUserName.Contains('@');
+    }
+
+    private static bool IsTechnicianReplyEvent(TicketTimelineEventDto ev)
+    {
+        var eventTypeName = GetEventTypeName(ev);
+        if (eventTypeName.Equals("TechnicianReply", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (string.Equals(ev.CreatedByUserId, "system", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (ev.EventType is TimelineEventType.Worklog or TimelineEventType.InternalNote)
+            return false;
+
+        return !string.IsNullOrWhiteSpace(ev.TechnicianName);
+    }
+
+    private static string GetHumanActorName(TicketTimelineEventDto ev)
+    {
+        if (!string.IsNullOrWhiteSpace(ev.CreatedByUserName))
+            return ev.CreatedByUserName;
+
+        if (!string.IsNullOrWhiteSpace(ev.TechnicianName))
+            return ev.TechnicianName;
+
+        return "User";
+    }
+
+    private static List<string> GetRecipientList(TicketTimelineEventDto ev)
+    {
+        var recipients = new List<string>();
+
+        if (ev.Recipients is not null)
+        {
+            recipients.AddRange(ev.Recipients
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim()));
+        }
+
+        if (ev.CcRecipients is not null)
+        {
+            recipients.AddRange(ev.CcRecipients
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim()));
+        }
+
+        if (!string.IsNullOrWhiteSpace(ev.PrimaryRecipient))
+            recipients.Add(ev.PrimaryRecipient.Trim());
+
+        if (!string.IsNullOrWhiteSpace(ev.EmailRecipient))
+            recipients.Add(ev.EmailRecipient.Trim());
+
+        return recipients
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string GetInitials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "?";
+
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > 1)
+            return $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant();
+
+        return name.Length > 1 ? name[..2].ToUpperInvariant() : name.ToUpperInvariant();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await TimelineStream.DisposeAsync();
+    }
+}

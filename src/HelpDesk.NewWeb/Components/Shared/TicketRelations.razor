@@ -1,0 +1,180 @@
+@using Helpdesk.Shared.Enums
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudStack Spacing="2">
+    @if (loading)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else if (!IsIncidentType)
+    {
+        <MudText Typo="Typo.body2">Relations are currently available for incidents.</MudText>
+    }
+    else if (relations.Count == 0)
+    {
+        <MudText Typo="Typo.body2">No incident relations yet.</MudText>
+    }
+    else
+    {
+        <MudTable Items="@relations" Dense="true" Hover="true" Elevation="0">
+            <HeaderContent>
+                <MudTh>Direction</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>Incident</MudTh>
+                <MudTh>State</MudTh>
+                <MudTh>Created</MudTh>
+                <MudTh>Note</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Direction">
+                    <MudChip T="string" Size="Size.Small" Color="@GetDirectionColor(context)" Variant="Variant.Outlined">
+                        @GetDirectionLabel(context)
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Type">@GetTypeLabel(context.RelationType)</MudTd>
+                <MudTd DataLabel="Incident">
+                    <MudStack Spacing="0">
+                        <MudLink Href="@($"/incidents/{GetOtherTicketId(context)}")">@GetOtherTrackingId(context)</MudLink>
+                        <MudText Typo="Typo.caption">@GetOtherSubject(context)</MudText>
+                    </MudStack>
+                </MudTd>
+                <MudTd DataLabel="State">@GetOtherState(context)</MudTd>
+                <MudTd DataLabel="Created">
+                    <MudStack Spacing="0">
+                        <MudText Typo="Typo.body2">@context.CreatedUtc.ToLocalTime().ToString("g")</MudText>
+                        @if (!string.IsNullOrWhiteSpace(context.CreatedByUserName))
+                        {
+                            <MudText Typo="Typo.caption">@context.CreatedByUserName</MudText>
+                        }
+                    </MudStack>
+                </MudTd>
+                <MudTd DataLabel="Note">@context.Note</MudTd>
+                <MudTd>
+                    <MudStack Row="true" Spacing="1" Justify="Justify.FlexEnd">
+                        <MudIconButton Icon="@Icons.Material.Filled.OpenInNew"
+                                       Size="Size.Small"
+                                       Color="Color.Primary"
+                                       AriaLabel="Open related incident in new tab"
+                                       Href="@($"/incidents/{GetOtherTicketId(context)}")"
+                                       Target="_blank" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                       Size="Size.Small"
+                                       Color="Color.Error"
+                                       AriaLabel="Remove relation"
+                                       Disabled="@deletingRelationIds.Contains(context.Id)"
+                                       OnClick="@(() => DeleteRelationAsync(context))" />
+                    </MudStack>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudStack>
+
+@code {
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+    [Parameter] public string TicketType { get; set; } = "incidents";
+    [Parameter] public EventCallback<int> OnRelationsLoaded { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private readonly List<TicketRelationDto> relations = new();
+    private readonly HashSet<Guid> deletingRelationIds = new();
+    private bool loading = true;
+    private bool _loaded;
+
+    private bool IsIncidentType => string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (_loaded)
+        {
+            return;
+        }
+
+        _loaded = true;
+        await LoadRelationsAsync();
+    }
+
+    private async Task LoadRelationsAsync()
+    {
+        loading = true;
+        try
+        {
+            relations.Clear();
+            if (!IsIncidentType || string.IsNullOrWhiteSpace(TicketId))
+            {
+                await OnRelationsLoaded.InvokeAsync(0);
+                return;
+            }
+
+            var loaded = await HelpdeskApi.GetFromJsonAsync<List<TicketRelationDto>>($"api/v1/incidents/{TicketId}/relations");
+            relations.AddRange(loaded ?? new());
+            await OnRelationsLoaded.InvokeAsync(relations.Count);
+        }
+        catch (Exception ex)
+        {
+            relations.Clear();
+            await OnRelationsLoaded.InvokeAsync(0);
+            Snackbar.Add($"Error loading relations: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private static string GetDirectionLabel(TicketRelationDto relation) =>
+        relation.IsOutgoing ? "Parent" : "Child";
+
+    private static Color GetDirectionColor(TicketRelationDto relation) =>
+        relation.IsOutgoing ? Color.Primary : Color.Secondary;
+
+    private static string GetTypeLabel(TicketRelationType relationType) =>
+        relationType == TicketRelationType.DuplicateOf ? "Duplicate of" : "Related to";
+
+    private static string GetOtherTicketId(TicketRelationDto relation) =>
+        relation.IsOutgoing ? relation.TargetTicketId : relation.SourceTicketId;
+
+    private static string GetOtherTrackingId(TicketRelationDto relation) =>
+        relation.IsOutgoing ? relation.TargetTrackingId : relation.SourceTrackingId;
+
+    private static string GetOtherSubject(TicketRelationDto relation) =>
+        relation.IsOutgoing ? relation.TargetSubject : relation.SourceSubject;
+
+    private static TicketState GetOtherState(TicketRelationDto relation) =>
+        relation.IsOutgoing ? relation.TargetState : relation.SourceState;
+
+    private async Task DeleteRelationAsync(TicketRelationDto relation)
+    {
+        if (string.IsNullOrWhiteSpace(TicketId) || deletingRelationIds.Contains(relation.Id))
+        {
+            return;
+        }
+
+        deletingRelationIds.Add(relation.Id);
+        try
+        {
+            var response = await HelpdeskApi.DeleteAsync($"api/v1/incidents/{TicketId}/relations/{relation.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add(string.IsNullOrWhiteSpace(error) ? "Failed to remove relation." : error, Severity.Error);
+                return;
+            }
+
+            relations.RemoveAll(x => x.Id == relation.Id);
+            await OnRelationsLoaded.InvokeAsync(relations.Count);
+            Snackbar.Add("Relation removed.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to remove relation: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            deletingRelationIds.Remove(relation.Id);
+        }
+    }
+}

@@ -1,0 +1,161 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Predefined Options</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2" Class="predefined-options-dialog">
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                @DialogSubtitle
+            </MudText>
+
+            @for (var i = 0; i < optionRows.Count; i++)
+            {
+                var index = i;
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudTextField T="string"
+                                  Value="optionRows[index]"
+                                  ValueChanged="@((string? value) => SetOption(index, value))"
+                                  Label="@($"Option {index + 1}")"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Dense="true"
+                                  Immediate="true" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Color="Color.Error"
+                                   Disabled="@(optionRows.Count == 1)"
+                                   OnClick="@(() => RemoveOption(index))" />
+                    <MudIconButton Icon="@Icons.Material.Filled.KeyboardArrowUp"
+                                   Disabled="@(index == 0)"
+                                   OnClick="@(() => MoveOption(index, -1))" />
+                    <MudIconButton Icon="@Icons.Material.Filled.KeyboardArrowDown"
+                                   Disabled="@(index >= optionRows.Count - 1)"
+                                   OnClick="@(() => MoveOption(index, 1))" />
+                </MudStack>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(validationMessage))
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+                    @validationMessage
+                </MudAlert>
+            }
+
+            <MudButton Variant="Variant.Outlined"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="AddOption">
+                Add Option
+            </MudButton>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .predefined-options-dialog {
+        min-width: min(460px, 82vw);
+    }
+</style>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter] public string? FieldLabel { get; set; }
+    [Parameter] public List<string>? Options { get; set; }
+
+    private readonly List<string?> optionRows = new();
+    private string? validationMessage;
+
+    private string DialogSubtitle => string.IsNullOrWhiteSpace(FieldLabel)
+        ? "Define the static values shown to self-service users."
+        : $"Define the static values shown for {FieldLabel}.";
+
+    protected override void OnInitialized()
+    {
+        optionRows.Clear();
+        if (Options is { Count: > 0 })
+        {
+            optionRows.AddRange(Options);
+        }
+
+        if (optionRows.Count == 0)
+        {
+            optionRows.Add(string.Empty);
+        }
+    }
+
+    private void SetOption(int index, string? value)
+    {
+        if (index < 0 || index >= optionRows.Count)
+        {
+            return;
+        }
+
+        optionRows[index] = value;
+        validationMessage = null;
+    }
+
+    private void AddOption()
+    {
+        optionRows.Add(string.Empty);
+        validationMessage = null;
+    }
+
+    private void RemoveOption(int index)
+    {
+        if (optionRows.Count <= 1 || index < 0 || index >= optionRows.Count)
+        {
+            return;
+        }
+
+        optionRows.RemoveAt(index);
+        validationMessage = null;
+    }
+
+    private void MoveOption(int index, int direction)
+    {
+        var target = index + direction;
+        if (index < 0 || index >= optionRows.Count || target < 0 || target >= optionRows.Count)
+        {
+            return;
+        }
+
+        (optionRows[index], optionRows[target]) = (optionRows[target], optionRows[index]);
+        validationMessage = null;
+    }
+
+    private void Save()
+    {
+        var values = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in optionRows)
+        {
+            var value = row?.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (seen.Add(value))
+            {
+                values.Add(value);
+            }
+        }
+
+        if (values.Count == 0)
+        {
+            validationMessage = "Add at least one option.";
+            return;
+        }
+
+        Dialog.Close(DialogResult.Ok(values));
+    }
+
+    private void Cancel()
+    {
+        Dialog.Cancel();
+    }
+}

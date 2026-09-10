@@ -1,0 +1,52 @@
+.service-explorer-page {
+    padding-top: 2px;
+}
+
+.service-explorer-actions {
+    flex-wrap: wrap;
+}
+
+::deep .svc-card {
+    min-height: 210px;
+    border: 1px solid var(--mud-palette-divider);
+    box-shadow: none;
+}
+
+::deep .svc-card:hover {
+    border-color: var(--mud-palette-primary);
+}
+
+::deep .svc-content {
+    flex: 1 1 auto;
+    overflow: hidden;
+}
+
+::deep .svc-chipset {
+    max-height: 82px;
+    overflow: auto;
+    padding-right: 2px;
+}
+
+::deep .svc-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 4px;
+}
+
+::deep .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+@media (max-width: 600px) {
+    .service-explorer-actions {
+        width: 100%;
+    }
+
+    .service-explorer-actions ::deep .mud-button-root {
+        flex: 1 1 auto;
+    }
+}

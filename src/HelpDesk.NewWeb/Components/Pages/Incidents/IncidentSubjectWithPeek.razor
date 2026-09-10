@@ -1,0 +1,124 @@
+@using Microsoft.AspNetCore.Components.Web
+@using System.Net.Http.Json
+@implements IDisposable
+@inject IHttpClientFactory HttpClientFactory
+@inject ILogger<IncidentSubjectWithPeek> Logger
+
+<span @onmouseenter="AnchorEnter" @onmouseleave="AnchorLeave" style="cursor:help">
+    <MudText Typo="Typo.body2" Class="text-primary">@Subject</MudText>
+</span>
+
+<MudPopover Open="_open"
+            AnchorOrigin="Origin.BottomLeft"
+            TransformOrigin="Origin.TopLeft"
+            Class="pa-2">
+
+    <!-- IMPORTANT: track hover on the popover content too -->
+    <div @onmouseenter="PopoverEnter"
+         @onmouseleave="PopoverLeave"
+         style="max-width:600px; max-height:400px; overflow:auto">
+        @if (_loading)
+        {
+            <MudProgressCircular Indeterminate="true" />
+            <MudText Class="ml-2">Loading preview…</MudText>
+        }
+        else if (!string.IsNullOrWhiteSpace(_html))
+        {
+            <MudText Typo="Typo.caption" Class="mb-2 text-secondary">
+                From: @_from · @_received
+            </MudText>
+            <div class="ticket-message-body">
+                <MudPaper Class="pa-2">
+                    @((MarkupString)_html)
+                </MudPaper>
+            </div>
+        }
+        else
+        {
+            <MudText>No preview available.</MudText>
+        }
+    </div>
+</MudPopover>
+
+@code {
+    [Parameter] public string IncidentId { get; set; } = default!;
+    [Parameter] public string Subject { get; set; } = default!;
+
+    private bool _open, _loading;
+    private bool _hoverAnchor, _hoverPopover;
+    private CancellationTokenSource? _closeCts;
+    private string? _html, _from, _received;
+    private bool _disposed;
+
+    private HttpClient SystemApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private async Task EnsureLoaded()
+    {
+        if (_html != null) return;
+        _loading = true;
+        try
+        {
+            var peek = await SystemApi.GetFromJsonAsync<IncidentPeekDto>($"/api/v1/incidents/{IncidentId}/peek");
+            _html = peek?.Html ?? "";
+            _from = peek?.From;
+            _received = peek?.ReceivedUtc?.ToLocalTime().ToString("g");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Unable to load incident preview. IncidentId={IncidentId}", IncidentId);
+            _html = string.Empty;
+        }
+        finally
+        {
+            _loading = false;
+            if (!_disposed)
+            {
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task AnchorEnter(MouseEventArgs _)
+    {
+        _hoverAnchor = true;
+        _open = true;
+        await EnsureLoaded();
+    }
+
+    private Task AnchorLeave(MouseEventArgs _) { _hoverAnchor = false; return TryCloseAfterDelay(); }
+
+    private Task PopoverEnter(MouseEventArgs _) { _hoverPopover = true; return Task.CompletedTask; }
+
+    private Task PopoverLeave(MouseEventArgs _) { _hoverPopover = false; return TryCloseAfterDelay(); }
+
+    private async Task TryCloseAfterDelay(int delayMs = 200)
+    {
+        _closeCts?.Cancel();
+        _closeCts = new();
+        var token = _closeCts.Token;
+        try
+        {
+            await Task.Delay(delayMs, token);
+            if (!_hoverAnchor && !_hoverPopover)
+            {
+                _open = false;
+                StateHasChanged();
+            }
+        }
+        catch (TaskCanceledException) { /* swallowed */ }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _closeCts?.Cancel();
+        _closeCts?.Dispose();
+    }
+
+    private sealed class IncidentPeekDto
+    {
+        public string? Html { get; set; }
+        public string? From { get; set; }
+        public DateTimeOffset? ReceivedUtc { get; set; }
+    }
+}

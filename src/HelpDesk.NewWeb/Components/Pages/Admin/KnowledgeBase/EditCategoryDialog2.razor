@@ -1,0 +1,166 @@
+@using Helpdesk.Shared.DTOs.Category
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Enums
+@using Microsoft.AspNetCore.Components.Authorization
+
+@inject IHttpClientFactory HttpClientFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@((Category is null) ? "Create Category" : "Edit Category")</MudText>
+    </TitleContent>
+
+    <DialogContent>
+        <MudForm @ref="form" Class="mt-2">
+            <MudTextField T="string" Label="Name" @bind-Value="Model.Name" Required="true" />
+            <MudTextField T="string" Label="Description" Lines="3" @bind-Value="Model.Description" />
+
+            <MudSelect T="TicketCategoryType" Label="Type" @bind-Value="Model.Type">
+                @foreach (TicketCategoryType type in Enum.GetValues(typeof(TicketCategoryType)))
+                {
+                    <MudSelectItem T="TicketCategoryType" Value="@type">@type</MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (isHelpdeskAdmin)
+            {
+                <MudSelect T="Guid?"
+                           Label="Scope"
+                           @bind-Value="Model.TenantId"
+                           Disabled="@(Category is not null)">
+                    <MudSelectItem T="Guid?" Value="@((Guid?)null)">Global (System)</MudSelectItem>
+                    @foreach (var tenant in Tenants)
+                    {
+                        if (Guid.TryParse(tenant.Id, out var tenantGuid))
+                        {
+                            <MudSelectItem T="Guid?" Value="@tenantGuid">@tenant.Name</MudSelectItem>
+                        }
+                    }
+                </MudSelect>
+            }
+
+            <MudNumericField T="int" Label="Sort Order" @bind-Value="Model.SortOrder" />
+            <MudCheckBox T="bool" Label="Active" @bind-Value="Model.IsActive" />
+        </MudForm>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="SaveAsync" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter] public TicketCategoryDto? Category { get; set; }
+    [Parameter] public TicketCategoryType DefaultType { get; set; } = TicketCategoryType.Request;
+
+    private MudForm form = default!;
+
+    private EditModel Model { get; set; } = new();
+    private bool isHelpdeskAdmin;
+    private List<TenantLookupDto> Tenants { get; set; } = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        isHelpdeskAdmin = user.IsInRole("HelpdeskAdmin") ||
+                          user.Claims.Any(c =>
+                              (c.Type == "roles" || c.Type == System.Security.Claims.ClaimTypes.Role) &&
+                              string.Equals(c.Value, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase));
+
+        if (isHelpdeskAdmin)
+        {
+            Tenants = await HelpdeskApi.GetFromJsonAsync<List<TenantLookupDto>>("api/v1/admin/tenants/lookup") ?? new();
+        }
+
+        if (Category is null)
+        {
+            Model = new EditModel
+            {
+                Type = DefaultType,
+                TenantId = null,
+                IsActive = true
+            };
+        }
+        else
+        {
+            Model = new EditModel
+            {
+                Name = Category.Name,
+                Description = Category.Description,
+                Type = Category.Type,
+                TenantId = Category.TenantId,
+                SortOrder = Category.SortOrder,
+                IsActive = Category.IsActive
+            };
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        await form.Validate();
+        if (!form.IsValid || string.IsNullOrWhiteSpace(Model.Name))
+        {
+            return;
+        }
+
+        HttpResponseMessage response;
+
+        if (Category is null)
+        {
+            response = await HelpdeskApi.PostAsJsonAsync("api/v1/categories", new CreateTicketCategoryDto
+            {
+                Name = Model.Name.Trim(),
+                Description = Model.Description,
+                Type = Model.Type,
+                TenantId = Model.TenantId,
+                SortOrder = Model.SortOrder,
+                IsActive = Model.IsActive
+            });
+        }
+        else
+        {
+            response = await HelpdeskApi.PutAsJsonAsync($"api/v1/categories/{Category.Id}", new UpdateTicketCategoryDto
+            {
+                Name = Model.Name.Trim(),
+                Description = Model.Description,
+                Type = Model.Type,
+                SortOrder = Model.SortOrder,
+                IsActive = Model.IsActive
+            });
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            Dialog.Close(DialogResult.Ok(true));
+            return;
+        }
+
+        var error = await response.Content.ReadAsStringAsync();
+        Dialog.Close(DialogResult.Ok(new DialogError(error)));
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private sealed class EditModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public TicketCategoryType Type { get; set; }
+        public Guid? TenantId { get; set; }
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public sealed class DialogError
+    {
+        public DialogError(string message) => Message = message;
+        public string Message { get; }
+    }
+}

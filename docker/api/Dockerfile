@@ -1,0 +1,41 @@
+# 1) Runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.11-alpine3.23 AS base
+WORKDIR /app
+ENV ASPNETCORE_URLS=http://+:8222
+RUN apk add --no-cache icu-libs
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
+EXPOSE 8222 8222
+
+# 2) Build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.400-alpine3.23 AS build
+WORKDIR /src
+ARG BUILD_CONFIGURATION=Release
+
+# Copy global build inputs and the target dependency graph first for a reusable restore layer.
+COPY global.json ./
+COPY src/Helpdesk.API/*.csproj             src/Helpdesk.API/
+COPY src/Helpdesk.Application/*.csproj     src/Helpdesk.Application/
+COPY src/Helpdesk.Infrastructure/*.csproj  src/Helpdesk.Infrastructure/
+COPY src/Helpdesk.Shared/*.csproj          src/Helpdesk.Shared/
+COPY src/Helpdesk.ServiceDefaults/*.csproj src/Helpdesk.ServiceDefaults/
+
+RUN dotnet restore src/Helpdesk.API/Helpdesk.API.csproj
+
+# Copy only the source projects included in the API dependency graph.
+COPY src/Helpdesk.API/             src/Helpdesk.API/
+COPY src/Helpdesk.Application/     src/Helpdesk.Application/
+COPY src/Helpdesk.Infrastructure/  src/Helpdesk.Infrastructure/
+COPY src/Helpdesk.Shared/          src/Helpdesk.Shared/
+COPY src/Helpdesk.ServiceDefaults/ src/Helpdesk.ServiceDefaults/
+
+# Publish (no-restore to use cached restore layer)
+RUN mkdir /out \
+ && dotnet publish src/Helpdesk.API/Helpdesk.API.csproj \
+      -c $BUILD_CONFIGURATION -o /out --no-restore -v:n \
+      /p:UseAppHost=false
+
+# 3) Final
+FROM base AS final
+WORKDIR /app
+COPY --from=build /out ./
+ENTRYPOINT ["dotnet", "Helpdesk.API.dll"]

@@ -1,0 +1,28 @@
+
+@inject IHttpClientFactory HttpClientFactory
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body1">Are you sure you want to delete @Customer.Name?</MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Delete" Color="Color.Error" Variant="Variant.Filled">Delete</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Helpdesk.Shared.DTOs.Customer.CustomerDto Customer { get; set; } = default!;
+
+    private async Task Delete()
+    {
+        var response = await HelpdeskApi.DeleteAsync($"api/v1/customers/{Customer.Id}");
+        if (response.IsSuccessStatusCode)
+        {
+            Dialog.Close(DialogResult.Ok(true));
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

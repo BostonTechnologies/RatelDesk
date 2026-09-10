@@ -1,0 +1,22 @@
+.self-service-form-page {
+    padding-top: 2px;
+}
+
+.self-service-option-preview {
+    color: var(--mud-palette-text-secondary);
+}
+
+.submit-on-behalf-panel {
+    border-color: var(--mud-palette-lines-default);
+    background: color-mix(in srgb, var(--mud-palette-background-gray) 44%, var(--mud-palette-surface));
+}
+
+.self-service-form-actions {
+    flex-wrap: wrap;
+}
+
+@media (max-width: 600px) {
+    .self-service-form-actions ::deep .mud-button-root {
+        flex: 1 1 auto;
+    }
+}

@@ -1,0 +1,86 @@
+@using System.ComponentModel.DataAnnotations
+@using Helpdesk.Shared.DTOs.Organization
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.AddCircle" Class="mr-2 mb-n1" />
+            Create User
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm Model="model" @ref="form" OnValidSubmit="Submit" Class="mt-2">
+            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+            <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
+            @* Password removed: OIDC-only sign-in *@
+            <MudSelect T="string" @bind-Value="model.Role" Label="Role" Required="true">
+                <MudSelectItem T="string" Value="@("Admin")">Admin</MudSelectItem>
+                <MudSelectItem T="string" Value="@("User")">User</MudSelectItem>
+                <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
+            </MudSelect>
+            <MudSelect T="string"
+                       @bind-Value="model.OrganizationId"
+                       Label="Organization"
+                       Clearable="true">
+                @foreach (var organization in organizations)
+                {
+                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSwitch @bind-Value="model.IsTestUser"
+                       Color="Color.Warning"
+                       Label="Allow access to in-testing self-service requests"
+                       Class="mt-2" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Create</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private MudForm form = default!;
+    private CreateUserModel model = new();
+    private List<OrganizationDto> organizations = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        organizations = (await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations") ?? new())
+            .Where(x => x.IsEnabled)
+            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync("api/v1/users", model);
+            if (response.IsSuccessStatusCode)
+            {
+                Dialog.Close(DialogResult.Ok(true));
+            }
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    public class CreateUserModel
+    {
+        [Required]
+        public string Name { get; set; } = string.Empty;
+        [Required]
+        public string Email { get; set; } = string.Empty;
+        // Password removed: OIDC-only
+        [Required]
+        public string Role { get; set; } = "User";
+        public bool IsTestUser { get; set; }
+        public string? OrganizationId { get; set; }
+    }
+}

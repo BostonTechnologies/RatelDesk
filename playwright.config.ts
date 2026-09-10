@@ -1,0 +1,20 @@
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/ux',
+  testIgnore: '**/ai-assistant-chat.spec.ts',
+  fullyParallel: false,
+  forbidOnly: Boolean(process.env.CI),
+  retries: process.env.CI ? 2 : 0,
+  reporter: [['list'], ['html', { open: 'never' }]],
+  use: {
+    baseURL: process.env.HELPDESK_E2E_BASE_URL ?? 'http://127.0.0.1:5157',
+    viewport: { width: 1440, height: 900 },
+    ignoreHTTPSErrors: process.env.HELPDESK_E2E_IGNORE_HTTPS_ERRORS === 'true',
+    launchOptions: process.env.HELPDESK_E2E_CHROMIUM_PATH
+      ? { executablePath: process.env.HELPDESK_E2E_CHROMIUM_PATH }
+      : undefined,
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure'
+  }
+});

@@ -1,0 +1,123 @@
+@using HelpDesk.NewWeb.Themes
+@inject IJSRuntime JS
+
+<MudThemeProvider @ref="themeProvider"
+                  Theme="theme"
+                  IsDarkMode="isDarkMode"
+                  IsDarkModeChanged="OnThemeProviderDarkModeChanged"
+                  ObserveSystemThemeChange="true" />
+
+@if (ChildContent is not null)
+{
+    @ChildContent(this)
+}
+
+@code {
+    [Parameter] public RenderFragment<ThemePreferenceProvider>? ChildContent { get; set; }
+
+    private readonly MudTheme theme = new RatelDeskTheme();
+    private MudThemeProvider? themeProvider;
+    private ThemePreferenceMode mode = ThemePreferenceMode.System;
+    private bool isDarkMode;
+    private bool systemDarkMode;
+    private bool initialized;
+
+    public ThemePreferenceMode Mode => mode;
+    public bool IsDarkMode => isDarkMode;
+    public string Icon => mode switch
+    {
+        ThemePreferenceMode.Light => Icons.Material.Outlined.LightMode,
+        ThemePreferenceMode.Dark => Icons.Material.Outlined.DarkMode,
+        _ => Icons.Material.Rounded.AutoMode,
+    };
+
+    public string Label => mode switch
+    {
+        ThemePreferenceMode.Light => "Light",
+        ThemePreferenceMode.Dark => "Dark",
+        _ => "System",
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || themeProvider is null)
+        {
+            return;
+        }
+
+        mode = ParseMode(await JS.InvokeAsync<string?>("helpdeskThemePreference.get"));
+        systemDarkMode = await themeProvider.GetSystemDarkModeAsync();
+        isDarkMode = ResolveDarkMode();
+        initialized = true;
+
+        await themeProvider.WatchSystemDarkModeAsync(OnSystemDarkModeChangedAsync);
+        await ApplyDocumentThemeAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public async Task SetModeAsync(ThemePreferenceMode selectedMode)
+    {
+        mode = selectedMode;
+
+        if (mode is ThemePreferenceMode.System && themeProvider is not null)
+        {
+            systemDarkMode = await themeProvider.GetSystemDarkModeAsync();
+        }
+
+        isDarkMode = ResolveDarkMode();
+        await JS.InvokeVoidAsync("helpdeskThemePreference.set", ToStorageValue(mode));
+        await ApplyDocumentThemeAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnSystemDarkModeChangedAsync(bool isSystemDarkMode)
+    {
+        systemDarkMode = isSystemDarkMode;
+        isDarkMode = ResolveDarkMode();
+
+        if (initialized)
+        {
+            await ApplyDocumentThemeAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnThemeProviderDarkModeChanged(bool nextIsDarkMode)
+    {
+        if (mode is ThemePreferenceMode.System)
+        {
+            systemDarkMode = nextIsDarkMode;
+        }
+
+        isDarkMode = ResolveDarkMode();
+
+        if (initialized)
+        {
+            await ApplyDocumentThemeAsync();
+        }
+    }
+
+    private bool ResolveDarkMode() => mode switch
+    {
+        ThemePreferenceMode.Light => false,
+        ThemePreferenceMode.Dark => true,
+        _ => systemDarkMode
+    };
+
+    private Task ApplyDocumentThemeAsync() =>
+        JS.InvokeVoidAsync("helpdeskThemePreference.apply", isDarkMode).AsTask();
+
+    private static ThemePreferenceMode ParseMode(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "light" => ThemePreferenceMode.Light,
+        "dark" => ThemePreferenceMode.Dark,
+        _ => ThemePreferenceMode.System
+    };
+
+    private static string ToStorageValue(ThemePreferenceMode selectedMode) => selectedMode switch
+    {
+        ThemePreferenceMode.Light => "light",
+        ThemePreferenceMode.Dark => "dark",
+        _ => "system"
+    };
+}

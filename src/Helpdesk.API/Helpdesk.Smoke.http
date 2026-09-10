@@ -1,0 +1,215 @@
+@baseUrl = https://api.helpdesk.example.com
+@systemSecret = {{$dotenv HELPDESK_SYSTEM_SECRET}}
+@bearerToken = {{$dotenv HELPDESK_BEARER_TOKEN}}
+@scenarioId = smoke-http-{{$guid}}
+@correlationId = corr-{{$guid}}
+@organizationId = {{$dotenv HELPDESK_SMOKE_ORGANIZATION_ID}}
+@assigneeId = {{$dotenv HELPDESK_SMOKE_ASSIGNEE_ID}}
+@incidentId =
+@requestId =
+@changeId =
+
+### Mint a short-lived system token
+POST {{baseUrl}}/api/v1/system/token
+X-System-Secret: {{systemSecret}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Accept: application/json
+
+### API liveness
+GET {{baseUrl}}/health/live
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Accept: application/json
+
+### API readiness
+GET {{baseUrl}}/health/ready
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Accept: application/json
+
+### Database health
+GET {{baseUrl}}/health/db
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Accept: application/json
+
+### List users
+GET {{baseUrl}}/api/v1/users
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Accept: application/json
+
+### List organizations
+GET {{baseUrl}}/api/v1/organizations
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Accept: application/json
+
+### Create incident
+POST {{baseUrl}}/api/v1/incidents
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Smoke incident {{scenarioId}}",
+  "description": "Created from Helpdesk.Smoke.http",
+  "priority": 0,
+  "organizationId": "{{organizationId}}",
+  "requesterEmail": "smoke@example.com",
+  "ccRecipients": []
+}
+
+### Get incident
+GET {{baseUrl}}/api/v1/incidents/{{incidentId}}
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Accept: application/json
+
+### Assign incident
+POST {{baseUrl}}/api/v1/incidents/bulk/assign
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "ids": ["{{incidentId}}"],
+  "assignedToId": "{{assigneeId}}"
+}
+
+### Add incident worklog
+POST {{baseUrl}}/api/v1/incidents/{{incidentId}}/worklogs
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "notes": "Smoke worklog {{scenarioId}}",
+  "hours": 0.1
+}
+
+### Resolve incident
+POST {{baseUrl}}/api/v1/incidents/bulk/state
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "ids": ["{{incidentId}}"],
+  "newState": 5,
+  "comment": "Smoke resolve {{scenarioId}}"
+}
+
+### Create request
+POST {{baseUrl}}/api/v1/requests
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Smoke request {{scenarioId}}",
+  "description": "Created from Helpdesk.Smoke.http",
+  "priority": 0,
+  "organizationId": "{{organizationId}}",
+  "payloadJson": "{\"scenarioId\":\"{{scenarioId}}\"}"
+}
+
+### Add request worklog
+POST {{baseUrl}}/api/v1/requests/{{requestId}}/worklogs
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "notes": "Smoke request worklog {{scenarioId}}",
+  "hours": 0.1
+}
+
+### Resolve request
+POST {{baseUrl}}/api/v1/requests/bulk/state
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "ids": ["{{requestId}}"],
+  "newState": 5,
+  "comment": "Smoke resolve {{scenarioId}}"
+}
+
+### Create change
+POST {{baseUrl}}/api/v1/changes
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Smoke change {{scenarioId}}",
+  "description": "Created from Helpdesk.Smoke.http",
+  "priority": 0,
+  "organizationId": "{{organizationId}}",
+  "changeType": "Normal",
+  "implementationStartAt": "2026-05-08T18:00:00Z",
+  "implementationEndAt": "2026-05-08T19:00:00Z",
+  "changeTemplate": {
+    "changeDescription": "Smoke validation change",
+    "businessJustification": "Validate Helpdesk change workflow",
+    "impactAssessment": "Dev-only smoke record",
+    "riskAssessment": "Low",
+    "preChangeChecks": ["API health is green"],
+    "implementationSteps": ["Create", "Assign", "Worklog", "Resolve"],
+    "validationSteps": ["Fetch detail", "Verify resolved"],
+    "testingPlan": "HTTP smoke sequence",
+    "rollbackPlan": "No external work performed",
+    "affectedSystems": ["Helpdesk dev"],
+    "dependencies": []
+  },
+  "categoryIds": []
+}
+
+### Add change worklog
+POST {{baseUrl}}/api/v1/changes/{{changeId}}/worklogs
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "notes": "Smoke change worklog {{scenarioId}}",
+  "hours": 0.1
+}
+
+### Resolve change
+POST {{baseUrl}}/api/v1/changes/bulk/state
+Authorization: Bearer {{bearerToken}}
+X-Correlation-Id: {{correlationId}}
+X-Helpdesk-Smoke-Scenario: {{scenarioId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "ids": ["{{changeId}}"],
+  "newState": 5,
+  "comment": "Smoke resolve {{scenarioId}}"
+}

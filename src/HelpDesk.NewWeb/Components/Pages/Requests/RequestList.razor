@@ -1,0 +1,253 @@
+@page "/requests"
+@attribute [Authorize(Roles = "Request.User,Request.Manager,HelpdeskAdmin")]
+@using Helpdesk.Shared.DTOs
+@using Helpdesk.Shared.DTOs.Request
+@using Helpdesk.Shared.DTOs.User
+
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager NavigationManager
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Requests</PageTitle>
+
+<div class="helpdesk-page">
+<MudPaper Class="helpdesk-content-surface pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="helpdesk-page-header">
+        <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Requests</MudText>
+        <MudSpacer />
+        <MudTooltip Text="Historic">
+            <MudIconButton Icon="@Icons.Material.Filled.History"
+                           Color="@(historicOnly ? Color.Primary : Color.Default)"
+                           Variant="@(historicOnly ? Variant.Filled : Variant.Outlined)"
+                           aria-label="Show historic requests"
+                           OnClick="ToggleHistoric" />
+        </MudTooltip>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+
+    <div class="helpdesk-list-toolbar">
+        <MudTextField @bind-Value="search"
+                      Placeholder="Search requests"
+                      Adornment="Adornment.Start"
+                      Icon="@Icons.Material.Filled.Search"
+                      Immediate="true"
+                      OnBlur="Reload"
+                      OnKeyUp="@(async _ => await DebouncedReload())"
+                      Class="helpdesk-list-search" />
+
+        <MudCheckBox T="bool"
+                     @bind-Value="aiOriginOnly"
+                     Color="Color.Primary">
+            AI origin only
+        </MudCheckBox>
+    </div>
+
+    <TicketTable TTicket="RequestDto"
+                 @ref="_table"
+                 TicketType="requests"
+                 ServerData="LoadServerData"
+                 SelectedItems="_selected"
+                 SelectedItemsChanged="@(x => _selected = x)"
+                 OnRowClick="NavigateToRequest"
+                 BulkStateRequested="ApplyBulkState"
+                 BulkAssignRequested="ApplyBulkAssign">
+        <SubjectTemplate Context="request">
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.body2">@request.Title</MudText>
+                @if (!string.IsNullOrWhiteSpace(request.SourceTicketId) || !string.IsNullOrWhiteSpace(request.SourceKnowledgeArticleId))
+                {
+                    <MudStack Row="true" Spacing="1" Class="mt-1">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                            AI Origin
+                        </MudChip>
+                        @if (!string.IsNullOrWhiteSpace(request.SourceTicketTrackingId))
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @request.SourceTicketTrackingId
+                            </MudChip>
+                        }
+                    </MudStack>
+                }
+            </MudStack>
+        </SubjectTemplate>
+        <AssigneeTemplate Context="request">
+            <TicketAssigneePicker
+                TicketId="@request.Id"
+                TicketType="requests"
+                AssignedToId="@request.AssignedToId"
+                AssignedToIdChanged="@(x => request.AssignedToId = x)"
+                TeamMembers="teamMembers" />
+        </AssigneeTemplate>
+        <CustomerTemplate Context="request">
+            <TicketCustomerPicker
+                TicketId="@request.Id"
+                TicketType="requests"
+                OrganizationId="@request.OrganizationId"
+                CustomerId="@request.CustomerId"
+                CustomerName="@request.CustomerName"
+                CustomerEmail="@request.CustomerEmail"
+                CustomerChanged="@(selection => UpdateCustomer(request, selection))" />
+        </CustomerTemplate>
+    </TicketTable>
+</MudPaper>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? QuerySearch { get; set; }
+
+    [SupplyParameterFromQuery]
+    public bool ActiveOnly { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private TicketTable<RequestDto>? _table;
+    private string? search;
+    private CancellationTokenSource? _debounceCts;
+    private HashSet<RequestDto> _selected = new();
+    private List<UserDto> teamMembers = new();
+    private bool aiOriginOnly;
+    private bool historicOnly;
+    private string? appliedQuerySearch;
+
+    protected override void OnParametersSet()
+    {
+        if (!string.Equals(appliedQuerySearch, QuerySearch, StringComparison.Ordinal))
+        {
+            appliedQuerySearch = QuerySearch;
+            search = QuerySearch;
+            _ = _table?.ReloadServerData();
+        }
+    }
+
+    private async Task<TableData<RequestDto>> LoadServerData(TableState state, CancellationToken cancellationToken)
+    {
+        var page = state.Page + 1;
+        var pageSize = state.PageSize <= 0 ? 10 : state.PageSize;
+        var url = $"api/v1/requests?page={page}&pageSize={pageSize}";
+
+        if (aiOriginOnly)
+        {
+            url += "&aiOnly=true";
+        }
+
+        if (ActiveOnly)
+        {
+            url += "&activeOnly=true";
+        }
+
+        if (historicOnly)
+        {
+            url += "&historicOnly=true";
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            url += $"&q={Uri.EscapeDataString(search)}";
+        }
+
+        if (teamMembers.Count == 0)
+        {
+            try { teamMembers = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users", cancellationToken) ?? new(); }
+            catch { teamMembers = new(); }
+        }
+
+        var response = await HelpdeskApi.GetFromJsonAsync<PagedResponse<RequestDto>>(url, cancellationToken) ?? new();
+        return new TableData<RequestDto>
+        {
+            Items = response.Items ?? new List<RequestDto>(),
+            TotalItems = response.TotalCount
+        };
+    }
+
+    private void NavigateToDetail(string ticketType, string id)
+    {
+        NavigationManager.NavigateTo($"/{ticketType}/{id}");
+    }
+
+    private void NavigateToRequest(string id) => NavigateToDetail("requests", id);
+
+    private static void UpdateCustomer(RequestDto request, TicketCustomerPicker.CustomerSelection selection)
+    {
+        request.CustomerId = selection.CustomerId;
+        request.CustomerName = selection.CustomerName;
+        request.CustomerEmail = selection.CustomerEmail;
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var parameters = new DialogParameters();
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateRequestDialog>("Create Request", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && _table is not null)
+        {
+            await _table.ReloadServerData();
+        }
+    }
+
+    private Task Reload()
+    {
+        _selected.Clear();
+        return _table?.ReloadServerData() ?? Task.CompletedTask;
+    }
+
+    private async Task ToggleHistoric()
+    {
+        historicOnly = !historicOnly;
+        await Reload();
+    }
+
+    private async Task DebouncedReload()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(300, _debounceCts.Token);
+            await Reload();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task ApplyBulkState()
+    {
+        if (_selected.Count == 0 || _table is null) return;
+
+        var ids = _selected.Select(x => x.Id).ToList();
+        var selectedState = _table.SelectedBulkState;
+        var response = await HelpdeskApi.PostAsJsonAsync("/api/v1/requests/bulk/state", new { Ids = ids, NewState = selectedState, Comment = (string?)null });
+        if (response.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Updated {_selected.Count} request(s) to {selectedState}", Severity.Success);
+            await Reload();
+        }
+        else
+        {
+            Snackbar.Add("Bulk update failed", Severity.Error);
+        }
+    }
+
+    private async Task ApplyBulkAssign()
+    {
+        if (_selected.Count == 0 || _table is null) return;
+
+        var ids = _selected.Select(x => x.Id).ToList();
+        var assigneeId = _table.SelectedBulkAssigneeId;
+        var response = await HelpdeskApi.PostAsJsonAsync("/api/v1/requests/bulk/assign", new { Ids = ids, AssignedToId = assigneeId });
+        if (response.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Assigned {_selected.Count} request(s)", Severity.Success);
+            await Reload();
+        }
+        else
+        {
+            Snackbar.Add("Bulk assign failed", Severity.Error);
+        }
+    }
+
+}

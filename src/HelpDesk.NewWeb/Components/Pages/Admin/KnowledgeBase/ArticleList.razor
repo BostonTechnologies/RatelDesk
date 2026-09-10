@@ -1,0 +1,52 @@
+@page "/admin/knowledgebase/articles"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager NavigationManager
+@using Helpdesk.Shared.DTOs.Article
+
+<PageTitle>KB Articles</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h5">Knowledge Base Articles</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateArticle">Create</MudButton>
+    </MudStack>
+    <MudTable Items="articles" Hover="true" Dense="true" T="ArticleDto">
+        <HeaderContent>
+            <MudTh>Title</MudTh>
+            <MudTh>Category</MudTh>
+            <MudTh>Public</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Title">@context.Title</MudTd>
+            <MudTd DataLabel="Category">@context.CategoryId</MudTd>
+            <MudTd DataLabel="Public">@context.IsPublic</MudTd>
+            <MudTd>
+                <MudButton Variant="Variant.Text" OnClick="() => EditArticle(context.Id)">Edit</MudButton>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<ArticleDto> articles = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        articles = await HelpdeskApi.GetFromJsonAsync<List<ArticleDto>>("api/v1/knowledgebase/articles") ?? new();
+    }
+
+    private void CreateArticle()
+    {
+        NavigationManager.NavigateTo("/admin/knowledgebase/articles/new");
+    }
+
+    private void EditArticle(string id)
+    {
+        NavigationManager.NavigateTo($"/admin/knowledgebase/articles/{id}");
+    }
+
+}

@@ -1,0 +1,150 @@
+@inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.SlaPolicy
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudText Typo="Typo.h6">SLA Policies</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="@string.IsNullOrWhiteSpace(TenantId)" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+
+    @if (string.IsNullOrWhiteSpace(TenantId))
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">Select a tenant to view SLA policies.</MudText>
+    }
+    else
+    {
+        <div class="sla-table-wrap">
+            <MudTable Items="FilteredPolicies" Hover="true" Dense="true" T="SlaPolicyDto" Breakpoint="Breakpoint.None" Class="sla-compact-table">
+                <HeaderContent>
+                    <MudTh>Name</MudTh>
+                    <MudTh>Ticket Type</MudTh>
+                    <MudTh>Service</MudTh>
+                    <MudTh>Priority</MudTh>
+                    <MudTh>Response</MudTh>
+                    <MudTh>Resolution</MudTh>
+                    <MudTh>Escalations</MudTh>
+                    <MudTh Class="sla-actions"></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Name">@context.Name</MudTd>
+                    <MudTd DataLabel="Ticket Type">@context.AppliesTo</MudTd>
+                    <MudTd DataLabel="Service">@(!string.IsNullOrWhiteSpace(context.ServiceId) ? context.ServiceId : "-")</MudTd>
+                    <MudTd DataLabel="Priority">@(context.Priority?.ToString() ?? "-")</MudTd>
+                    <MudTd DataLabel="Response">@context.ResponseTimeHours h</MudTd>
+                    <MudTd DataLabel="Resolution">@context.ResolutionTimeHours h</MudTd>
+                    <MudTd DataLabel="Escalations">@context.Escalations.Count</MudTd>
+                    <MudTd Class="sla-actions">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" OnClick="() => OpenEditDialog(context)" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="() => ConfirmDelete(context)" />
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </div>
+    }
+</MudPaper>
+
+<style>
+    .sla-table-wrap {
+        overflow-x: auto;
+    }
+
+    .sla-compact-table th,
+    .sla-compact-table td {
+        white-space: nowrap;
+        padding: 4px 8px;
+    }
+
+    .sla-actions {
+        width: 88px;
+        text-align: right;
+    }
+</style>
+
+@code {
+    [Parameter] public string? TenantId { get; set; }
+    [Parameter] public List<TenantLookupDto> Tenants { get; set; } = new();
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<SlaPolicyDto> policies = new();
+    private IEnumerable<SlaPolicyDto> FilteredPolicies => policies
+        .Where(x => string.Equals(x.TenantId, TenantId, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(x => x.AppliesTo)
+        .ThenBy(x => x.Name);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPolicies();
+    }
+
+    private async Task LoadPolicies()
+    {
+        policies = await HelpdeskApi.GetFromJsonAsync<List<SlaPolicyDto>>("api/v1/slas") ?? new();
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        if (string.IsNullOrWhiteSpace(TenantId))
+        {
+            Snackbar.Add("Please select a tenant first.", Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            ["TenantId"] = TenantId,
+            ["Tenants"] = Tenants
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateSlaPolicyDialog>("Create SLA Policy", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadPolicies();
+        }
+    }
+
+    private async Task OpenEditDialog(SlaPolicyDto policy)
+    {
+        var parameters = new DialogParameters
+        {
+            ["Policy"] = policy,
+            ["TenantId"] = TenantId,
+            ["Tenants"] = Tenants
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<EditSlaPolicyDialog>("Edit SLA Policy", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadPolicies();
+        }
+    }
+
+    private async Task ConfirmDelete(SlaPolicyDto policy)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Delete SLA Policy",
+            $"Delete '{policy.Name}'?",
+            yesText: "Delete",
+            cancelText: "Cancel");
+        if (confirm != true)
+        {
+            return;
+        }
+
+        var response = await HelpdeskApi.DeleteAsync($"api/v1/slas/{policy.Id}");
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            Snackbar.Add($"Delete failed: {error}", Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Policy deleted.", Severity.Success);
+        await LoadPolicies();
+    }
+}

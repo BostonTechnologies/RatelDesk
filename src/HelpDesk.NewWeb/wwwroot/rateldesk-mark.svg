@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title>RatelDesk</title>
+  <rect width="256" height="256" rx="48" fill="#176f6a"/>
+  <path fill="#ffffff" d="M72 62h72c28 0 48 19 48 45 0 18-10 33-26 40l31 47h-43l-27-42h-17v42H72V62Zm38 31v28h31c8 0 13-6 13-14s-5-14-13-14h-31Z"/>
+</svg>

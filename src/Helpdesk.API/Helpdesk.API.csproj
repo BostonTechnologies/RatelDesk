@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+	<UserSecretsId>bb2ca80c-7388-4b17-b10e-98ad7c6b2cf5</UserSecretsId>
+    <NoWarn>$(NoWarn);AD0001;CS0618;CS8601;CS8602;CS8604</NoWarn>
+
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.17.1" />
+    <PackageReference Include="Dodo.Primitives" Version="5.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.11" />
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+    <PackageReference Include="Microsoft.Graph" Version="5.93.0" />
+    <PackageReference Include="FluentValidation" Version="12.0.0" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.0.0" />
+    <PackageReference Include="HtmlSanitizer" Version="9.2.1039" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.14" />
+    <PackageReference Include="Hangfire.PostgreSql" Version="1.20.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Helpdesk.Application\Helpdesk.Application.csproj" />
+    <ProjectReference Include="..\Helpdesk.ServiceDefaults\Helpdesk.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\Helpdesk.Shared\Helpdesk.Shared.csproj" />
+    <ProjectReference Include="..\Helpdesk.Infrastructure\Helpdesk.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

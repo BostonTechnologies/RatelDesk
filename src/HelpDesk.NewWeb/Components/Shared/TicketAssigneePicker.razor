@@ -1,0 +1,112 @@
+@using Helpdesk.Shared.DTOs.User
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<div @onclick:stopPropagation="true">
+
+    <MudMenu Dense="true"
+             AnchorOrigin="Origin.CenterCenter"
+             TransformOrigin="Origin.CenterCenter">
+
+        <ActivatorContent>
+
+            <MudTooltip Text="@Tooltip">
+
+                <MudAvatar Class="cursor-pointer"
+                           Size="Size.Small"
+                           Color="Color.Default"
+                           Variant="Variant.Outlined">
+
+                    @Initials(User)
+
+                </MudAvatar>
+
+            </MudTooltip>
+
+        </ActivatorContent>
+
+        <ChildContent>
+
+            <MudMenuItem OnClick="@(async () => await Assign(null))">
+                Unassigned
+            </MudMenuItem>
+
+            @foreach (var user in TeamMembers)
+            {
+                <MudMenuItem OnClick="@(async () => await Assign(user.Id))">
+                    @user.Name (@user.Email)
+                </MudMenuItem>
+            }
+
+        </ChildContent>
+
+    </MudMenu>
+
+</div>
+
+@code {
+
+    [Parameter] public string TicketId { get; set; } = default!;
+    [Parameter] public string TicketType { get; set; } = default!;
+    [Parameter] public string? AssignedToId { get; set; }
+
+    [Parameter] public List<UserDto> TeamMembers { get; set; } = new();
+
+    [Parameter] public EventCallback<string?> AssignedToIdChanged { get; set; }
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private UserDto? User => TeamMembers.FirstOrDefault(x => x.Id == AssignedToId);
+
+    private string Tooltip =>
+        User is null
+        ? "Unassigned"
+        : $"{User.Name} ({User.Email})";
+
+    private async Task Assign(string? newUserId)
+    {
+        try
+        {
+            var resp = await Api.PostAsJsonAsync(
+                $"api/v1/{TicketType}/bulk/assign",
+                new
+                {
+                    Ids = new[] { TicketId },
+                    AssignedToId = newUserId
+                });
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Assignment failed", Severity.Error);
+                return;
+            }
+
+            AssignedToId = newUserId;
+
+            await AssignedToIdChanged.InvokeAsync(newUserId);
+        }
+        catch
+        {
+            Snackbar.Add("Assignment failed", Severity.Error);
+        }
+    }
+
+    private static string Initials(UserDto? u)
+    {
+        if (u is null)
+            return "?";
+
+        var name = u.Name ?? u.Email ?? "?";
+
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 1)
+            return parts[0].Length >= 2
+                ? parts[0][0].ToString().ToUpper() + parts[0][1].ToString().ToUpper()
+                : parts[0][0].ToString().ToUpper();
+
+        return parts[0][0].ToString().ToUpper()
+             + parts[^1][0].ToString().ToUpper();
+    }
+
+}

@@ -1,0 +1,172 @@
+@using System.ComponentModel.DataAnnotations
+@using Helpdesk.Shared.DTOs.Orchestration
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Models
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.AddCircle" Class="mr-2 mb-n1" />
+            Create Organization
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="form" Model="model" OnValidSubmit="Submit" Class="mt-2">
+
+            <MudTabs>
+                <MudTabPanel Text="General">
+                    <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+                    <MudTextField @bind-Value="model.DnsName" Label="DNS Name" />
+                    <MudTextField @bind-Value="model.ContactInfo" Label="Contact Info" />
+                    <MudSwitch T="bool" @bind-Value="model.IsEnabled" Label="Enable organization" />
+                </MudTabPanel>
+                <MudTabPanel Text="External orchestration Tenant">
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        Link this Helpdesk organization to an External orchestration tenant so tenant-scoped automation targets can be created safely.
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(orchestrationTenantsError))
+                    {
+                        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+                            @orchestrationTenantsError
+                        </MudAlert>
+                    }
+                    <MudSelect T="int?"
+                               @bind-Value="model.OrchestrationTenantId"
+                               Label="External orchestration Tenant"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Clearable="true"
+                               Disabled="orchestrationTenantsLoading">
+                        @foreach (var tenant in orchestrationTenants)
+                        {
+                            <MudSelectItem T="int?" Value="@tenant.TenantId">@tenant.Name (@tenant.TenantId)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudText Typo="Typo.caption">
+                        Leave empty if this organization is not yet linked to External orchestration.
+                    </MudText>
+                </MudTabPanel>
+                <MudTabPanel Text="AI / KB Settings">
+                    <MudSwitch T="bool" @bind-Value="aiSettings.EnableAiSearch" Label="Enable AI" />
+                    <MudSwitch T="bool" @bind-Value="aiSettings.EnableAiAnswers" Label="Enable KB" />
+                    <MudText Typo="Typo.body2">Suggestion Limit</MudText>
+                    <MudSlider @bind-Value="aiSettings.SuggestionLimit" Min="1" Max="10" Step="1" />
+                    <MudSelect @bind-Value="aiSettings.EmbeddingModel" Label="Embedding Model">
+                        <MudSelectItem Value="@("text-embedding-ada-002")">text-embedding-ada-002</MudSelectItem>
+                        <MudSelectItem Value="@("embeddinggemma")">embeddinggemma</MudSelectItem>
+                    </MudSelect>
+                    <MudNumericField @bind-Value="aiSettings.EmbeddingDimensions" Label="Dimensions" />
+                    <MudTextField @bind-Value="aiSettings.AllowedServicesCsv" Label="Allowed Services (CSV)" />
+                </MudTabPanel>
+            </MudTabs>
+
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Create</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private MudForm form = default!;
+    private CreateOrganizationModel model = new();
+    private OrganizationAiKbSettingsDto aiSettings = CreateDefaultAiSettings();
+    private List<OrchestrationCatalogTenantDto> orchestrationTenants = new();
+    private bool orchestrationTenantsLoading;
+    private string? orchestrationTenantsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOrchestrationTenantsAsync();
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync("api/v1/organizations", new
+            {
+                model.Name,
+                model.DnsName,
+                model.ContactInfo,
+                model.State,
+                OrchestrationTenantId = model.OrchestrationTenantId,
+                OrchestrationTenantName = SelectedOrchestrationTenantName,
+                OrchestrationTenantLinkedAtUtc = model.OrchestrationTenantId.HasValue ? (DateTimeOffset?)DateTimeOffset.UtcNow : null
+            });
+            if (response.IsSuccessStatusCode)
+            {
+                var created = await response.Content.ReadFromJsonAsync<Helpdesk.Shared.DTOs.Organization.OrganizationDto>();
+                if (created != null)
+                {
+                    await HelpdeskApi.PutAsJsonAsync($"api/v1/organizations/{created.Id}/ai-kb-settings", aiSettings);
+                }
+                Dialog.Close(DialogResult.Ok(true));
+            }
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private string? SelectedOrchestrationTenantName => orchestrationTenants
+        .FirstOrDefault(x => x.TenantId == model.OrchestrationTenantId)?.Name;
+
+    private async Task LoadOrchestrationTenantsAsync()
+    {
+        orchestrationTenantsLoading = true;
+        orchestrationTenantsError = null;
+        try
+        {
+            orchestrationTenants = await HelpdeskApi.GetFromJsonAsync<List<OrchestrationCatalogTenantDto>>(
+                "api/v1/admin/orchestration/orchestration/catalog/tenants") ?? new();
+        }
+        catch (Exception ex)
+        {
+            orchestrationTenantsError = $"External orchestration tenant catalog could not be loaded: {ex.Message}";
+            orchestrationTenants = new();
+        }
+        finally
+        {
+            orchestrationTenantsLoading = false;
+        }
+    }
+
+    public class CreateOrganizationModel
+    {
+        [Required]
+        public string Name { get; set; } = string.Empty;
+        public string? DnsName { get; set; }
+        public string? ContactInfo { get; set; }
+        public int? OrchestrationTenantId { get; set; }
+
+        public EntityState State { get; set; } = EntityState.Enabled;
+
+        public bool IsEnabled
+        {
+            get => State == EntityState.Enabled;
+            set => State = value ? EntityState.Enabled : EntityState.Blocked;
+        }
+    }
+
+    private static OrganizationAiKbSettingsDto CreateDefaultAiSettings()
+    {
+        return new OrganizationAiKbSettingsDto
+        {
+            EmbeddingModel = "embeddinggemma",
+            EmbeddingDimensions = 768,
+            SuggestionLimit = 3,
+            EnableProviderFallback = true,
+            MaxProviderAttempts = 2,
+            MinimumSuggestionFeedbackCount = 5,
+            MinimumSuggestionHelpfulRate = 0.6,
+            MinimumAutomationFeedbackCount = 3,
+            MinimumAutomationResolvedRate = 0.5
+        };
+    }
+}

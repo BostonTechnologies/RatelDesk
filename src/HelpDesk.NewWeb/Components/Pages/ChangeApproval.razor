@@ -1,0 +1,264 @@
+@page "/change-approval/{TrackingId}"
+@layout PublicLayout
+@attribute [AllowAnonymous]
+@rendermode InteractiveServer
+
+@using Helpdesk.Shared.DTOs.Change
+@using Helpdesk.Shared.Models
+@using Microsoft.AspNetCore.WebUtilities
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+
+<PageTitle>Change Review</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6 mb-12">
+    <MudPaper Class="pa-6 pa-md-8" Elevation="2">
+        @if (loading)
+        {
+            <MudStack AlignItems="AlignItems.Center" Class="py-8">
+                <MudProgressCircular Indeterminate="true" />
+            </MudStack>
+        }
+        else if (change is null)
+        {
+            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
+                This approval link could not be opened. Please use the latest link from your email.
+            </MudAlert>
+        }
+        else
+        {
+            <MudStack Spacing="3">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                    <img src="rateldesk-mark.svg" alt="RatelDesk" style="max-height:46px; max-width:220px;" />
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@change.TrackingId</MudText>
+                </MudStack>
+
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                    <MudText Typo="Typo.h5">Change Review</MudText>
+                    <MudChip T="string"
+                             Color="@(change.ApprovalStatus == ChangeApprovalStatus.Reviewed ? Color.Success : Color.Warning)"
+                             Variant="Variant.Outlined">
+                        @(change.CanReview ? (change.ApprovalStatus == ChangeApprovalStatus.Reviewed ? "Reviewed" : "Pending") : "View Only")
+                    </MudChip>
+                </MudStack>
+
+                <MudDivider />
+
+                <MudGrid Spacing="2">
+                    <MudItem xs="12">
+                        <MudText Typo="Typo.h6">@change.Title</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@change.Description</MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.overline">Tracking ID</MudText>
+                        <MudText Typo="Typo.body1">@change.TrackingId</MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.overline">Organization</MudText>
+                        <MudText Typo="Typo.body1">@change.OrganizationName</MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.overline">Requested For</MudText>
+                        <MudText Typo="Typo.body1">@change.RequestedForName</MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.overline">Implementor</MudText>
+                        <MudText Typo="Typo.body1">@change.ImplementorName</MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.overline">Implementation Start</MudText>
+                        <MudText Typo="Typo.body1">@FormatDate(change.ImplementationStartAt)</MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.overline">Implementation End</MudText>
+                        <MudText Typo="Typo.body1">@FormatDate(change.ImplementationEndAt)</MudText>
+                    </MudItem>
+                </MudGrid>
+
+                <MudDivider />
+
+                <MudStack Spacing="2">
+                    <MudText Typo="Typo.h6">Change Plan</MudText>
+                    <MudPaper Outlined="true" Class="pa-3">
+                        <MudText Typo="Typo.overline">Scope of Change</MudText>
+                        <MudText Typo="Typo.body2">@DisplayText(change.ScopeOfChange)</MudText>
+                    </MudPaper>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" md="6">
+                            @RenderListSection("Affected Systems or Services", change.AffectedSystems)
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            @RenderListSection("Implementation Steps", change.ImplementationSteps)
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            @RenderListSection("Validation Steps", change.ValidationSteps)
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudPaper Outlined="true" Class="pa-3 h-100">
+                                <MudText Typo="Typo.overline">Rollback Plan</MudText>
+                                <MudText Typo="Typo.body2">@DisplayText(change.RollbackPlan)</MudText>
+                                @if (!string.IsNullOrWhiteSpace(change.RollbackReference))
+                                {
+                                    <MudText Typo="Typo.caption" Class="d-block mt-2">
+                                        Reference: @change.RollbackReference
+                                    </MudText>
+                                }
+                            </MudPaper>
+                        </MudItem>
+                    </MudGrid>
+                </MudStack>
+
+                @if (!change.CanReview)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                        This secure link is for viewing the change details. Approval action is only available to assigned approvers.
+                    </MudAlert>
+                }
+                else if (change.ApprovalStatus == ChangeApprovalStatus.Reviewed)
+                {
+                    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined">
+                        Thank you. This change was reviewed at @change.ReviewedAtUtc?.ToLocalTime().ToString("g").
+                    </MudAlert>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               Disabled="@submitting"
+                               OnClick="SubmitReview"
+                               Size="Size.Large">
+                        @if (submitting)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        Reviewed / Approve
+                    </MudButton>
+                }
+            </MudStack>
+        }
+    </MudPaper>
+</MudContainer>
+
+@code {
+    [Parameter] public string TrackingId { get; set; } = string.Empty;
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("SystemApi");
+    private PublicChangeApprovalDto? change;
+    private string email = string.Empty;
+    private string token = string.Empty;
+    private bool loading = true;
+    private bool submitting;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        var uri = NavigationManager.ToAbsoluteUri(NavigationManager.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("email", out var emailValue))
+        {
+            email = emailValue.ToString().Trim();
+        }
+        if (query.TryGetValue("token", out var tokenValue))
+        {
+            token = tokenValue.ToString().Trim();
+        }
+
+        await LoadApproval();
+        StateHasChanged();
+    }
+
+    private async Task LoadApproval()
+    {
+        loading = true;
+        try
+        {
+            var url = $"api/v1/changes/public/approval?trackingId={Uri.EscapeDataString(TrackingId)}&email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
+            var response = await HelpdeskApi.GetAsync(url);
+            change = response.IsSuccessStatusCode
+                ? await response.Content.ReadFromJsonAsync<PublicChangeApprovalDto>()
+                : null;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Unable to load change approval: {ex.Message}", Severity.Error);
+            change = null;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task SubmitReview()
+    {
+        submitting = true;
+        try
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync(
+                "api/v1/changes/public/approval/review",
+                new ReviewChangeApprovalRequest(TrackingId, email, token));
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Unable to submit approval. Please use the latest link from your email.", Severity.Error);
+                return;
+            }
+
+            await LoadApproval();
+            Snackbar.Add("Change reviewed successfully.", Severity.Success);
+        }
+        finally
+        {
+            submitting = false;
+        }
+    }
+
+    private static string FormatDate(DateTime? value) =>
+        value.HasValue ? value.Value.ToString("yyyy/MM/dd HH:mm") : "Not set";
+
+    private static string DisplayText(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "Not provided" : value;
+
+    private static RenderFragment RenderListSection(string title, IReadOnlyCollection<string> values) => builder =>
+    {
+        builder.OpenComponent<MudPaper>(0);
+        builder.AddAttribute(1, nameof(MudPaper.Outlined), true);
+        builder.AddAttribute(2, nameof(MudPaper.Class), "pa-3 h-100");
+        builder.AddAttribute(3, nameof(MudPaper.ChildContent), (RenderFragment)(paperBuilder =>
+        {
+            paperBuilder.OpenComponent<MudText>(4);
+            paperBuilder.AddAttribute(5, nameof(MudText.Typo), Typo.overline);
+            paperBuilder.AddAttribute(6, nameof(MudText.ChildContent), (RenderFragment)(textBuilder => textBuilder.AddContent(7, title)));
+            paperBuilder.CloseComponent();
+
+            if (values.Count == 0)
+            {
+                paperBuilder.OpenComponent<MudText>(8);
+                paperBuilder.AddAttribute(9, nameof(MudText.Typo), Typo.body2);
+                paperBuilder.AddAttribute(10, nameof(MudText.ChildContent), (RenderFragment)(textBuilder => textBuilder.AddContent(11, "Not provided")));
+                paperBuilder.CloseComponent();
+                return;
+            }
+
+            paperBuilder.OpenComponent<MudList<string>>(12);
+            paperBuilder.AddAttribute(13, nameof(MudList<string>.Dense), true);
+            paperBuilder.AddAttribute(14, nameof(MudList<string>.ChildContent), (RenderFragment)(listBuilder =>
+            {
+                var sequence = 15;
+                foreach (var value in values.Where(x => !string.IsNullOrWhiteSpace(x)))
+                {
+                    listBuilder.OpenComponent<MudListItem<string>>(sequence++);
+                    listBuilder.AddAttribute(sequence++, nameof(MudListItem<string>.ChildContent), (RenderFragment)(itemBuilder => itemBuilder.AddContent(sequence++, value)));
+                    listBuilder.CloseComponent();
+                }
+            }));
+            paperBuilder.CloseComponent();
+        }));
+        builder.CloseComponent();
+    };
+}

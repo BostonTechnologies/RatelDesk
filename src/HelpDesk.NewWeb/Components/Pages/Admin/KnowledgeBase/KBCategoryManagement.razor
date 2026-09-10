@@ -1,0 +1,79 @@
+@page "/admin/kb/categories"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+@using Helpdesk.Shared.DTOs.Category
+
+<PageTitle>KB Categories</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h5">Knowledge Base Categories</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+    <MudTable Items="categories" Hover="true" Dense="true" T="CategoryDto">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">@context.Name</MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" OnClick="() => OpenEditDialog(context)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="() => OpenDeleteDialog(context)" />
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<CategoryDto> categories = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCategories();
+    }
+
+    private async Task LoadCategories()
+    {
+        categories = await HelpdeskApi.GetFromJsonAsync<List<CategoryDto>>("api/v1/knowledgebase/categories") ?? new();
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateCategoryDialog>("Create Category", options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadCategories();
+        }
+    }
+
+    private async Task OpenEditDialog(CategoryDto category)
+    {
+        var parameters = new DialogParameters { ["Category"] = category };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<EditCategoryDialog>("Edit Category", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadCategories();
+        }
+    }
+
+    private async Task OpenDeleteDialog(CategoryDto category)
+    {
+        var parameters = new DialogParameters { ["Category"] = category };
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraSmall };
+        var dialog = await DialogService.ShowAsync<DeleteCategoryDialog>("Delete Category", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadCategories();
+        }
+    }
+
+}

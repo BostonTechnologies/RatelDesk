@@ -1,0 +1,150 @@
+@using Microsoft.AspNetCore.Components
+@using System.Net.Http.Json
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Template Preview</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (useServerPreview)
+        {
+            <MudGrid Spacing="2" Class="mb-2">
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string" Label="Preview as tenant" Value="@selectedTenantId" ValueChanged="OnTenantChanged">
+                        <MudSelectItem T="string" Value="@SystemDefaultsTenantValue">System Defaults</MudSelectItem>
+                        @foreach (var tenant in tenants)
+                        {
+                            <MudSelectItem T="string" Value="@tenant.Id">@tenant.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+        }
+        @if (!string.IsNullOrWhiteSpace(previewSubject))
+        {
+            <MudText Typo="Typo.subtitle1" Class="mb-2"><b>Subject:</b> @previewSubject</MudText>
+        }
+        <MudPaper Class="pa-4" Style="max-height: 70vh; overflow: auto;">
+            @((MarkupString)(previewHtml ?? string.Empty))
+        </MudPaper>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close" Color="Color.Primary">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const string SystemDefaultsTenantValue = "__system_defaults__";
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter] public int? TemplateId { get; set; }
+    [Parameter] public string? TemplateName { get; set; }
+    [Parameter] public string? TenantId { get; set; }
+    [Parameter] public string? DraftSubject { get; set; }
+    [Parameter] public string? DraftHtmlContent { get; set; }
+    [Parameter] public int? DraftLayoutId { get; set; }
+    [Parameter] public PreviewSampleContext? SampleContext { get; set; }
+    [Parameter] public string RenderedHtml { get; set; } = string.Empty;
+
+    private readonly List<TenantLookupDto> tenants = new();
+    private string selectedTenantId = SystemDefaultsTenantValue;
+    private string previewSubject = string.Empty;
+    private string previewHtml = string.Empty;
+    private bool useServerPreview;
+
+    protected override async Task OnInitializedAsync()
+    {
+        useServerPreview = TemplateId.HasValue ||
+            !string.IsNullOrWhiteSpace(TemplateName) ||
+            !string.IsNullOrWhiteSpace(DraftHtmlContent) ||
+            !string.IsNullOrWhiteSpace(DraftSubject);
+
+        if (!useServerPreview)
+        {
+            previewHtml = RenderedHtml ?? string.Empty;
+            return;
+        }
+
+        selectedTenantId = string.IsNullOrWhiteSpace(TenantId) ? SystemDefaultsTenantValue : TenantId;
+        var loadedTenants = await HelpdeskApi.GetFromJsonAsync<List<TenantLookupDto>>("api/v1/admin/tenants/lookup") ?? new();
+        tenants.AddRange(loadedTenants);
+        await RefreshPreviewAsync();
+    }
+
+    private async Task OnTenantChanged(string tenantId)
+    {
+        selectedTenantId = string.IsNullOrWhiteSpace(tenantId) ? SystemDefaultsTenantValue : tenantId;
+        await RefreshPreviewAsync();
+    }
+
+    private async Task RefreshPreviewAsync()
+    {
+        var payload = new TemplatePreviewRequest
+        {
+            TemplateId = TemplateId,
+            TemplateName = TemplateName,
+            TenantId = selectedTenantId == SystemDefaultsTenantValue ? null : selectedTenantId,
+            DraftSubject = DraftSubject,
+            DraftHtmlContent = DraftHtmlContent,
+            DraftLayoutId = DraftLayoutId,
+            SampleContext = SampleContext ?? new PreviewSampleContext()
+        };
+
+        var response = await HelpdeskApi.PostAsJsonAsync("api/v1/email-templates/preview", payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            previewSubject = string.Empty;
+            previewHtml = "<p>Unable to render preview.</p>";
+            return;
+        }
+
+        var preview = await response.Content.ReadFromJsonAsync<TemplatePreviewResponse>();
+        previewSubject = preview?.Subject ?? string.Empty;
+        previewHtml = preview?.Html ?? string.Empty;
+    }
+
+    private void Close() => Dialog.Close();
+
+    public sealed class PreviewSampleContext
+    {
+        public string UserName { get; set; } = "John Doe";
+        public string TicketRef { get; set; } = "INC-12345";
+        public string TicketLink { get; set; } = "https://example.helpdesk.local/view-ticket/INC-12345";
+        public string UpdateMessageHtml { get; set; } = "<p>Example update with <strong>formatting</strong>.</p>";
+        public string UpdateMessageText { get; set; } = "Example update with formatting.";
+        public string ServiceName { get; set; } = "Disk capacity report";
+        public string RequestTitle { get; set; } = "Disk capacity report";
+        public string RequestDescription { get; set; } = "Generate a disk capacity report.";
+        public string FailureReason { get; set; } = "Automation reported a failed run.";
+        public string IncidentRef { get; set; } = "INC-12346";
+        public string IncidentLink { get; set; } = "https://example.helpdesk.local/view-ticket/INC-12346";
+        public string CompletedAt { get; set; } = "2026-05-15 13:56 UTC";
+        public string ResolvedAt { get; set; } = "2026-05-15 14:10 UTC";
+    }
+
+    private sealed class TemplatePreviewRequest
+    {
+        public int? TemplateId { get; set; }
+        public string? TemplateName { get; set; }
+        public string? TenantId { get; set; }
+        public string? DraftSubject { get; set; }
+        public string? DraftHtmlContent { get; set; }
+        public int? DraftLayoutId { get; set; }
+        public PreviewSampleContext? SampleContext { get; set; }
+    }
+
+    private sealed class TemplatePreviewResponse
+    {
+        public string Subject { get; set; } = string.Empty;
+        public string Html { get; set; } = string.Empty;
+    }
+
+    private sealed class TenantLookupDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+    }
+}

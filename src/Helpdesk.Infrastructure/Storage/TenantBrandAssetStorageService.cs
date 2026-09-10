@@ -1,0 +1,64 @@
+using System.Text.RegularExpressions;
+using Helpdesk.Application.Services.EmailTemplates;
+using Helpdesk.Application.WorkLogs;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Helpdesk.Infrastructure.Storage;
+
+public sealed class TenantBrandAssetStorageService(
+    IHostEnvironment env,
+    IOptions<StorageOptions> options,
+    IImageLinkSigner imageLinkSigner,
+    ILogger<TenantBrandAssetStorageService> logger) : ITenantBrandAssetStorageService
+{
+    private readonly string _storageRoot = string.IsNullOrWhiteSpace(options.Value.RootPath)
+        ? Path.Combine(env.ContentRootPath, "storage")
+        : options.Value.RootPath;
+    private readonly string _publicApiBaseUrl = options.Value.PublicApiBaseUrl ?? string.Empty;
+    private readonly IImageLinkSigner _imageLinkSigner = imageLinkSigner;
+    private readonly ILogger<TenantBrandAssetStorageService> _logger = logger;
+
+    public async Task<string> SaveLogoAsync(
+        int tenantId,
+        string filename,
+        byte[] content)
+    {
+        var safeTenantId = SanitizePathSegment(tenantId.ToString());
+        var safeFilename = SanitizeFileName(filename);
+        var root = Path.Combine(_storageRoot, "tenants", safeTenantId, "brand");
+        Directory.CreateDirectory(root);
+
+        var fullPath = Path.Combine(root, safeFilename);
+        await File.WriteAllBytesAsync(fullPath, content);
+        _logger.LogInformation("Saved tenant branding logo. TenantId={TenantId} Path={Path}", safeTenantId, fullPath);
+
+        var expires = DateTimeOffset.UtcNow.AddHours(24);
+        var token = _imageLinkSigner.GenerateToken("tenant-brand", safeTenantId, safeFilename, expires);
+        var relative =
+            $"/api/tenants/{Uri.EscapeDataString(safeTenantId)}/branding/logo/{Uri.EscapeDataString(safeFilename)}?token={Uri.EscapeDataString(token)}";
+
+        return string.IsNullOrWhiteSpace(_publicApiBaseUrl)
+            ? relative
+            : $"{_publicApiBaseUrl.TrimEnd('/')}{relative}";
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "0";
+
+        var clean = Regex.Replace(value, "[^a-zA-Z0-9_-]", "-");
+        return string.IsNullOrWhiteSpace(clean) ? "0" : clean;
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        var fileName = Path.GetFileName(string.IsNullOrWhiteSpace(value) ? Guid.NewGuid().ToString("N") : value.Trim());
+        if (string.IsNullOrWhiteSpace(fileName))
+            fileName = Guid.NewGuid().ToString("N");
+
+        return fileName.Replace('|', '-');
+    }
+}

@@ -1,0 +1,403 @@
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@using Helpdesk.Shared.DTOs.Customer
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.Sla
+@using Helpdesk.Shared.DTOs.SlaPolicy
+@using Helpdesk.Shared.DTOs.User
+@using Helpdesk.Shared.Enums
+
+<MudPaper Class="pa-4">
+    <MudText Typo="Typo.h6" Class="mb-3">SLA Reporting</MudText>
+
+    @if (string.IsNullOrWhiteSpace(TenantId))
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">Select a tenant to manage SLA reporting.</MudText>
+    }
+    else
+    {
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Create Subscription</MudText>
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="4">
+                <MudSelect T="ReportFrequency" Label="Frequency" @bind-Value="draft.Frequency" Dense="true" Margin="Margin.Dense">
+                    <MudSelectItem T="ReportFrequency" Value="ReportFrequency.Daily">Daily</MudSelectItem>
+                    <MudSelectItem T="ReportFrequency" Value="ReportFrequency.Weekly">Weekly</MudSelectItem>
+                    <MudSelectItem T="ReportFrequency" Value="ReportFrequency.Monthly">Monthly</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="DayOfWeek?" Label="Weekly Day" @bind-Value="draft.WeeklyDay" Dense="true" Margin="Margin.Dense" Disabled="draft.Frequency != ReportFrequency.Weekly">
+                    @foreach (var day in Enum.GetValues<DayOfWeek>())
+                    {
+                        <MudSelectItem T="DayOfWeek?" Value="@day">@day</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudTimePicker Label="Send Time"
+                               Time="draft.SendTimeLocal"
+                               TimeChanged="OnDraftSendTimeChanged"
+                               PickerVariant="PickerVariant.Dialog"
+                               Dense="true"
+                               Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudTextField @bind-Value="draft.TimeZoneId" Label="Timezone" Dense="true" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudNumericField T="int" @bind-Value="draft.LookbackDays" Label="Lookback Days" Min="1" Dense="true" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="string"
+                           Label="Recipients"
+                           MultiSelection="true"
+                           Dense="true"
+                           Margin="Margin.Dense"
+                           SelectedValues="@draftRecipientEmails"
+                           SelectedValuesChanged="OnDraftRecipientsChanged">
+                    @foreach (var recipient in GetRecipientOptions(TenantId, draftRecipientEmails))
+                    {
+                        <MudSelectItem T="string" Value="@recipient.Email">@recipient.Label</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+
+        <MudButton OnClick="CreateAsync" Color="Color.Primary" Variant="Variant.Filled" Size="Size.Small" Class="mt-2">Create</MudButton>
+
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-4 mb-2">
+            <MudText Typo="Typo.subtitle2">Subscriptions</MudText>
+            <MudSpacer />
+            <MudButton OnClick="LoadAsync" Color="Color.Default" Variant="Variant.Outlined" Size="Size.Small">Refresh</MudButton>
+        </MudStack>
+
+        <div class="sla-table-wrap">
+            <MudTable Items="FilteredSubscriptions" Dense="true" Hover="true" Breakpoint="Breakpoint.None" Class="sla-compact-table">
+                <HeaderContent>
+                    <MudTh>Frequency</MudTh>
+                    <MudTh>Time</MudTh>
+                    <MudTh>Recipients</MudTh>
+                    <MudTh>Active</MudTh>
+                    <MudTh Class="sla-actions"></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Frequency</MudTd>
+                    <MudTd>
+                        <MudTimePicker Label="Time"
+                                       Time="context.SendTimeLocal"
+                                       TimeChanged="@(value => UpdateSubscriptionTimeAsync(context, value))"
+                                       PickerVariant="PickerVariant.Dialog"
+                                       Dense="true"
+                                       Margin="Margin.Dense"
+                                       Disabled="@IsSaving(context)" />
+                    </MudTd>
+                    <MudTd Class="sla-recipients-cell">
+                        <MudSelect T="string"
+                                   Label="Recipients"
+                                   MultiSelection="true"
+                                   Dense="true"
+                                   Margin="Margin.Dense"
+                                   SelectedValues="@GetRecipientEmails(context)"
+                                   SelectedValuesChanged="@(values => UpdateSubscriptionRecipientsAsync(context, values))"
+                                   Disabled="@IsSaving(context)">
+                            @foreach (var recipient in GetRecipientOptions(context.TenantId, GetRecipientEmails(context)))
+                            {
+                                <MudSelectItem T="string" Value="@recipient.Email">@recipient.Label</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@(context.IsActive ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Cancel)"
+                                       Color="@(context.IsActive ? Color.Success : Color.Default)"
+                                       Size="Size.Small"
+                                       Disabled="@IsSaving(context)"
+                                       aria-label="@(context.IsActive ? "Disable subscription" : "Enable subscription")"
+                                       OnClick="() => ToggleAsync(context)" />
+                    </MudTd>
+                    <MudTd Class="sla-actions">
+                        @if (IsSaving(context))
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                        }
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                       Color="Color.Error"
+                                       Size="Size.Small"
+                                       Disabled="@IsSaving(context)"
+                                       OnClick="() => DeleteAsync(context)" />
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </div>
+    }
+</MudPaper>
+
+@code {
+    [Parameter] public string? TenantId { get; set; }
+    [Parameter] public List<TenantLookupDto> Tenants { get; set; } = new();
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<SlaReportSubscriptionDto> subscriptions = new();
+    private List<UserDto> users = new();
+    private List<CustomerDto> customers = new();
+    private HashSet<string> savingRows = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> draftRecipientEmails = new(StringComparer.OrdinalIgnoreCase);
+    private string? loadedTenantId;
+    private SlaReportSubscriptionDto draft = NewDraft();
+    private IEnumerable<SlaReportSubscriptionDto> FilteredSubscriptions => subscriptions
+        .Where(x => string.Equals(x.TenantId, TenantId, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(x => x.Frequency)
+        .ThenBy(x => x.SendTimeLocal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users") ?? new();
+        customers = await HelpdeskApi.GetFromJsonAsync<List<CustomerDto>>("api/v1/customers") ?? new();
+        await LoadAsync();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (string.Equals(loadedTenantId, TenantId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        loadedTenantId = TenantId;
+        draft = NewDraft();
+        draft.TenantId = TenantId ?? string.Empty;
+        draftRecipientEmails.Clear();
+    }
+
+    private async Task LoadAsync()
+    {
+        subscriptions = await HelpdeskApi.GetFromJsonAsync<List<SlaReportSubscriptionDto>>("api/v1/sla-report-subscriptions") ?? new();
+        savingRows.Clear();
+    }
+
+    private void OnDraftSendTimeChanged(TimeSpan? value)
+    {
+        if (value.HasValue)
+        {
+            draft.SendTimeLocal = value.Value;
+        }
+    }
+
+    private void OnDraftRecipientsChanged(IEnumerable<string>? values)
+    {
+        draftRecipientEmails = ToEmailSet(values);
+        draft.Targets = ToEmailTargets(draftRecipientEmails);
+    }
+
+    private async Task CreateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(TenantId))
+        {
+            Snackbar.Add("Tenant is required.", Severity.Error);
+            return;
+        }
+
+        draft.TenantId = TenantId;
+        draft.Targets = ToEmailTargets(draftRecipientEmails);
+        if (draft.Targets.Count == 0)
+        {
+            Snackbar.Add("At least one recipient is required.", Severity.Error);
+            return;
+        }
+
+        var response = await HelpdeskApi.PostAsJsonAsync("api/v1/sla-report-subscriptions", draft);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            Snackbar.Add($"Failed to save: {error}", Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Subscription created.", Severity.Success);
+        draft = NewDraft();
+        draft.TenantId = TenantId;
+        draftRecipientEmails.Clear();
+        await LoadAsync();
+    }
+
+    private async Task ToggleAsync(SlaReportSubscriptionDto dto)
+    {
+        dto.IsActive = !dto.IsActive;
+        await SaveSubscriptionAsync(dto);
+    }
+
+    private async Task UpdateSubscriptionTimeAsync(SlaReportSubscriptionDto dto, TimeSpan? value)
+    {
+        if (!value.HasValue || value.Value == dto.SendTimeLocal)
+        {
+            return;
+        }
+
+        dto.SendTimeLocal = value.Value;
+        await SaveSubscriptionAsync(dto);
+    }
+
+    private async Task UpdateSubscriptionRecipientsAsync(SlaReportSubscriptionDto dto, IEnumerable<string>? values)
+    {
+        var selected = ToEmailSet(values);
+        if (selected.Count == 0)
+        {
+            Snackbar.Add("At least one recipient is required.", Severity.Error);
+            await LoadAsync();
+            return;
+        }
+
+        dto.Targets = ToEmailTargets(selected);
+        await SaveSubscriptionAsync(dto);
+    }
+
+    private async Task SaveSubscriptionAsync(SlaReportSubscriptionDto dto)
+    {
+        if (!savingRows.Add(dto.Id))
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/sla-report-subscriptions/{dto.Id}", dto);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Failed to save: {error}", Severity.Error);
+                await LoadAsync();
+                return;
+            }
+        }
+        finally
+        {
+            savingRows.Remove(dto.Id);
+        }
+    }
+
+    private async Task DeleteAsync(SlaReportSubscriptionDto dto)
+    {
+        var response = await HelpdeskApi.DeleteAsync($"api/v1/sla-report-subscriptions/{dto.Id}");
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            Snackbar.Add($"Delete failed: {error}", Severity.Error);
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private bool IsSaving(SlaReportSubscriptionDto dto)
+    {
+        return !string.IsNullOrWhiteSpace(dto.Id) && savingRows.Contains(dto.Id);
+    }
+
+    private IEnumerable<RecipientOption> GetRecipientOptions(string? tenantId, IEnumerable<string>? selectedEmails = null)
+    {
+        var selected = ToEmailSet(selectedEmails);
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return selected
+                .OrderBy(x => x)
+                .Select(x => new RecipientOption(x, x));
+        }
+
+        var options = users
+            .Where(x => string.Equals(x.OrganizationId, tenantId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(x.Email))
+            .Select(x => new RecipientOption(x.Email.Trim(), FormatUser(x)))
+            .Concat(customers
+                .Where(x => x.IsEnabled && string.Equals(x.OrganizationId, tenantId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(x.Email))
+                .Select(x => new RecipientOption(x.Email.Trim(), FormatCustomer(x))))
+            .GroupBy(x => x.Email, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .ToList();
+
+        foreach (var email in selected)
+        {
+            if (!options.Any(x => string.Equals(x.Email, email, StringComparison.OrdinalIgnoreCase)))
+            {
+                options.Add(new RecipientOption(email, email));
+            }
+        }
+
+        return options
+            .OrderBy(x => x.Label)
+            .ThenBy(x => x.Email);
+    }
+
+    private static HashSet<string> GetRecipientEmails(SlaReportSubscriptionDto dto)
+    {
+        return ToEmailSet(dto.Targets
+            .Where(x => x.Type == RecipientTargetType.Email)
+            .Select(x => x.Value));
+    }
+
+    private static HashSet<string> ToEmailSet(IEnumerable<string>? values)
+    {
+        return (values ?? Enumerable.Empty<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static List<RecipientTargetDto> ToEmailTargets(IEnumerable<string> emails)
+    {
+        return emails
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(x => new RecipientTargetDto { Type = RecipientTargetType.Email, Value = x.Trim() })
+            .ToList();
+    }
+
+    private static string FormatUser(UserDto user)
+    {
+        return string.IsNullOrWhiteSpace(user.Name)
+            ? user.Email
+            : $"{user.Name} ({user.Email})";
+    }
+
+    private static string FormatCustomer(CustomerDto customer)
+    {
+        return string.IsNullOrWhiteSpace(customer.Name)
+            ? customer.Email
+            : $"{customer.Name} ({customer.Email})";
+    }
+
+    private static SlaReportSubscriptionDto NewDraft()
+    {
+        return new SlaReportSubscriptionDto
+        {
+            Frequency = ReportFrequency.Weekly,
+            WeeklyDay = DayOfWeek.Monday,
+            SendTimeLocal = TimeSpan.FromHours(8),
+            TimeZoneId = "Africa/Johannesburg",
+            IsActive = true,
+            IncludeCsvAttachment = true,
+            Targets = new List<RecipientTargetDto>()
+        };
+    }
+
+    private sealed record RecipientOption(string Email, string Label);
+}
+
+<style>
+    .sla-table-wrap {
+        overflow-x: auto;
+    }
+
+    .sla-compact-table th,
+    .sla-compact-table td {
+        white-space: nowrap;
+        padding: 4px 8px;
+        vertical-align: middle;
+    }
+
+    .sla-recipients-cell {
+        min-width: 320px;
+    }
+
+    .sla-actions {
+        width: 80px;
+        text-align: right;
+    }
+</style>

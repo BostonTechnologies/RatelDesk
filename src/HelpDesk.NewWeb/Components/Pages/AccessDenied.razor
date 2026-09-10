@@ -1,0 +1,21 @@
+@page "/access-denied"
+@attribute [AllowAnonymous]
+
+<PageTitle>Access Denied</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="py-10">
+    <MudPaper Elevation="1" Class="pa-6">
+        <MudText Typo="Typo.h4" Class="mb-3">Access denied</MudText>
+        <MudText Typo="Typo.body1" Class="mb-3">
+            Your authorised account is authenticated, but it does not currently have permission to access this area.
+        </MudText>
+        <MudText Typo="Typo.body2" Class="mb-6">
+            If you need access, contact your RatelDesk administrators and include the page you were trying to open.
+        </MudText>
+        <MudButton Href="/home"
+                   Variant="Variant.Filled"
+                   Color="Color.Primary">
+            Return home
+        </MudButton>
+    </MudPaper>
+</MudContainer>

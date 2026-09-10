@@ -1,0 +1,81 @@
+@using Helpdesk.Shared.DTOs.Resources
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Graph Sync Schedule</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                Hangfire is the preferred recurring sync mechanism for Graph datasets. Tenant schedule settings are saved here; the global runtime is managed from the Hangfire Ops page. Cron uses UTC.
+            </MudAlert>
+
+            <MudSwitch @bind-Value="model.BackgroundSyncEnabled" Label="Enable Hangfire background sync" />
+
+            <MudTextField @bind-Value="model.BackgroundSyncCronExpression"
+                          Label="Cron Expression"
+                          Variant="Variant.Outlined"
+                          HelperText="Example: 0 */6 * * * for every 6 hours." />
+
+            @if (!HangfireEnabled)
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+                    Hangfire runtime is currently disabled. Save is still useful because the tenant cron stays in the database, but recurring jobs will not register until ops enables the global runtime from Hangfire Ops.
+                </MudAlert>
+            }
+
+            <MudText Typo="Typo.caption">
+                Global runtime source: @RuntimeSource
+            </MudText>
+            <MudText Typo="Typo.caption">
+                Storage provider: @StorageProvider
+            </MudText>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Apply</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter] public TenantGraphDatasetSettingsDto Settings { get; set; } = new();
+    [Parameter] public bool HangfireEnabled { get; set; }
+    [Parameter] public string RuntimeSource { get; set; } = "Ops UI / database";
+    [Parameter] public string StorageProvider { get; set; } = "Application PostgreSQL database";
+
+    private TenantGraphDatasetSettingsDto model = new();
+
+    protected override void OnParametersSet()
+    {
+        model = new TenantGraphDatasetSettingsDto
+        {
+            OrganizationId = Settings.OrganizationId,
+            TenantId = Settings.TenantId,
+            ClientId = Settings.ClientId,
+            ClientSecret = Settings.ClientSecret,
+            EnableUsers = Settings.EnableUsers,
+            EnableDevices = Settings.EnableDevices,
+            EnableGroups = Settings.EnableGroups,
+            EnableSharePointSites = Settings.EnableSharePointSites,
+            BackgroundSyncEnabled = Settings.BackgroundSyncEnabled,
+            BackgroundSyncCronExpression = string.IsNullOrWhiteSpace(Settings.BackgroundSyncCronExpression)
+                ? "0 */6 * * *"
+                : Settings.BackgroundSyncCronExpression
+        };
+    }
+
+    private void Save()
+    {
+        if (model.BackgroundSyncEnabled && string.IsNullOrWhiteSpace(model.BackgroundSyncCronExpression))
+        {
+            return;
+        }
+
+        Dialog.Close(DialogResult.Ok(model));
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

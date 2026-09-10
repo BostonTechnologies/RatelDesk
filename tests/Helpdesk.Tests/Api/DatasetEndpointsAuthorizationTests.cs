@@ -1,0 +1,347 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+using Helpdesk.API.Background;
+using Helpdesk.API.Endpoints.Resources;
+using Helpdesk.Application.Resources;
+using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.DTOs;
+using Helpdesk.Shared.DTOs.Resources;
+using Helpdesk.Shared.Enums;
+using Helpdesk.Shared.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Helpdesk.Tests.Api;
+
+public sealed class DatasetEndpointsAuthorizationTests
+{
+    [Fact]
+    public async Task ClientAdmin_CanCreateAndListCustomDatasetsForOwnTenant()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("ClientAdmin");
+
+        var create = await harness.Client.PostAsJsonAsync("/api/v1/resources/datasets", new CreateDatasetDefinitionDto
+        {
+            OrganizationId = "org-alpha",
+            Name = "People",
+            SourceType = DatasetSourceType.Custom,
+            KeyColumn = "id",
+            DisplayColumn = "name",
+            Columns =
+            [
+                new DatasetColumnDto { Name = "id", IsKey = true },
+                new DatasetColumnDto { Name = "name", IsDisplay = true }
+            ]
+        });
+        var datasets = await harness.Client.GetFromJsonAsync<List<DatasetDefinitionDto>>("/api/v1/resources/datasets?organizationId=org-alpha");
+
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        Assert.Contains(datasets!, x => x.Name == "People" && x.OrganizationId == "org-alpha");
+    }
+
+    [Fact]
+    public async Task ClientAdmin_CannotAccessAnotherTenantDatasetsOrGraphSettings()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("ClientAdmin");
+
+        var list = await harness.Client.GetAsync("/api/v1/resources/datasets?organizationId=org-other");
+        var dataset = await harness.Client.GetAsync("/api/v1/resources/datasets/other-custom");
+        var rows = await harness.Client.GetAsync("/api/v1/resources/datasets/other-custom/rows?page=1&pageSize=25");
+        var graph = await harness.Client.PutAsJsonAsync("/api/v1/resources/datasets/graph-settings", new TenantGraphDatasetSettingsDto
+        {
+            OrganizationId = "org-other",
+            EnableUsers = true
+        });
+        var sync = await harness.Client.PostAsync("/api/v1/resources/datasets/graph-settings/org-other/sync", null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, list.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, dataset.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, rows.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, graph.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, sync.StatusCode);
+    }
+
+    [Fact]
+    public async Task ClientAdmin_CanSaveGraphSettingsAndTriggerBuiltInSyncForOwnTenant()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("ClientAdmin");
+
+        var graph = await harness.Client.PutAsJsonAsync("/api/v1/resources/datasets/graph-settings", new TenantGraphDatasetSettingsDto
+        {
+            OrganizationId = "org-alpha",
+            EnableUsers = true
+        });
+        var sync = await harness.Client.PostAsync("/api/v1/resources/datasets/graph-settings/org-alpha/sync", null);
+
+        Assert.Equal(HttpStatusCode.OK, graph.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, sync.StatusCode);
+    }
+
+    [Fact]
+    public async Task ClientAdmin_CannotGenerateApiKeysForBuiltInDatasets()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("ClientAdmin");
+
+        var createKey = await harness.Client.PostAsJsonAsync("/api/v1/resources/datasets/alpha-graph-users/credentials", new CreateDatasetIngestCredentialDto
+        {
+            Name = "bad key"
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, createKey.StatusCode);
+    }
+
+    [Fact]
+    public async Task HelpdeskAdmin_CanAccessAnyTenantDatasets()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("Admin");
+
+        var list = await harness.Client.GetFromJsonAsync<List<DatasetDefinitionDto>>("/api/v1/resources/datasets?organizationId=org-other");
+        var dataset = await harness.Client.GetFromJsonAsync<DatasetDefinitionDto>("/api/v1/resources/datasets/other-custom");
+
+        Assert.Contains(list!, x => x.Id == "other-custom");
+        Assert.Equal("org-other", dataset!.OrganizationId);
+    }
+
+    private sealed class DatasetEndpointsHarness : IDisposable
+    {
+        private readonly WebApplication _app;
+
+        private DatasetEndpointsHarness(WebApplication app, HttpClient client)
+        {
+            _app = app;
+            Client = client;
+        }
+
+        public HttpClient Client { get; }
+
+        public static async Task<DatasetEndpointsHarness> CreateAsync(string actor)
+        {
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+            builder.WebHost.UseTestServer();
+            builder.Services.AddSingleton<IDataManagementService, FakeDataManagementService>();
+            builder.Services.AddSingleton<ICurrentUserAccessService, TestCurrentUserAccessService>();
+            builder.Services.AddSingleton<IGraphDatasetSyncScheduleService, NoopGraphDatasetSyncScheduleService>();
+            builder.Services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = "Test";
+                options.DefaultChallengeScheme = "Test";
+            }).AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
+            builder.Services.AddAuthorization(options =>
+            {
+                options.AddPolicy("DataManagementAccess", policy =>
+                {
+                    policy.AddAuthenticationSchemes("Test");
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireRole(HelpdeskPermissions.HelpdeskAdmin, HelpdeskPermissions.DataManagementAdmin);
+                });
+            });
+
+            var app = builder.Build();
+            app.UseAuthentication();
+            app.UseAuthorization();
+            app.MapDatasetEndpoints();
+            await app.StartAsync();
+
+            var client = app.GetTestClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", actor);
+            return new DatasetEndpointsHarness(app, client);
+        }
+
+        public void Dispose() => _app.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    private sealed class TestAuthHandler(
+        IOptionsMonitor<AuthenticationSchemeOptions> options,
+        ILoggerFactory logger,
+        UrlEncoder encoder)
+        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    {
+        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+        {
+            if (!Request.Headers.TryGetValue("Authorization", out var header))
+            {
+                return Task.FromResult(AuthenticateResult.Fail("No authorization header"));
+            }
+
+            var actor = header.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "ClientAdmin";
+            Claim[] claims = actor == "Admin"
+                ?
+                [
+                    new Claim(ClaimTypes.NameIdentifier, "admin"),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.HelpdeskAdmin),
+                    new Claim("roles", HelpdeskPermissions.HelpdeskAdmin)
+                ]
+                :
+                [
+                    new Claim(ClaimTypes.NameIdentifier, "client-admin"),
+                    new Claim("tenant_id", "org-alpha"),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.DataManagementAdmin),
+                    new Claim("roles", HelpdeskPermissions.DataManagementAdmin),
+                    new Claim("groups", AuthentikRbacGroups.ClientAdmin)
+                ];
+
+            var identity = new ClaimsIdentity(claims, Scheme.Name);
+            var principal = new ClaimsPrincipal(identity);
+            var ticket = new AuthenticationTicket(principal, Scheme.Name);
+            return Task.FromResult(AuthenticateResult.Success(ticket));
+        }
+    }
+
+    private sealed class TestCurrentUserAccessService : ICurrentUserAccessService
+    {
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
+        {
+            var roles = user.FindAll(ClaimTypes.Role)
+                .Concat(user.FindAll("roles"))
+                .Concat(user.FindAll("groups"))
+                .Select(x => x.Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var isAdmin = roles.Contains(HelpdeskPermissions.HelpdeskAdmin);
+            var tenantId = user.FindFirst("tenant_id")?.Value;
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                allowed.Add(tenantId);
+            }
+
+            if (roles.Contains(AuthentikRbacGroups.ClientAdmin))
+            {
+                roles.Add(HelpdeskPermissions.DataManagementAdmin);
+                roles.Add(HelpdeskRoleBundles.DataManagementAdmin);
+            }
+
+            return Task.FromResult(new CurrentUserAccessProfile(
+                true,
+                user.Identity?.Name,
+                null,
+                tenantId,
+                null,
+                null,
+                isAdmin,
+                roles,
+                roles,
+                allowed,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+        }
+    }
+
+    private sealed class NoopGraphDatasetSyncScheduleService : IGraphDatasetSyncScheduleService
+    {
+        public Task ReconcileAsync(string organizationId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ReconcileAllAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ApplyDiagnosticsAsync(TenantGraphDatasetSettingsDto dto, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class FakeDataManagementService : IDataManagementService
+    {
+        private readonly Dictionary<string, DatasetDefinitionDto> _datasets = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alpha-custom"] = Dataset("alpha-custom", "org-alpha", "Alpha Custom", DatasetSourceType.Custom),
+            ["alpha-graph-users"] = Dataset("alpha-graph-users", "org-alpha", "Users", DatasetSourceType.GraphUsers),
+            ["other-custom"] = Dataset("other-custom", "org-other", "Other Custom", DatasetSourceType.Custom)
+        };
+
+        private readonly Dictionary<string, TenantGraphDatasetSettingsDto> _settings = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["org-alpha"] = new() { OrganizationId = "org-alpha" },
+            ["org-other"] = new() { OrganizationId = "org-other" }
+        };
+
+        public Task<IReadOnlyList<DatasetDefinitionDto>> ListDatasetsAsync(string organizationId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DatasetDefinitionDto>>(_datasets.Values.Where(x => x.OrganizationId == organizationId).ToList());
+
+        public Task<DatasetDefinitionDto?> GetDatasetAsync(string datasetId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_datasets.GetValueOrDefault(datasetId));
+
+        public Task<DatasetDefinitionDto> CreateDatasetAsync(CreateDatasetDefinitionDto dto, CancellationToken cancellationToken = default)
+        {
+            var id = $"{dto.OrganizationId}-{Guid.NewGuid():N}";
+            var dataset = Dataset(id, dto.OrganizationId, dto.Name, dto.SourceType);
+            dataset.Columns = dto.Columns;
+            _datasets[id] = dataset;
+            return Task.FromResult(dataset);
+        }
+
+        public Task<DatasetDefinitionDto?> UpdateDatasetAsync(string datasetId, UpdateDatasetDefinitionDto dto, CancellationToken cancellationToken = default)
+        {
+            if (!_datasets.TryGetValue(datasetId, out var dataset))
+            {
+                return Task.FromResult<DatasetDefinitionDto?>(null);
+            }
+
+            dataset.Name = dto.Name ?? dataset.Name;
+            dataset.SourceType = dto.SourceType ?? dataset.SourceType;
+            return Task.FromResult<DatasetDefinitionDto?>(dataset);
+        }
+
+        public Task<bool> DeleteDatasetAsync(string datasetId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_datasets.Remove(datasetId));
+
+        public Task<PagedResult<DatasetRowDto>> GetRowsAsync(string datasetId, string? query, int page, int pageSize, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new PagedResult<DatasetRowDto> { Page = page, PageSize = pageSize, Total = 0 });
+
+        public Task<PagedResult<DatasetOptionDto>> GetOptionsAsync(string datasetId, string organizationId, string? query, int page, int pageSize, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new PagedResult<DatasetOptionDto> { Page = page, PageSize = pageSize, Total = 0 });
+
+        public Task<DatasetIngestCredentialCreatedDto> CreateCredentialAsync(string datasetId, CreateDatasetIngestCredentialDto dto, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DatasetIngestCredentialCreatedDto
+            {
+                PlainTextKey = "plain-key",
+                Credential = new DatasetIngestCredentialDto
+                {
+                    Id = "key-1",
+                    DatasetId = datasetId,
+                    Name = dto.Name,
+                    IsActive = true,
+                    CreatedAtUtc = DateTimeOffset.UtcNow
+                }
+            });
+
+        public Task<bool> RevokeCredentialAsync(string datasetId, string credentialId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(true);
+
+        public Task<IReadOnlyList<DatasetIngestCredentialDto>> ListCredentialsAsync(string datasetId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DatasetIngestCredentialDto>>([]);
+
+        public Task<int> UpsertRowsAsync(string datasetId, string apiKey, UpsertDatasetRowsDto dto, CancellationToken cancellationToken = default) =>
+            Task.FromResult(dto.Rows.Count);
+
+        public Task<TenantGraphDatasetSettingsDto?> GetGraphSettingsAsync(string organizationId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_settings.GetValueOrDefault(organizationId));
+
+        public Task<TenantGraphDatasetSettingsDto> UpsertGraphSettingsAsync(TenantGraphDatasetSettingsDto dto, CancellationToken cancellationToken = default)
+        {
+            _settings[dto.OrganizationId] = dto;
+            return Task.FromResult(dto);
+        }
+
+        public Task<IReadOnlyList<DatasetDefinitionDto>> SyncBuiltInDatasetsAsync(string organizationId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DatasetDefinitionDto>>(_datasets.Values.Where(x => x.OrganizationId == organizationId && x.SourceType != DatasetSourceType.Custom).ToList());
+
+        private static DatasetDefinitionDto Dataset(string id, string organizationId, string name, DatasetSourceType sourceType) => new()
+        {
+            Id = id,
+            OrganizationId = organizationId,
+            Name = name,
+            Slug = name.ToLowerInvariant().Replace(' ', '-'),
+            SourceType = sourceType,
+            IsBuiltIn = sourceType != DatasetSourceType.Custom,
+            IsActive = true,
+            KeyColumn = "id",
+            DisplayColumn = "name",
+            Columns =
+            [
+                new DatasetColumnDto { Name = "id", IsKey = true },
+                new DatasetColumnDto { Name = "name", IsDisplay = true }
+            ]
+        };
+    }
+}

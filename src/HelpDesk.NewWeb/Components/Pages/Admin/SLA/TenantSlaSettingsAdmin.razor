@@ -1,0 +1,39 @@
+@page "/admin/tenant-sla-settings"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.Sla
+
+<PageTitle>Tenant SLA Settings</PageTitle>
+
+<MudStack Spacing="3">
+    <TenantSlaSettingsPanel TenantId="@tenantId" TenantIdChanged="OnTenantChanged" Tenants="@tenants" Calendars="@calendars" />
+    <TenantWorkingCalendarsPanel TenantId="@tenantId" Tenants="@tenants" CalendarsChanged="LoadCalendarsAsync" />
+    <TenantSlaPoliciesPanel TenantId="@tenantId" Tenants="@tenants" />
+    <TenantSlaReportingPanel TenantId="@tenantId" Tenants="@tenants" />
+</MudStack>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private string? tenantId;
+    private List<TenantLookupDto> tenants = new();
+    private List<WorkingCalendarDto> calendars = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        tenants = await HelpdeskApi.GetFromJsonAsync<List<TenantLookupDto>>("api/v1/admin/tenants/lookup") ?? new();
+        tenantId = tenants.FirstOrDefault()?.Id;
+        await LoadCalendarsAsync();
+    }
+
+    private async Task OnTenantChanged(string? value)
+    {
+        tenantId = value;
+        await LoadCalendarsAsync();
+    }
+
+    private async Task LoadCalendarsAsync()
+    {
+        calendars = await HelpdeskApi.GetFromJsonAsync<List<WorkingCalendarDto>>("api/v1/sla-calendars") ?? new();
+    }
+}

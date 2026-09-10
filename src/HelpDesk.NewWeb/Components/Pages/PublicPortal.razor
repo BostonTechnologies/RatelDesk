@@ -1,0 +1,56 @@
+@page "/"
+@layout PublicLayout
+@attribute [AllowAnonymous]
+@inject NavigationManager Navigation
+
+<PageTitle>RatelDesk Portal</PageTitle>
+
+<section class="helpdesk-portal-page">
+    <div class="helpdesk-portal-admin">
+        <MudButton Href="/login"
+                   Variant="Variant.Text"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Lock">
+            Admin sign-in
+        </MudButton>
+    </div>
+
+    <MudContainer MaxWidth="MaxWidth.Medium" Class="helpdesk-portal-content">
+        <MudStack AlignItems="AlignItems.Center" Spacing="2" Class="helpdesk-portal-signature">
+            <img class="helpdesk-portal-logo" src="rateldesk-mark.svg" alt="RatelDesk" />
+            <MudText Typo="Typo.caption" HtmlTag="p" Class="helpdesk-portal-company">RatelDesk</MudText>
+        </MudStack>
+
+        <MudText Typo="Typo.h3" HtmlTag="h1" GutterBottom="true" Align="Align.Center">Welcome to RatelDesk</MudText>
+        <MudText Typo="Typo.h6" Align="Align.Center" Color="Color.Secondary" Class="mb-12">How can we help you today?</MudText>
+
+        <MudGrid Justify="Justify.Center" Spacing="4">
+            <MudItem xs="12" sm="6" md="5">
+                <MudCard Elevation="0"
+                         Class="helpdesk-portal-action"
+                         @onclick="@(() => Navigation.NavigateTo("/submit-ticket"))">
+                    <MudCardActions>
+                        <div class="pa-6 text-center">
+                            <MudIcon Icon="@Icons.Material.Filled.Add" Color="Color.Primary" Class="helpdesk-portal-action-icon" />
+                            <MudText Typo="Typo.h5" Class="mt-4">Submit a New Ticket</MudText>
+                            <MudText Typo="Typo.body1" Class="mt-2">Need help? Create a ticket and we'll get right on it.</MudText>
+                        </div>
+                    </MudCardActions>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="5">
+                <MudCard Elevation="0"
+                         Class="helpdesk-portal-action"
+                         @onclick="@(() => Navigation.NavigateTo("/view-ticket"))">
+                    <MudCardActions>
+                        <div class="pa-6 text-center">
+                            <MudIcon Icon="@Icons.Material.Filled.ReceiptLong" Color="Color.Success" Class="helpdesk-portal-action-icon" />
+                            <MudText Typo="Typo.h5" Class="mt-4">View Existing Tickets</MudText>
+                            <MudText Typo="Typo.body1" Class="mt-2">Check the status of your previously submitted tickets.</MudText>
+                        </div>
+                    </MudCardActions>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+    </MudContainer>
+</section>

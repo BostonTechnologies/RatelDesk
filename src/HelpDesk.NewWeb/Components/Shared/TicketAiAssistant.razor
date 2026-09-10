@@ -1,0 +1,100 @@
+@using Helpdesk.Shared.DTOs
+@using Helpdesk.Shared.Models
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudStack Spacing="2">
+    <MudText Typo="Typo.h6">AI Assistant</MudText>
+    <MudText Typo="Typo.body2">Request an authorised AiAssistant investigation. Updates stay in this internal worklog.</MudText>
+    @if (loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (loadError is not null)
+    {
+        <MudAlert Severity="Severity.Error">@loadError</MudAlert>
+    }
+    else if (configurations.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">No eligible AiAssistant webhook configuration is available for this ticket.</MudAlert>
+    }
+    else
+    {
+        <MudSelect T="Guid?" Label="Webhook configuration" @bind-Value="selectedConfigurationId">
+            @foreach (var config in configurations)
+            {
+                <MudSelectItem Value="@((Guid?)config.Id)">@config.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField Label="Operator assistance request" @bind-Value="operatorAssistanceRequest" Immediate="true" Lines="3" />
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Style="width: auto; align-self: flex-start;" Disabled="@(dispatching || selectedConfigurationId is null || string.IsNullOrWhiteSpace(operatorAssistanceRequest))" OnClick="DispatchAsync">
+            @(dispatching ? "Requesting..." : "Request AI assistance")
+        </MudButton>
+    }
+    <MudDivider />
+    <MudText Typo="Typo.subtitle1">AI Investigation Worklog</MudText>
+    @if (worklog.Count == 0)
+    {
+        <MudText Typo="Typo.body2">No AI assistant activity yet.</MudText>
+    }
+    else
+    {
+        <MudTimeline TimelineOrientation="TimelineOrientation.Vertical" TimelinePosition="TimelinePosition.Left">
+            @foreach (var entry in worklog)
+            {
+                <MudTimelineItem Color="@StatusColor(entry.Status)">
+                    <ItemOpposite><MudText Typo="Typo.caption">@entry.OccurredUtc.ToLocalTime().ToString("g")</MudText></ItemOpposite>
+                    <ItemContent>
+                        <MudText Typo="Typo.subtitle2">@entry.Status · @entry.Source</MudText>
+                        <MudText Typo="Typo.body2">@entry.Message</MudText>
+                    </ItemContent>
+                </MudTimelineItem>
+            }
+        </MudTimeline>
+    }
+</MudStack>
+
+@code {
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+    [Parameter] public string TicketType { get; set; } = "incidents";
+    private List<AiAssistantWebhookConfigurationDto> configurations = new();
+    private List<AiInvestigationWorklogEntryDto> worklog = new();
+    private Guid? selectedConfigurationId;
+    private string? operatorAssistanceRequest;
+    private bool loading = true;
+    private bool dispatching;
+    private string? loadError;
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+    private async Task LoadAsync()
+    {
+        loading = true;
+        loadError = null;
+        try
+        {
+            configurations = await Api.GetFromJsonAsync<List<AiAssistantWebhookConfigurationDto>>($"api/v1/{TicketType}/{TicketId}/ai-assistant/eligible-configurations") ?? new();
+            worklog = await Api.GetFromJsonAsync<List<AiInvestigationWorklogEntryDto>>($"api/v1/{TicketType}/{TicketId}/ai-assistant/worklog") ?? new();
+        }
+        catch
+        {
+            configurations = new();
+            worklog = new();
+            loadError = "Unable to load AI Assistant configurations for this ticket. Please refresh or contact an administrator if the problem persists.";
+        }
+        finally { loading = false; }
+    }
+    private async Task DispatchAsync()
+    {
+        if (selectedConfigurationId is null || string.IsNullOrWhiteSpace(operatorAssistanceRequest)) return;
+        dispatching = true;
+        try
+        {
+            var response = await Api.PostAsJsonAsync($"api/v1/{TicketType}/{TicketId}/ai-assistant/investigations", new DispatchAiInvestigationDto(selectedConfigurationId.Value, operatorAssistanceRequest, Guid.NewGuid().ToString("N")));
+            if (response.IsSuccessStatusCode) { Snackbar.Add("AI assistance requested.", Severity.Success); operatorAssistanceRequest = null; await LoadAsync(); }
+            else Snackbar.Add("Unable to request AI assistance.", Severity.Error);
+        }
+        catch { Snackbar.Add("Unable to request AI assistance.", Severity.Error); }
+        finally { dispatching = false; }
+    }
+    private static Color StatusColor(AiInvestigationStatus status) => status is AiInvestigationStatus.Completed ? Color.Success : status is AiInvestigationStatus.Failed or AiInvestigationStatus.Cancelled ? Color.Error : status is AiInvestigationStatus.Finding or AiInvestigationStatus.ActionAwaitingApproval ? Color.Warning : Color.Info;
+}

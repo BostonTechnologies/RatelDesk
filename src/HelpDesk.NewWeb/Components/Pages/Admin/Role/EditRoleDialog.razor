@@ -1,0 +1,54 @@
+@using System.ComponentModel.DataAnnotations
+@inject IHttpClientFactory HttpClientFactory
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Helpdesk.Shared.DTOs.Role.RoleDto Role { get; set; } = default!;
+
+    private MudForm form = default!;
+    private EditModel model = new();
+
+    protected override void OnInitialized()
+    {
+        model = new EditModel { Name = Role.Name };
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/roles/{Role.Id}", model);
+            if (response.IsSuccessStatusCode)
+            {
+                Dialog.Close(DialogResult.Ok(true));
+            }
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    public class EditModel
+    {
+        [Required]
+        public string Name { get; set; } = string.Empty;
+    }
+}
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Edit" Class="mr-2 mb-n1" />
+            Edit Role
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="form" Model="model" OnValidSubmit="Submit" Class="mt-2">
+            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+    </DialogActions>
+</MudDialog>

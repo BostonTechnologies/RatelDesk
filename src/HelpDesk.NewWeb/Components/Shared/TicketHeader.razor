@@ -1,0 +1,148 @@
+@using Helpdesk.Shared.DTOs.Category
+@using Helpdesk.Shared.Models
+
+<MudPaper Class="pa-2 mb-2 ticket-header-card" Elevation="0" Outlined="true">
+
+    <!-- Row 1: Compact metadata -->
+    <div class="ticket-header-metadata-row">
+
+        <MudChip T="string"
+                 Class="ticket-header-chip ticket-header-status-chip"
+                 Size="Size.Small"
+                 Color="@ResolvedStatusColor"
+                 Variant="Variant.Outlined">
+            @ResolvedStatusText
+        </MudChip>
+
+        <MudChip T="string"
+                 Class="ticket-header-chip ticket-header-priority-chip"
+                 Size="Size.Small"
+                 Color="Color.Warning"
+                 Variant="Variant.Outlined">
+            @Priority
+        </MudChip>
+
+        @if (!string.IsNullOrWhiteSpace(TrackingId))
+        {
+            <MudText Typo="Typo.caption" Class="ticket-header-tracking-id">
+                @TrackingId
+            </MudText>
+        }
+
+        @if (LastUpdated.HasValue)
+        {
+            <MudText Typo="Typo.caption" Class="ticket-header-updated-at">
+                Updated @LastUpdated.Value.ToLocalTime().ToString("g")
+            </MudText>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(ForDisplayName))
+        {
+            <MudTooltip Text="@ForTooltip">
+                <MudChip T="string"
+                         Class="ticket-header-chip ticket-header-requester-chip"
+                         Size="Size.Small"
+                         Color="Color.Default"
+                         Variant="Variant.Outlined">
+                    For: @ForDisplayName
+                </MudChip>
+            </MudTooltip>
+        }
+
+        @if (MetadataContent is not null)
+        {
+            <div class="ticket-header-metadata-slot">
+                @MetadataContent
+            </div>
+        }
+
+    </div>
+
+    <!-- Row 2: Title -->
+    <MudText Typo="Typo.h6" Class="mt-1 mb-1 ticket-header-title">
+        @Title
+    </MudText>
+
+    @if (!string.IsNullOrWhiteSpace(Description))
+    {
+        <MudText Typo="Typo.body2" Class="mb-1 ticket-header-description">
+            @Description
+        </MudText>
+    }
+
+    @if (SecondaryMetadataContent is not null)
+    {
+        <MudStack Spacing="0" Class="mb-2">
+            @SecondaryMetadataContent
+        </MudStack>
+    }
+
+    <!-- Row 3: Category chips -->
+    @if (ResolvedCategories.Count > 0)
+    {
+        <MudChipSet T="TicketCategoryDto" Size="Size.Small" Class="ticket-header-category-chip-set">
+
+            @foreach (var category in ResolvedCategories)
+            {
+                <MudChip T="TicketCategoryDto"
+                         Class="ticket-header-chip ticket-header-category-chip"
+                         Size="Size.Small"
+                         Variant="Variant.Outlined"
+                         Color="Color.Default"
+                         OnClose="() => RemoveCategory(category.Id)">
+                    @category.Name
+                </MudChip>
+            }
+
+        </MudChipSet>
+    }
+
+</MudPaper>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string? TrackingId { get; set; }
+    [Parameter] public TicketState Status { get; set; }
+    [Parameter] public string? StatusText { get; set; }
+    [Parameter] public Color? StatusColor { get; set; }
+    [Parameter] public TicketPriority Priority { get; set; }
+    [Parameter] public DateTime? LastUpdated { get; set; }
+    [Parameter] public string? CustomerName { get; set; }
+    [Parameter] public string? CustomerEmail { get; set; }
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public IReadOnlyCollection<Guid>? CategoryIds { get; set; }
+    [Parameter] public IReadOnlyCollection<TicketCategoryDto>? AllCategories { get; set; }
+    [Parameter] public EventCallback<Guid> CategoryRemoved { get; set; }
+    [Parameter] public RenderFragment? MetadataContent { get; set; }
+    [Parameter] public RenderFragment? SecondaryMetadataContent { get; set; }
+
+    private List<TicketCategoryDto> ResolvedCategories = new();
+    private string ResolvedStatusText => string.IsNullOrWhiteSpace(StatusText) ? Status.ToString() : StatusText!;
+    private Color ResolvedStatusColor => StatusColor ?? Color.Info;
+    private string? ForDisplayName => FirstNonEmpty(CustomerName, CustomerEmail);
+    private string ForTooltip => string.IsNullOrWhiteSpace(CustomerEmail)
+        ? ForDisplayName ?? string.Empty
+        : string.IsNullOrWhiteSpace(CustomerName)
+            ? CustomerEmail
+            : $"{CustomerName} ({CustomerEmail})";
+
+    protected override void OnParametersSet()
+    {
+        var selectedIds = CategoryIds ?? Array.Empty<Guid>();
+
+        ResolvedCategories = AllCategories?
+            .Where(x => selectedIds.Contains(x.Id))
+            .DistinctBy(x => x.Id)
+            .OrderBy(x => x.Name)
+            .ToList()
+            ?? new();
+    }
+
+    private async Task RemoveCategory(Guid id)
+    {
+        await CategoryRemoved.InvokeAsync(id);
+    }
+
+    private static string? FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+}

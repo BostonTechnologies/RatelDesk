@@ -1,0 +1,267 @@
+@using Helpdesk.Shared.Models
+@using FluentValidation
+@using System.Text.Json
+@using System.Text.RegularExpressions
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Email" Class="mr-2 mb-n1" />
+            @if (model.Id == 0) { <span>Create Email Template</span> }
+            else { <span>Edit Email Template</span> }
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <div style="min-height: 500px;">
+            @* --- CORRECTED FORM IMPLEMENTATION --- *@
+            <MudForm @ref="form" Model="model" @bind-IsValid="isValid" Validation="@((Func<EmailTemplate, IEnumerable<string>>)ValidateTemplate)">
+                <MudGrid Spacing="2">
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="model.Name" For="@(() => model.Name)"
+                                      Label="Template Name (Identifier)" 
+                                      Disabled="@(model.Id != 0)"
+                                      HelperText="@(model.Id != 0 ? "Name cannot be changed." : "Unique system identifier.")" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="model.Subject" For="@(() => model.Subject)"
+                                      Label="Email Subject" 
+                                      HelperText="Use placeholders like {{{TICKET_REF}}}" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudSelect T="int?" @bind-Value="model.LayoutId" Label="Layout">
+                            <MudSelectItem T="int?" Value="@((int?)null)">Default Layout</MudSelectItem>
+                            @foreach (var layoutItem in layoutChoices)
+                            {
+                                <MudSelectItem T="int?" Value="@layoutItem.Id">@layoutItem.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <EmailHtmlEditor Value="@model.HtmlContent"
+                                         ValueChanged="@OnHtmlValueChanged"
+                                         DraftSubject="@model.Subject"
+                                         TemplateId="@(model.Id == 0 ? null : model.Id)"
+                                         TemplateName="@model.Name"
+                                         DraftLayoutId="@model.LayoutId"
+                                         Placeholders="@templatePlaceholders"
+                                         PreviewTitle="Template Preview" />
+                    </MudItem>
+                </MudGrid>
+            </MudForm>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Outlined" OnClick="OpenPreview">Preview</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" Disabled="@(!isValid)">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private static readonly Regex InlineImageRegex = new(
+        "<img\\b[^>]*?\\bsrc\\s*=\\s*[\"'](?<src>data:image/(?<type>[a-zA-Z0-9.+-]+);base64,(?<data>[^\"']+))[\"'][^>]*>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public EmailTemplate Model { get; set; } = new();
+
+    private MudForm form = default!;
+    private bool isValid;
+    private EmailTemplate model = new();
+    private List<LayoutChoiceDto> layoutChoices = new();
+    private static readonly string[] templatePlaceholders =
+    [
+        "{{{USER_NAME}}}",
+        "{{{TICKET_REF}}}",
+        "{{{TICKET_LINK}}}",
+        "{{{UPDATE_MESSAGE}}}",
+        "{{{CHANGE_VIEW_LINK}}}",
+        "{{{CHANGE_APPROVAL_LINK}}}",
+        "{{CHANGE_SCOPE_OF_CHANGE}}",
+        "{{{CHANGE_AFFECTED_SYSTEMS}}}",
+        "{{{CHANGE_IMPLEMENTATION_STEPS}}}",
+        "{{{CHANGE_VALIDATION_STEPS}}}",
+        "{{CHANGE_ROLLBACK_PLAN}}"
+    ];
+    
+    private TemplateValidator _templateValidator = new();
+
+    // The validator definition remains the same.
+    public class TemplateValidator : AbstractValidator<EmailTemplate>
+    {
+        public TemplateValidator()
+        {
+            RuleFor(x => x.Name).NotEmpty().WithMessage("Template Name is required.");
+            RuleFor(x => x.Subject).NotEmpty().WithMessage("Email Subject is required.");
+            RuleFor(x => x.HtmlContent).NotEmpty().WithMessage("Email Content cannot be empty.");
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        model = new EmailTemplate {
+            Id = Model.Id,
+            Name = Model.Name,
+            Subject = Model.Subject,
+            HtmlContent = Model.HtmlContent,
+            LayoutId = Model.LayoutId
+        };
+        layoutChoices = await HelpdeskApi.GetFromJsonAsync<List<LayoutChoiceDto>>("api/v1/email-layouts/choices") ?? new();
+    }
+
+    // --- FIX 1: THE CORRECT VALIDATION FUNCTION ---
+    // This function matches the signature MudForm expects: Func<T, IEnumerable<string>>
+    private IEnumerable<string> ValidateTemplate(EmailTemplate m)
+    {
+        var result = _templateValidator.Validate(m);
+        return result.IsValid ? Enumerable.Empty<string>() : result.Errors.Select(e => e.ErrorMessage);
+    }
+    
+    // --- FIX 2: A HANDLER FOR THE RICH TEXT EDITOR ---
+    // This explicitly tells the form to re-validate when the editor's content changes.
+    private async Task OnHtmlValueChanged(string newHtmlContent)
+    {
+        model.HtmlContent = newHtmlContent;
+        await form.Validate(); // Manually trigger validation
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!isValid) return;
+
+        if (string.IsNullOrWhiteSpace(model.Name))
+        {
+            Snackbar.Add("Template name is required for image upload.", MudBlazor.Severity.Error);
+            return;
+        }
+
+        model.HtmlContent = await ExtractAndStoreImagesAsync(model.HtmlContent);
+
+        HttpResponseMessage response;
+        if (model.Id == 0)
+        {
+            response = await HelpdeskApi.PostAsJsonAsync("api/v1/email-templates", model);
+        }
+        else
+        {
+            response = await HelpdeskApi.PutAsJsonAsync($"api/v1/email-templates/{model.Id}", model);
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            // --- FIX 3: EXPLICIT NAMESPACE FOR SEVERITY ---
+            Snackbar.Add("Template saved successfully!", MudBlazor.Severity.Success);
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        else
+        {
+            Snackbar.Add("Error saving template.", MudBlazor.Severity.Error);
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private async Task OpenPreview()
+    {
+        var parameters = new DialogParameters<EmailTemplatePreviewDialog>
+        {
+            { x => x.TemplateId, model.Id == 0 ? null : model.Id },
+            { x => x.TemplateName, model.Name },
+            { x => x.TenantId, string.Empty },
+            { x => x.DraftSubject, model.Subject },
+            { x => x.DraftHtmlContent, model.HtmlContent },
+            { x => x.DraftLayoutId, model.LayoutId }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+        await DialogService.ShowAsync<EmailTemplatePreviewDialog>("Template Preview", parameters, options);
+    }
+
+    private async Task<string> ExtractAndStoreImagesAsync(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return string.Empty;
+
+        var result = html;
+        var matches = InlineImageRegex.Matches(html);
+        foreach (Match match in matches)
+        {
+            var base64 = match.Groups["data"].Value;
+            var type = match.Groups["type"].Value;
+
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromBase64String(base64);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var extension = ResolveExtension(type);
+            var contentType = ResolveContentType(type);
+            var fileName = $"{Guid.NewGuid():N}{extension}";
+            var uploadedUrl = await UploadInlineImageAsync(fileName, bytes, contentType);
+            if (string.IsNullOrWhiteSpace(uploadedUrl))
+                continue;
+
+            result = result.Replace(match.Groups["src"].Value, uploadedUrl, StringComparison.Ordinal);
+        }
+
+        return result;
+    }
+
+    private async Task<string?> UploadInlineImageAsync(string fileName, byte[] content, string contentType)
+    {
+        using var formData = new MultipartFormDataContent();
+        using var fileContent = new ByteArrayContent(content);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        formData.Add(fileContent, "file", fileName);
+
+        var response = await HelpdeskApi.PostAsync(
+            $"api/v1/email-templates/{Uri.EscapeDataString(model.Name)}/images",
+            formData);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Failed to upload inline image ({fileName}).", MudBlazor.Severity.Error);
+            return null;
+        }
+
+        var payload = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(payload);
+        if (doc.RootElement.TryGetProperty("url", out var urlElement))
+        {
+            return urlElement.GetString();
+        }
+
+        return null;
+    }
+
+    private static string ResolveExtension(string format) =>
+        format.ToLowerInvariant() switch
+        {
+            "jpeg" or "jpg" => ".jpg",
+            "gif" => ".gif",
+            "webp" => ".webp",
+            "bmp" => ".bmp",
+            "svg+xml" => ".svg",
+            _ => ".png"
+        };
+
+    private static string ResolveContentType(string format) =>
+        format.ToLowerInvariant() switch
+        {
+            "jpeg" or "jpg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "bmp" => "image/bmp",
+            "svg+xml" => "image/svg+xml",
+            _ => "image/png"
+        };
+
+    private sealed record LayoutChoiceDto(int Id, string Name);
+}

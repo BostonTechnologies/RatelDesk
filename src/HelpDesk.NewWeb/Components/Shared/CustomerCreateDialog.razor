@@ -1,0 +1,125 @@
+@using System.ComponentModel.DataAnnotations
+@using Helpdesk.Shared.DTOs.Customer
+@using Helpdesk.Shared.DTOs.Organization
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.AddCircle" Class="mr-2 mb-n1" />
+            @Title
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="form" Model="model" Class="mt-2">
+            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+            <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
+            <MudSelect T="string"
+                       @bind-Value="model.OrganizationId"
+                       Label="Organization"
+                       Required="true"
+                       Disabled="@LockOrganization">
+                @foreach (var org in Organizations)
+                {
+                    <MudSelectItem T="string" Value="@org.Id">@org.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSwitch T="bool" @bind-Value="model.IsEnabled" Label="Enabled" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@isSubmitting">Create</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [CascadingParameter]
+    private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter]
+    public List<OrganizationDto> Organizations { get; set; } = new();
+
+    [Parameter]
+    public string Title { get; set; } = "Create Customer";
+
+    [Parameter]
+    public string? OrganizationId { get; set; }
+
+    [Parameter]
+    public bool LockOrganization { get; set; }
+
+    [Parameter]
+    public string? InitialName { get; set; }
+
+    [Parameter]
+    public string? InitialEmail { get; set; }
+
+    private MudForm form = default!;
+    private CreateCustomerModel model = new();
+    private bool isSubmitting;
+
+    protected override void OnInitialized()
+    {
+        model.Name = InitialName ?? string.Empty;
+        model.Email = InitialEmail ?? string.Empty;
+        model.OrganizationId = OrganizationId ?? Organizations.FirstOrDefault()?.Id ?? string.Empty;
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync("api/v1/customers", model);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Customer create failed: {response.StatusCode}", Severity.Error);
+                return;
+            }
+
+            var created = await response.Content.ReadFromJsonAsync<CustomerDto>();
+            Dialog.Close(DialogResult.Ok(created));
+        }
+        catch
+        {
+            Snackbar.Add("Customer create failed.", Severity.Error);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    public class CreateCustomerModel
+    {
+        [Required]
+        public string Name { get; set; } = string.Empty;
+
+        [Required]
+        public string Email { get; set; } = string.Empty;
+
+        [Required]
+        public string OrganizationId { get; set; } = string.Empty;
+
+        public EntityState State { get; set; } = EntityState.Enabled;
+
+        public bool IsEnabled
+        {
+            get => State == EntityState.Enabled;
+            set => State = value ? EntityState.Enabled : EntityState.Blocked;
+        }
+    }
+}

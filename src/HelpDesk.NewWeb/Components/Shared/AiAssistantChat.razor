@@ -1,0 +1,298 @@
+@using Helpdesk.Shared.AiAssistant.Chat
+@using System.Text.Json
+@using HelpDesk.NewWeb.Services
+@using System.Security.Claims
+@implements IAsyncDisposable
+@inject IHttpClientFactory HttpClientFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<MudStack Spacing="2">
+    <MudText Typo="Typo.h6">AI Assistant · @state · @connectionStatus</MudText>
+    @if (history.Count > 0)
+    {
+        <MudSelect T="Guid" Label="Conversation history" Value="conversation" ValueChanged="SelectConversationAsync" Disabled="busy">
+            @foreach (var entry in history)
+            {
+                <MudSelectItem T="Guid" Value="entry.ConversationId">@(entry.State == ChatState.Archived ? "Archived" : "Current") · @entry.LastActivityUtc.ToLocalTime().ToString("g") · @ActorLabel(entry.CreatedByUserId)</MudSelectItem>
+            }
+        </MudSelect>
+        @if (hasOlderHistory) { <MudButton Disabled="busy" OnClick="LoadOlderHistoryAsync">Older conversations</MudButton> }
+    }
+    @if (state == ChatState.Archived)
+    {
+        <MudAlert Severity="Severity.Info">Archived transcript — read-only. Its remote session is not resumed.</MudAlert>
+        <MudButton Disabled="busy" OnClick="@(() => SelectConversationAsync(Guid.Empty))">Return to current conversation</MudButton>
+    }
+    @if (state == ChatState.DeliveryUnknown)
+    {
+        <MudAlert Severity="Severity.Warning">Delivery or completion could not be confirmed. AiAssistant may already have accepted this turn. Checking the session never resends it.</MudAlert>
+        <MudButton Disabled="busy" OnClick="ReconcileAsync">Check saved session</MudButton>
+        <MudCheckBox T="bool" @bind-Value="acknowledgeAbandon" Disabled="busy" Label="I understand the old turn may still execute. Archive this transcript and start blank, without retrying it." />
+        <MudButton Color="Color.Warning" Disabled="@(busy || !acknowledgeAbandon || UnresolvedMessageId is null)" OnClick="AbandonAsync">Abandon unresolved turn and start blank</MudButton>
+    }
+    @if (error is not null) { <MudAlert Severity="Severity.Warning">@error</MudAlert> }
+    @foreach (var turn in AiAssistantChatPresentation.Build(events))
+    {
+        <section @key="turn.Operator.Sequence" class="ai-assistant-turn" data-testid="ai-assistant-turn">
+            <MudPaper Class="pa-3" Outlined="true">
+                <MudText Typo="Typo.caption">@ActorLabel(turn.Operator.CreatedByUserId) · @turn.Operator.CreatedUtc.ToLocalTime().ToString("g")</MudText>
+                <MudText Style="white-space: pre-wrap; overflow-wrap: anywhere">@turn.Operator.Text</MudText>
+            </MudPaper>
+            <AiAssistantTurnActivity Turn="turn" State="state" Busy="busy" Approval="@(answer => ApproveAsync(answer.CallId, answer.Key))" />
+            @foreach (var response in turn.Responses)
+            {
+                <div class="pa-3" data-testid="ai-assistant-response">
+                    <MudText Typo="Typo.caption">AiAssistant · @response.CreatedUtc.ToLocalTime().ToString("t")</MudText>
+                    <MudText Style="white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7">@response.Text</MudText>
+                </div>
+            }
+        </section>
+    }
+    @if (draft.Length > 0) { <MudText Style="white-space: pre-wrap">@draft</MudText> }
+    <AiAssistantComposer @bind-Value="message" Send="SendAsync" Disabled="@(busy || state != ChatState.Idle || conversation == Guid.Empty)" />
+    <MudButton OnClick="NewAsync" Size="Size.Small" Style="align-self: flex-start" Disabled="@(busy || state != ChatState.Idle || conversation == Guid.Empty)">Archive and start new conversation</MudButton>
+</MudStack>
+
+@code {
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+    [Parameter] public string TicketType { get; set; } = "incidents";
+    private readonly List<AiAssistantChatEvent> events = [];
+    private readonly List<ChatConversationSummary> history = [];
+    private readonly CancellationTokenSource cancellation = new();
+    private CancellationTokenSource? streamCancellation;
+    private Task stream = Task.CompletedTask;
+    private Task selection = Task.CompletedTask;
+    private bool disposed;
+    private Guid conversation, messageId = Guid.NewGuid();
+    private ChatMessageRequest? submittedMessage;
+    private ChatState state;
+    private string message = "", draft = "";
+    private string? error;
+    private long cursor;
+    private bool busy;
+    private bool acknowledgeAbandon, hasOlderHistory;
+    private Guid resolutionId = Guid.NewGuid();
+    private string connectionStatus = "Connecting";
+    private string? currentActor;
+    private readonly Dictionary<string, string> actorNames = new(StringComparer.Ordinal);
+    private string ActorLabel(string? actor) => actor == currentActor && currentActor is not null ? "You"
+        : actor is not null && actorNames.TryGetValue(actor, out var name) ? name : "Helpdesk operator";
+    private Guid? UnresolvedMessageId => events.LastOrDefault(x => x.Type == "operator")?.ClientMessageId;
+    private string Route => $"api/v1/{TicketType}/{TicketId}/ai-assistant/chat";
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var ct = cancellation.Token;
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (disposed) return;
+        currentActor = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
+        try
+        {
+            using var api = Api;
+            var users = await api.GetFromJsonAsync<List<Helpdesk.Shared.DTOs.User.UserDto>>("api/v1/users", ct) ?? [];
+            foreach (var entry in users)
+                actorNames[entry.Id] = !string.IsNullOrWhiteSpace(entry.Name) ? entry.Name : entry.Email;
+        }
+        catch (HttpRequestException) { error = "Operator names are unavailable; the transcript retains its audit identities."; }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { return; }
+        if (disposed) return;
+        await SelectConversationAsync(Guid.Empty);
+        if (!disposed) await InvokeAsync(StateHasChanged);
+    }
+
+    private Task SelectConversationAsync(Guid id) => selection = SelectCoreAsync(id);
+
+    private async Task SelectCoreAsync(Guid id)
+    {
+        if (disposed) return;
+        busy = true;
+        try
+        {
+            var previousCancellation = streamCancellation;
+            streamCancellation = null;
+            if (previousCancellation is not null)
+            {
+                try { await previousCancellation.CancelAsync(); await stream; }
+                finally { previousCancellation.Dispose(); }
+            }
+            stream = Task.CompletedTask;
+            if (disposed) return;
+            connectionStatus = "Connecting"; error = null;
+            events.Clear(); draft = ""; cursor = 0; acknowledgeAbandon = false;
+            resolutionId = Guid.NewGuid(); messageId = Guid.NewGuid(); message = ""; submittedMessage = null;
+            using var api = Api;
+            var snapshot = await api.GetFromJsonAsync<ChatSnapshot>(id == Guid.Empty ? Route : $"{Route}?conversationId={id}", cancellation.Token);
+            if (snapshot is not null)
+            {
+                conversation = snapshot.ConversationId; state = snapshot.State;
+                events.AddRange(snapshot.Events); cursor = events.LastOrDefault()?.Sequence ?? 0;
+                history.Clear();
+                await LoadOlderHistoryAsync();
+                if (disposed) return;
+                streamCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+                stream = ReadAsync(streamCancellation.Token);
+            }
+        }
+        catch (HttpRequestException) { conversation = Guid.Empty; connectionStatus = "Unavailable"; error = "Chat is unavailable. Existing conversations remain stored."; }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { connectionStatus = "Disconnected"; }
+        finally { busy = false; }
+    }
+
+    private async Task LoadOlderHistoryAsync()
+    {
+        try
+        {
+            using var api = Api;
+            var page = await api.GetFromJsonAsync<List<ChatConversationSummary>>($"{Route}/history?skip={history.Count}", cancellation.Token) ?? [];
+            hasOlderHistory = page.Count == 50;
+            foreach (var item in page) if (!history.Any(x => x.ConversationId == item.ConversationId)) history.Add(item);
+        }
+        catch (HttpRequestException) { error = "Conversation history could not be loaded. The current transcript is unchanged."; }
+    }
+
+    private async Task ReadAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"{Route}/stream?conversationId={conversation}&cursor={cursor}");
+                using var api = Api;
+                using var response = await api.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.NotFound)
+                {
+                    await InvokeAsync(() => { events.Clear(); draft = ""; conversation = Guid.Empty; connectionStatus = "Access unavailable"; error = "You no longer have access to this conversation."; StateHasChanged(); });
+                    return;
+                }
+                response.EnsureSuccessStatusCode();
+                using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(ct));
+                string? line; string kind = "", data = "";
+                while ((line = await reader.ReadLineAsync(ct)) is not null)
+                {
+                    if (line.StartsWith("event: ")) kind = line[7..];
+                    else if (line.StartsWith("data: ")) data = line[6..];
+                    else if (line.Length == 0)
+                    {
+                        var frameKind = kind; var frameData = data;
+                        await InvokeAsync(() =>
+                        {
+                            if (frameKind == "chat" && JsonSerializer.Deserialize<AiAssistantChatEvent>(frameData) is { } item)
+                            {
+                                if (item.Sequence > cursor) { events.Add(item); cursor = item.Sequence; }
+                                if (item.Type == "operator" && submittedMessage is { } sent && item.ClientMessageId == sent.ClientMessageId) AcknowledgeMessage(sent);
+                                if (item.Type is "assistant" or "turn_completed") draft = "";
+                            }
+                            else if (frameKind == "text-delta") draft = JsonSerializer.Deserialize<ChatDelta>(frameData)?.Text ?? "";
+                            else if (frameKind == "state")
+                            {
+                                state = JsonSerializer.Deserialize<ChatState>(frameData);
+                                if (state is ChatState.Idle or ChatState.Archived) draft = "";
+                            }
+                            connectionStatus = "Connected"; StateHasChanged();
+                        });
+                        kind = ""; data = "";
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or OperationCanceledException)
+            {
+                await InvokeAsync(() => { connectionStatus = "Reconnecting"; StateHasChanged(); });
+            }
+            await InvokeAsync(() => { connectionStatus = "Reconnecting"; draft = ""; StateHasChanged(); });
+            try { await Task.Delay(TimeSpan.FromSeconds(2), ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        if (busy || state != ChatState.Idle || conversation == Guid.Empty || string.IsNullOrWhiteSpace(message)) return;
+        busy = true; error = null;
+        var submitted = submittedMessage ??= new ChatMessageRequest(conversation, messageId, message);
+        try
+        {
+            using var api = Api;
+            using var response = await api.PostAsJsonAsync($"{Route}/messages", submitted, cancellation.Token);
+            if (response.IsSuccessStatusCode) AcknowledgeMessage(submitted);
+            else { submittedMessage = null; error = "Message was not accepted. Check the conversation state."; }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { error = "Delivery response was interrupted. Retry sends the original message with the same ID; any unsent edits remain in the composer."; }
+        finally { busy = false; }
+    }
+    private void AcknowledgeMessage(ChatMessageRequest submitted)
+    {
+        if (submittedMessage?.ClientMessageId != submitted.ClientMessageId) return;
+        if (message == submitted.Text) message = "";
+        submittedMessage = null;
+        messageId = Guid.NewGuid();
+    }
+    private async Task ApproveAsync(string callId, string key)
+    {
+        busy = true; error = null;
+        try
+        {
+            using var api = Api;
+            using var response = await api.PostAsJsonAsync($"{Route}/interactions/{Uri.EscapeDataString(callId)}", new ChatApprovalRequest(conversation, key), cancellation.Token);
+            if (!response.IsSuccessStatusCode) error = "Approval was not accepted. It may already have been answered.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { error = "Approval delivery is uncertain. Wait for the conversation to recover."; }
+        finally { busy = false; }
+    }
+    private async Task NewAsync()
+    {
+        busy = true;
+        try
+        {
+            using var api = Api;
+            using var response = await api.PostAsJsonAsync($"{Route}/new", new ChatNewRequest(conversation), cancellation.Token);
+            response.EnsureSuccessStatusCode();
+            var snapshot = await response.Content.ReadFromJsonAsync<ChatSnapshot>(cancellation.Token);
+            if (snapshot is not null)
+            {
+                await SelectConversationAsync(snapshot.ConversationId);
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { error = "The archive response was interrupted. Reload the current conversation before trying again."; }
+        finally { busy = false; }
+    }
+    private async Task ReconcileAsync()
+    {
+        busy = true; error = null;
+        try
+        {
+            using var api = Api;
+            using var response = await api.PostAsJsonAsync($"{Route}/reconcile", new ChatNewRequest(conversation), cancellation.Token);
+            if (!response.IsSuccessStatusCode) error = "The session check was not accepted. Refresh the conversation state.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { error = "The session check was interrupted. No message was resent."; }
+        finally { busy = false; }
+    }
+
+    private async Task AbandonAsync()
+    {
+        if (UnresolvedMessageId is not { } expectedMessage) return;
+        busy = true; error = null;
+        try
+        {
+            using var api = Api;
+            using var response = await api.PostAsJsonAsync($"{Route}/abandon", new ChatAbandonRequest(conversation, resolutionId, expectedMessage, acknowledgeAbandon), cancellation.Token);
+            if (response.IsSuccessStatusCode) await SelectConversationAsync(Guid.Empty);
+            else error = "Abandonment was not accepted. The turn may already have changed or been resolved.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { error = "The resolution response was interrupted. Retry uses the same resolution ID; no message is resent."; }
+        finally { busy = false; }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        await cancellation.CancelAsync();
+        await selection;
+        await stream;
+        streamCancellation?.Dispose();
+        cancellation.Dispose();
+    }
+}

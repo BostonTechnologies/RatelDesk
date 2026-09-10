@@ -1,0 +1,24 @@
+@using HelpDesk.NewWeb.Components.Pages
+@using HelpDesk.NewWeb.Components.Shared
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        @if (routeData.PageType == typeof(PublicPortal) || routeData.PageType == typeof(Login))
+        {
+            <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.PublicLayout)" />
+        }
+        else
+        {
+            <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+                <NotAuthorized>
+                    <RedirectToAuthBoundary />
+                </NotAuthorized>
+            </AuthorizeRouteView>
+        }
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="typeof(Layout.PublicLayout)">
+            <MudText Typo="Typo.h5">Sorry, there's nothing at this address.</MudText>
+        </LayoutView>
+    </NotFound>
+</Router>

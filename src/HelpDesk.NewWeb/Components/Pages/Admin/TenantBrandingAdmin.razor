@@ -1,0 +1,125 @@
+@page "/admin/tenants/{TenantId:int}/branding"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using Helpdesk.Shared.Models
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-4">
+    <MudText Typo="Typo.h5" Class="mb-4">Tenant Branding (@TenantId)</MudText>
+
+    <MudGrid Spacing="2">
+        <MudItem xs="12" md="6">
+            <MudTextField Label="Brand Name" @bind-Value="model.BrandName" />
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudTextField Label="Primary Color" @bind-Value="model.PrimaryColor" />
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudTextField Label="From Name" @bind-Value="model.FromName" />
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudTextField Label="Reply-To" @bind-Value="model.ReplyTo" />
+        </MudItem>
+        <MudItem xs="12">
+            <MudText Typo="Typo.subtitle2">Footer HTML</MudText>
+            <MudTextField T="string"
+                          Value="@model.FooterHtml"
+                          ValueChanged="OnFooterChanged"
+                          Lines="10"
+                          Variant="Variant.Outlined"
+                          Placeholder="Enter footer HTML" />
+        </MudItem>
+        <MudItem xs="12">
+            <InputFile OnChange="OnLogoSelected" accept="image/*" />
+            <MudText Typo="Typo.caption">Upload logo image (stored with signed URL)</MudText>
+        </MudItem>
+        @if (!string.IsNullOrWhiteSpace(model.LogoUrl))
+        {
+            <MudItem xs="12">
+                <MudText Typo="Typo.subtitle2">Current Logo</MudText>
+                <img src="@model.LogoUrl" alt="Tenant logo" style="max-height:80px; max-width:100%;" />
+            </MudItem>
+        }
+    </MudGrid>
+
+    <MudStack Row="true" Spacing="2" Class="mt-4">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync">Save</MudButton>
+        <MudButton Variant="Variant.Outlined" OnClick="LoadAsync">Reload</MudButton>
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter] public int TenantId { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private TenantBranding model = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        model = await HelpdeskApi.GetFromJsonAsync<TenantBranding>($"api/v1/tenants/{TenantId}/branding")
+            ?? new TenantBranding { TenantId = TenantId };
+    }
+
+    private async Task SaveAsync()
+    {
+        model.TenantId = TenantId;
+        var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/tenants/{TenantId}/branding", model);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Failed to save tenant branding.", Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Tenant branding saved.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private Task OnFooterChanged(string value)
+    {
+        model.FooterHtml = value;
+        return Task.CompletedTask;
+    }
+
+    private async Task OnLogoSelected(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file is null)
+            return;
+
+        await using var stream = file.OpenReadStream(10 * 1024 * 1024);
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+
+        using var content = new MultipartFormDataContent();
+        using var fileContent = new ByteArrayContent(memory.ToArray());
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue(file.ContentType);
+        content.Add(fileContent, "file", file.Name);
+
+        var response = await HelpdeskApi.PostAsync($"api/v1/tenants/{TenantId}/branding/logo", content);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Failed to upload logo.", Severity.Error);
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<LogoUploadResponse>();
+        if (!string.IsNullOrWhiteSpace(payload?.Url))
+        {
+            model.LogoUrl = payload.Url;
+            Snackbar.Add("Logo uploaded.", Severity.Success);
+        }
+    }
+
+    private sealed class LogoUploadResponse
+    {
+        public string? Url { get; set; }
+    }
+}

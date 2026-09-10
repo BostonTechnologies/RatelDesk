@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic values used only by unit-test fixtures"
+regexTarget = "match"
+regexes = [
+  '''test-signing-secret-12345'''
+]

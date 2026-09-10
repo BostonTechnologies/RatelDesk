@@ -1,0 +1,497 @@
+@using Helpdesk.Shared.DTOs.Change
+@inject IJSRuntime JS
+
+<MudStack Spacing="2">
+    @if (ValidationErrors?.Count > 0)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
+            <MudText Typo="Typo.subtitle2">Template needs attention</MudText>
+            @if (!string.IsNullOrWhiteSpace(FixHint))
+            {
+                <MudText Typo="Typo.body2" Class="mt-2 mb-1">@FixHint</MudText>
+            }
+            <MudList T="string" Dense="true">
+                @foreach (var error in ValidationErrors)
+                {
+                    var targetId = GetTargetId(error);
+                    <MudListItem T="string">
+                        @if (!string.IsNullOrWhiteSpace(targetId))
+                        {
+                            <MudButton Variant="Variant.Text"
+                                       Color="Color.Warning"
+                                       Class="change-template-link"
+                                       OnClick="@(() => ScrollToFieldAsync(targetId!))">
+                                @error
+                            </MudButton>
+                        }
+                        else
+                        {
+                            @error
+                        }
+                    </MudListItem>
+                }
+            </MudList>
+        </MudAlert>
+    }
+
+    <MudPaper Class="pa-3" Outlined="true">
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Core Change Plan</MudText>
+        <MudGrid Spacing="2">
+            <MudItem xs="12">
+                <div id="@ScopeOfChangeFieldId" class="change-template-target">
+                    <ChangeFieldHelp Label="Scope of Change"
+                                     TooltipText="Summarize what will change and where it will be applied."
+                                     ExampleText="Example: 'Apply new GPO to all finance workstations in Johannesburg.'" />
+                    <MudTextField T="string"
+                                  Label="Scope of Change"
+                                  Value="@Model.ScopeOfChange"
+                                  ValueChanged="OnScopeChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="2"
+                                  FullWidth="true" />
+                </div>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <div id="@AffectedSystemsFieldId" class="change-template-target">
+                    <ChangeFieldHelp Label="Affected Systems or Services"
+                                     TooltipText="List the systems, services, sites, or business capabilities touched by this change."
+                                     ExampleText="Example: 'AD Domain Controllers', 'VPN Gateway', 'Finance file share'" />
+                    <MudTextField T="string"
+                                  Label="Affected Systems or Services"
+                                  HelperText="One item per line"
+                                  Value="@GetLines(Model.AffectedSystems)"
+                                  ValueChanged="OnAffectedSystemsChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="8"
+                                  FullWidth="true" />
+                </div>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <div id="@ImplementationStepsFieldId" class="change-template-target">
+                    <ChangeFieldHelp Label="Implementation Steps"
+                                     TooltipText="Describe the step-by-step actions the implementer will perform."
+                                     ExampleText="Example: '1. Confirm backup. 2. Apply policy. 3. Force gpupdate. 4. Verify result.'" />
+                    <MudTextField T="string"
+                                  Label="Implementation Steps"
+                                  HelperText="One step per line"
+                                  Value="@GetLines(Model.ImplementationSteps)"
+                                  ValueChanged="OnImplementationStepsChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="8"
+                                  FullWidth="true" />
+                </div>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <div id="@ValidationStepsFieldId" class="change-template-target">
+                    <ChangeFieldHelp Label="Validation Steps"
+                                     TooltipText="Describe how you will confirm the change worked as intended."
+                                     ExampleText="Example: 'Check policy version, test login, confirm event logs are clean.'" />
+                    <MudTextField T="string"
+                                  Label="Validation Steps"
+                                  HelperText="One step per line"
+                                  Value="@GetLines(Model.ValidationSteps)"
+                                  ValueChanged="OnValidationStepsChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="8"
+                                  FullWidth="true" />
+                </div>
+            </MudItem>
+            <MudItem xs="12" md="8">
+                <div id="@RollbackPlanFieldId" class="change-template-target">
+                    <ChangeFieldHelp Label="Rollback Plan"
+                                     TooltipText="Explain exactly how the change will be reversed if it causes issues."
+                                     ExampleText="Example: 'Unlink the GPO, force replication, run gpupdate, and confirm previous setting restored.'" />
+                    <MudTextField T="string"
+                                  Label="Rollback Plan"
+                                  Value="@Model.RollbackPlan"
+                                  ValueChanged="OnRollbackPlanChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="4"
+                                  FullWidth="true" />
+                </div>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <div id="@RollbackReferenceFieldId" class="change-template-target">
+                    <ChangeFieldHelp Label="Rollback Reference"
+                                     TooltipText="Provide the runbook, SOP, KB, backup job, or script reference used during rollback."
+                                     ExampleText="Example: 'KB-204', 'Backup job BKP-AD-01', 'Rollback script rollback-gpo.ps1'" />
+                    <MudTextField T="string"
+                                  Label="Rollback Reference"
+                                  Value="@Model.RollbackReference"
+                                  ValueChanged="OnRollbackReferenceChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  FullWidth="true" />
+                </div>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (IsStandard)
+    {
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudText Typo="Typo.subtitle2" Class="mb-2">Standard Change</MudText>
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <div id="@PreApprovedFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Pre-approved Change"
+                                         TooltipText="Use this only if the organization already has standing approval for this repeatable standard change."
+                                         ExampleText="Example: a monthly approved patch routine with an existing SOP and approval policy." />
+                        <MudCheckBox T="bool?"
+                                     Value="@Model.IsPreApproved"
+                                     ValueChanged="OnPreApprovedChanged"
+                                     Color="Color.Primary"
+                                     Label="Pre-approved change" />
+                        <MudText Typo="Typo.caption" Class="ml-2 text-secondary">
+                            Tick this for approved standard changes. If this stays unticked, the change is still logged but marked as needing approval.
+                        </MudText>
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <div id="@RunbookReferenceFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="SOP or Runbook Reference"
+                                         TooltipText="Link the approved operating procedure or runbook that makes this standard change repeatable and controlled."
+                                         ExampleText="Example: 'SOP-NET-12', 'Runbook: Branch firewall baseline deploy'" />
+                        <MudTextField T="string"
+                                      Label="SOP or Runbook Reference"
+                                      Value="@Model.ExistingRunbookReference"
+                                      ValueChanged="OnRunbookReferenceChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <ChangeFieldHelp Label="Risk Classification"
+                                     TooltipText="Classify the standard change risk in simple business language."
+                                     ExampleText="Example: 'Low risk, repeatable, no expected service interruption'" />
+                    <MudTextField T="string"
+                                  Label="Risk Classification"
+                                  Value="@Model.RiskClassification"
+                                  ValueChanged="OnRiskClassificationChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  FullWidth="true" />
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    }
+
+    @if (IsNormal)
+    {
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudText Typo="Typo.subtitle2" Class="mb-2">Normal Change</MudText>
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="6">
+                    <div id="@BusinessJustificationFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Business Justification"
+                                         TooltipText="Explain why this change matters to the organization."
+                                         ExampleText="Example: 'Required to close audit finding, improve security posture, and standardize workstation compliance.'" />
+                        <MudTextField T="string"
+                                      Label="Business Justification"
+                                      Value="@Model.BusinessJustification"
+                                      ValueChanged="OnBusinessJustificationChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="5"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <div id="@ImpactAssessmentFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Impact Assessment"
+                                         TooltipText="Describe the expected business or technical impact during and after implementation."
+                                         ExampleText="Example: 'Users may need to sign out once; no expected outage to core services.'" />
+                        <MudTextField T="string"
+                                      Label="Impact Assessment"
+                                      Value="@Model.ImpactAssessment"
+                                      ValueChanged="OnImpactAssessmentChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="5"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <div id="@RiskAssessmentFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Risk Assessment"
+                                         TooltipText="Describe what could go wrong and how likely/severe it would be."
+                                         ExampleText="Example: 'Incorrect policy targeting may restrict admin tools for finance users.'" />
+                        <MudTextField T="string"
+                                      Label="Risk Assessment"
+                                      Value="@Model.RiskAssessment"
+                                      ValueChanged="OnRiskAssessmentChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="5"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <div id="@PreChangeChecksFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Pre-change Checks"
+                                         TooltipText="List the checks that must pass before implementation starts."
+                                         ExampleText="Example: 'Backup verified, replication healthy, CAB approval recorded, service owner informed.'" />
+                        <MudTextField T="string"
+                                      Label="Pre-change Checks"
+                                      HelperText="One check per line"
+                                      Value="@GetLines(Model.PreChangeChecks)"
+                                      ValueChanged="OnPreChangeChecksChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="5"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <div id="@TestingPlanFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Validation or Testing Plan"
+                                         TooltipText="Describe the tests that prove the change is safe and successful."
+                                         ExampleText="Example: 'Pilot on two users, confirm login restrictions, verify GPO result report, monitor for 30 minutes.'" />
+                        <MudTextField T="string"
+                                      Label="Validation or Testing Plan"
+                                      Value="@Model.TestingPlan"
+                                      ValueChanged="OnTestingPlanChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="5"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <ChangeFieldHelp Label="Dependencies"
+                                     TooltipText="List systems, approvals, teams, or activities that must be ready before this change can succeed."
+                                     ExampleText="Example: 'Backup completed', 'Network team on standby', 'CAB approval recorded'" />
+                    <MudTextField T="string"
+                                  Label="Dependencies"
+                                  HelperText="One dependency per line"
+                                  Value="@GetLines(Model.Dependencies)"
+                                  ValueChanged="OnDependenciesChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="5"
+                                  FullWidth="true" />
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    }
+
+    @if (IsEmergency)
+    {
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudText Typo="Typo.subtitle2" Class="mb-2">Emergency Change</MudText>
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="6">
+                    <div id="@EmergencyReasonFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Reason for Emergency"
+                                         TooltipText="Explain why the change cannot wait for the standard planning and approval path."
+                                         ExampleText="Example: 'Active outage mitigation required to restore branch connectivity.'" />
+                        <MudTextField T="string"
+                                      Label="Reason for Emergency"
+                                      Value="@Model.EmergencyReason"
+                                      ValueChanged="OnEmergencyReasonChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="5"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <div id="@BusinessImpactFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Business Impact if Not Implemented"
+                                         TooltipText="Explain the impact of doing nothing."
+                                         ExampleText="Example: 'Branch users cannot authenticate and core operations remain offline.'" />
+                        <MudTextField T="string"
+                                      Label="Business Impact if Not Implemented"
+                                      Value="@Model.BusinessImpactIfNotImplemented"
+                                      ValueChanged="OnEmergencyBusinessImpactChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="5"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <div id="@ImmediateRiskAssessmentFieldId" class="change-template-target">
+                        <ChangeFieldHelp Label="Immediate Risk Assessment"
+                                         TooltipText="Capture the immediate operational risk of proceeding under emergency conditions."
+                                         ExampleText="Example: 'Firewall restart could briefly interrupt VPN sessions; rollback available within 5 minutes.'" />
+                        <MudTextField T="string"
+                                      Label="Immediate Risk Assessment"
+                                      Value="@Model.ImmediateRiskAssessment"
+                                      ValueChanged="OnImmediateRiskAssessmentChanged"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="5"
+                                      FullWidth="true" />
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <ChangeFieldHelp Label="Incident Reference"
+                                     TooltipText="Link the active incident or outage record that this emergency change is addressing."
+                                     ExampleText="Example: 'INC-1042'" />
+                    <MudTextField T="string"
+                                  Label="Incident Reference"
+                                  Value="@Model.IncidentReference"
+                                  ValueChanged="OnIncidentReferenceChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  FullWidth="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <ChangeFieldHelp Label="Post-change Validation"
+                                     TooltipText="State what checks will confirm the emergency change stabilized the service after implementation."
+                                     ExampleText="Example: 'Users can log in, VPN traffic is stable, and no fresh errors appear for 15 minutes'" />
+                    <MudTextField T="string"
+                                  Label="Post-change Validation"
+                                  Value="@Model.PostChangeValidation"
+                                  ValueChanged="OnPostChangeValidationChanged"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="4"
+                                  FullWidth="true" />
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    [Parameter] public string ChangeType { get; set; } = string.Empty;
+    [Parameter] public ChangeTemplateDto Model { get; set; } = new();
+    [Parameter] public EventCallback OnChanged { get; set; }
+    [Parameter] public IReadOnlyList<string>? ValidationErrors { get; set; }
+
+    private const string ScopeOfChangeFieldId = "change-template-scope";
+    private const string AffectedSystemsFieldId = "change-template-affected";
+    private const string ImplementationStepsFieldId = "change-template-steps";
+    private const string ValidationStepsFieldId = "change-template-validation";
+    private const string RollbackPlanFieldId = "change-template-rollback-plan";
+    private const string RollbackReferenceFieldId = "change-template-rollback-reference";
+    private const string PreApprovedFieldId = "change-template-preapproved";
+    private const string RunbookReferenceFieldId = "change-template-runbook";
+    private const string BusinessJustificationFieldId = "change-template-business-justification";
+    private const string ImpactAssessmentFieldId = "change-template-impact";
+    private const string RiskAssessmentFieldId = "change-template-risk";
+    private const string PreChangeChecksFieldId = "change-template-prechecks";
+    private const string TestingPlanFieldId = "change-template-testing";
+    private const string EmergencyReasonFieldId = "change-template-emergency-reason";
+    private const string BusinessImpactFieldId = "change-template-business-impact";
+    private const string ImmediateRiskAssessmentFieldId = "change-template-immediate-risk";
+
+    private bool IsStandard => string.Equals(ChangeType, "Standard", StringComparison.OrdinalIgnoreCase);
+    private bool IsNormal => string.Equals(ChangeType, "Normal", StringComparison.OrdinalIgnoreCase);
+    private bool IsEmergency => string.Equals(ChangeType, "Emergency", StringComparison.OrdinalIgnoreCase);
+    private string? FixHint => GetFixHint();
+
+    private static string GetLines(IEnumerable<string>? items) => string.Join(Environment.NewLine, items ?? []);
+
+    private async Task ScrollToFieldAsync(string targetId)
+    {
+        await JS.InvokeVoidAsync("scrollToChangeTemplateField", targetId);
+    }
+
+    private Task OnScopeChanged(string value) => UpdateAsync(() => Model.ScopeOfChange = value);
+    private Task OnAffectedSystemsChanged(string value) => UpdateAsync(() => Model.AffectedSystems = SplitLines(value));
+    private Task OnImplementationStepsChanged(string value) => UpdateAsync(() => Model.ImplementationSteps = SplitLines(value));
+    private Task OnValidationStepsChanged(string value) => UpdateAsync(() => Model.ValidationSteps = SplitLines(value));
+    private Task OnRollbackPlanChanged(string value) => UpdateAsync(() => Model.RollbackPlan = value);
+    private Task OnRollbackReferenceChanged(string value) => UpdateAsync(() => Model.RollbackReference = value);
+    private Task OnPreApprovedChanged(bool? value) => UpdateAsync(() => Model.IsPreApproved = value);
+    private Task OnRunbookReferenceChanged(string value) => UpdateAsync(() => Model.ExistingRunbookReference = value);
+    private Task OnRiskClassificationChanged(string value) => UpdateAsync(() => Model.RiskClassification = value);
+    private Task OnBusinessJustificationChanged(string value) => UpdateAsync(() => Model.BusinessJustification = value);
+    private Task OnImpactAssessmentChanged(string value) => UpdateAsync(() => Model.ImpactAssessment = value);
+    private Task OnRiskAssessmentChanged(string value) => UpdateAsync(() => Model.RiskAssessment = value);
+    private Task OnPreChangeChecksChanged(string value) => UpdateAsync(() => Model.PreChangeChecks = SplitLines(value));
+    private Task OnTestingPlanChanged(string value) => UpdateAsync(() => Model.TestingPlan = value);
+    private Task OnDependenciesChanged(string value) => UpdateAsync(() => Model.Dependencies = SplitLines(value));
+    private Task OnEmergencyReasonChanged(string value) => UpdateAsync(() => Model.EmergencyReason = value);
+    private Task OnEmergencyBusinessImpactChanged(string value) => UpdateAsync(() => Model.BusinessImpactIfNotImplemented = value);
+    private Task OnImmediateRiskAssessmentChanged(string value) => UpdateAsync(() => Model.ImmediateRiskAssessment = value);
+    private Task OnIncidentReferenceChanged(string value) => UpdateAsync(() => Model.IncidentReference = value);
+    private Task OnPostChangeValidationChanged(string value) => UpdateAsync(() => Model.PostChangeValidation = value);
+
+    private async Task UpdateAsync(Action update)
+    {
+        update();
+        await OnChanged.InvokeAsync();
+    }
+
+    private static List<string> SplitLines(string? value)
+    {
+        return value?
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList()
+            ?? new List<string>();
+    }
+
+    private string? GetFixHint()
+    {
+        if (ValidationErrors is null || ValidationErrors.Count == 0)
+        {
+            return null;
+        }
+
+        if (IsStandard && ValidationErrors.Any(error => error.Contains("pre-approved", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Review the Standard Change section below. Leave 'Pre-approved change' unticked if approval is still needed, or tick it if this is already covered by a pre-approved standard change.";
+        }
+
+        if (ValidationErrors.Any(error => error.Contains("rollback", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Fix this in the Core Change Plan section by completing the rollback fields.";
+        }
+
+        return "Use the items above to jump to the missing fields and complete the required sections.";
+    }
+
+    private static string? GetTargetId(string error)
+    {
+        if (error.Contains("scope", StringComparison.OrdinalIgnoreCase)) return ScopeOfChangeFieldId;
+        if (error.Contains("affected systems", StringComparison.OrdinalIgnoreCase)) return AffectedSystemsFieldId;
+        if (error.Contains("implementation step", StringComparison.OrdinalIgnoreCase)) return ImplementationStepsFieldId;
+        if (error.Contains("validation step", StringComparison.OrdinalIgnoreCase)) return ValidationStepsFieldId;
+        if (error.Contains("rollback plan", StringComparison.OrdinalIgnoreCase)) return RollbackPlanFieldId;
+        if (error.Contains("rollback reference", StringComparison.OrdinalIgnoreCase)) return RollbackReferenceFieldId;
+        if (error.Contains("pre-approved", StringComparison.OrdinalIgnoreCase)) return PreApprovedFieldId;
+        if (error.Contains("runbook", StringComparison.OrdinalIgnoreCase) || error.Contains("sop", StringComparison.OrdinalIgnoreCase)) return RunbookReferenceFieldId;
+        if (error.Contains("business justification", StringComparison.OrdinalIgnoreCase)) return BusinessJustificationFieldId;
+        if (error.Contains("impact assessment", StringComparison.OrdinalIgnoreCase)) return ImpactAssessmentFieldId;
+        if (error.Contains("risk assessment", StringComparison.OrdinalIgnoreCase)) return RiskAssessmentFieldId;
+        if (error.Contains("pre-change checks", StringComparison.OrdinalIgnoreCase)) return PreChangeChecksFieldId;
+        if (error.Contains("testing plan", StringComparison.OrdinalIgnoreCase) || error.Contains("validation or testing plan", StringComparison.OrdinalIgnoreCase)) return TestingPlanFieldId;
+        if (error.Contains("reason for emergency", StringComparison.OrdinalIgnoreCase)) return EmergencyReasonFieldId;
+        if (error.Contains("business impact", StringComparison.OrdinalIgnoreCase)) return BusinessImpactFieldId;
+        if (error.Contains("immediate risk", StringComparison.OrdinalIgnoreCase)) return ImmediateRiskAssessmentFieldId;
+
+        return null;
+    }
+}
+
+<style>
+    .change-template-link {
+        justify-content: flex-start;
+        padding-inline: 0;
+        min-width: 0;
+        text-align: left;
+        text-transform: none;
+        white-space: normal;
+    }
+
+    .change-template-target {
+        border-radius: 10px;
+        transition: background-color 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    .change-template-target-active {
+        background: rgba(25, 118, 210, 0.10);
+        box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.30);
+    }
+</style>

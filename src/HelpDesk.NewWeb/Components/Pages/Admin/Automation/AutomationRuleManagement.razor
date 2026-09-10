@@ -1,0 +1,66 @@
+@page "/admin/automation"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+
+<PageTitle>Automation Rules</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h5">Automation Rules</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+    <MudTable Items="rules" Hover="true" Dense="true" T="AutomationRule">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Trigger</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">@context.Name</MudTd>
+            <MudTd DataLabel="Trigger">@context.Trigger</MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" OnClick="() => OpenEditDialog(context)" />
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<AutomationRule> rules = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRules();
+    }
+
+    private async Task LoadRules()
+    {
+        rules = await HelpdeskApi.GetFromJsonAsync<List<AutomationRule>>("api/v1/automation/rules") ?? new();
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateAutomationRuleDialog>("Create Rule", options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadRules();
+        }
+    }
+
+    private async Task OpenEditDialog(AutomationRule rule)
+    {
+        var parameters = new DialogParameters { ["Rule"] = rule };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<EditAutomationRuleDialog>("Edit Rule", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadRules();
+        }
+    }
+}

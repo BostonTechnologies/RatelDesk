@@ -1,0 +1,96 @@
+@page "/admin/knowledgebase/articles/{Id?}"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject IErrorLoggingService ErrorLogger
+@using Helpdesk.Shared.DTOs.Article
+@using HelpDesk.NewWeb.Services
+
+<PageTitle>Article Editor</PageTitle>
+
+@if (loading)
+{
+    <MudPaper Class="pa-4 d-flex justify-center">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    </MudPaper>
+}
+else
+{
+    <MudCard Class="pa-4">
+        <MudTextField @bind-Value="article.Title" Label="Title" Required="true" />
+        <MudSelect T="string" @bind-Value="article.CategoryId" Label="Category" Class="mt-2" Required="true">
+            @foreach (var cat in categories)
+            {
+                <MudSelectItem T="string" Value="@cat.Id">@cat.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSwitch T="bool" @bind-Value="article.IsPublic" Color="Color.Primary" Class="mt-2">Public</MudSwitch>
+        <MudTextField T="string" @bind-Value="article.Content" Label="Content" Lines="10" Class="mt-2" Variant="Variant.Outlined" />
+        <MudCardActions Class="pt-4">
+            <MudButton OnClick="SaveAsync" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+            <MudButton OnClick="Cancel">Back</MudButton>
+        </MudCardActions>
+    </MudCard>
+}
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [Parameter] public string? Id { get; set; }
+
+    private ArticleDto article = new();
+    private List<Helpdesk.Shared.DTOs.Category.CategoryDto> categories = new();
+    private bool loading = true;
+    private bool IsNew => string.IsNullOrEmpty(Id) || Id == "new";
+
+    protected override async Task OnInitializedAsync()
+    {
+        categories = await HelpdeskApi.GetFromJsonAsync<List<Helpdesk.Shared.DTOs.Category.CategoryDto>>("api/v1/knowledgebase/categories") ?? new();
+        if (!IsNew && Id is not null)
+        {
+            var existing = await HelpdeskApi.GetFromJsonAsync<ArticleDto>($"api/v1/knowledgebase/articles/{Id}");
+            if (existing != null)
+            {
+                article = existing;
+            }
+        }
+        loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            HttpResponseMessage response;
+            if (IsNew)
+            {
+                response = await HelpdeskApi.PostAsJsonAsync("api/v1/knowledgebase/articles", article);
+            }
+            else
+            {
+                response = await HelpdeskApi.PutAsJsonAsync($"api/v1/knowledgebase/articles/{Id}", article);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                NavigationManager.NavigateTo("/admin/knowledgebase/articles");
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Error saving article: {error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Unexpected error", Severity.Error);
+            await ErrorLogger.LogAsync(ex, nameof(ArticleEditor));
+        }
+    }
+
+    private void Cancel()
+    {
+        NavigationManager.NavigateTo("/admin/knowledgebase/articles");
+    }
+
+}

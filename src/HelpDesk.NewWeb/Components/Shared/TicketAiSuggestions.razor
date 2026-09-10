@@ -1,0 +1,907 @@
+@using Helpdesk.Shared.DTOs.Article
+@using Helpdesk.Shared.DTOs.Change
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Models
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+
+<MudStack Spacing="2">
+    @if (ShowStatusSummary && aiReadiness is not null)
+    {
+        <MudAlert Severity="@(aiReadiness.ProductionReady ? Severity.Success : Severity.Warning)"
+                  Dense="true"
+                  Variant="Variant.Outlined">
+            <MudText Typo="Typo.subtitle2">
+                AI rollout: @(aiReadiness.ProductionReady ? "Ready" : "Blocked")
+            </MudText>
+            <MudText Typo="Typo.caption" Class="d-block">
+                Suggestion gate: @(aiReadiness.SuggestionGateMet ? "met" : "blocked") |
+                Automation gate: @(aiReadiness.AutomationGateMet ? "met" : "blocked")
+            </MudText>
+            @if (aiReadiness.LastAiAuditAt.HasValue)
+            {
+                <MudText Typo="Typo.caption" Class="d-block">
+                    Last AI activity: @aiReadiness.LastAiAuditAt.Value.ToLocalTime().ToString("g")
+                </MudText>
+            }
+            @if (aiReadiness.BlockingReasons.Count > 0)
+            {
+                <MudList T="string" Dense="true" Class="mt-1">
+                    @foreach (var reason in aiReadiness.BlockingReasons)
+                    {
+                        <MudListItem T="string">@reason</MudListItem>
+                    }
+                </MudList>
+            }
+        </MudAlert>
+    }
+
+    @if (ShowStatusSummary && aiRuntimeStatus is not null)
+    {
+        <MudAlert Severity="@GetRuntimeSeverity(aiRuntimeStatus.Status)"
+                  Dense="true"
+                  Variant="Variant.Outlined">
+            <MudText Typo="Typo.subtitle2">AI runtime: @aiRuntimeStatus.Status</MudText>
+            <MudText Typo="Typo.caption" Class="d-block">
+                Fallback: @(aiRuntimeStatus.FallbackEnabled ? $"enabled ({aiRuntimeStatus.FallbackProviderCount} alternate providers)" : "disabled")
+            </MudText>
+            @foreach (var provider in aiRuntimeStatus.Providers)
+            {
+                <MudText Typo="Typo.caption" Class="d-block">
+                    @provider.Channel: @provider.Status
+                    @if (!string.IsNullOrWhiteSpace(provider.ProviderName))
+                    {
+                        <span> via @provider.ProviderName</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(provider.ModelId))
+                    {
+                        <span> / @provider.ModelId</span>
+                    }
+                </MudText>
+            }
+            @if (aiRuntimeStatus.Reasons.Count > 0)
+            {
+                <MudList T="string" Dense="true" Class="mt-1">
+                    @foreach (var reason in aiRuntimeStatus.Reasons)
+                    {
+                        <MudListItem T="string">@reason</MudListItem>
+                    }
+                </MudList>
+            }
+            @if (aiRuntimeStatus.RecentEvidence.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="d-block mt-1">Recent runtime evidence</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var evidence in aiRuntimeStatus.RecentEvidence.Take(3))
+                    {
+                        <MudListItem T="string">@evidence</MudListItem>
+                    }
+                </MudList>
+            }
+        </MudAlert>
+    }
+
+    @if (changeAiReview is not null && !string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase) && !string.Equals(TicketType, "requests", StringComparison.OrdinalIgnoreCase))
+    {
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                <MudText Typo="Typo.subtitle2">Change AI Review</MudText>
+                <MudChip T="string"
+                         Color="@GetChangeReviewColor(changeAiReview)"
+                         Variant="Variant.Outlined"
+                         Size="Size.Small">
+                    @GetChangeReviewLabel(changeAiReview)
+                </MudChip>
+            </MudStack>
+            @if (!string.IsNullOrWhiteSpace(changeAiReview.Summary))
+            {
+                <MudText Typo="Typo.body2" Class="mb-2">@changeAiReview.Summary</MudText>
+            }
+            @if (changeAiReview.IssuesFound.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="d-block">Issues Found</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var item in changeAiReview.IssuesFound)
+                    {
+                        <MudListItem T="string">@item</MudListItem>
+                    }
+                </MudList>
+            }
+            @if (changeAiReview.RisksIdentified.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="d-block">Risks Identified</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var item in changeAiReview.RisksIdentified)
+                    {
+                        <MudListItem T="string">@item</MudListItem>
+                    }
+                </MudList>
+            }
+            @if (changeAiReview.MissingInformation.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="d-block">Missing Information</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var item in changeAiReview.MissingInformation)
+                    {
+                        <MudListItem T="string">@item</MudListItem>
+                    }
+                </MudList>
+            }
+            @if (changeAiReview.Recommendations.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="d-block">Recommendations</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var item in changeAiReview.Recommendations)
+                    {
+                        <MudListItem T="string">@item</MudListItem>
+                    }
+                </MudList>
+            }
+            @if (changeAiReview.CompletedAt.HasValue)
+            {
+                <MudText Typo="Typo.caption" Class="d-block">
+                    Completed: @changeAiReview.CompletedAt.Value.ToLocalTime().ToString("g")
+                </MudText>
+            }
+        </MudPaper>
+    }
+
+    @if (kbWorking)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+            <MudProgressLinear Indeterminate="true" Class="flex-grow-1" />
+            <MudText Typo="Typo.caption" Class="ml-2">Preparing suggestions...</MudText>
+        </MudStack>
+    }
+
+    @if (!kbWorking && suggestions.Count == 0)
+    {
+        @if (suggestionsDisabled)
+        {
+            <MudText Typo="Typo.body2">Suggestions disabled by admin.</MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2">No AI suggestions yet.</MudText>
+        }
+    }
+    else
+    {
+        @foreach (var suggestion in suggestions)
+        {
+            automationValidationResults.TryGetValue(suggestion.ArticleId, out var automationValidation);
+            var suggestionFeedback = GetLatestFeedback("suggestion", articleId: suggestion.ArticleId);
+            <MudPaper Class="pa-3 mb-2" Outlined="true">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-1">
+                    <MudText Typo="Typo.subtitle2">
+                        <MudLink Href="@suggestion.Link" Target="_blank">@suggestion.Title</MudLink>
+                    </MudText>
+                    <MudChip T="string"
+                             Color="@GetConfidenceColor(suggestion)"
+                             Variant="Variant.Outlined"
+                             Size="Size.Small">
+                        @suggestion.ConfidenceLabel
+                    </MudChip>
+                </MudStack>
+                <MudText Typo="Typo.caption">@suggestion.Excerpt</MudText>
+                <MudProgressLinear Class="mt-1" Value="@(suggestion.Score * 100)" Color="Color.Info" />
+                @if (suggestion.RequiresClarification && !string.IsNullOrWhiteSpace(suggestion.ClarificationPrompt))
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mt-2">
+                        @suggestion.ClarificationPrompt
+                    </MudAlert>
+                }
+                @if (suggestion.Evidence?.Count > 0)
+                {
+                    <MudStack Spacing="1" Class="mt-2">
+                        @foreach (var evidence in suggestion.Evidence.Take(2))
+                        {
+                            <MudPaper Class="pa-2" Outlined="true">
+                                <MudText Typo="Typo.caption">@evidence.Excerpt</MudText>
+                            </MudPaper>
+                        }
+                    </MudStack>
+                }
+                @if (suggestion.AutomationTarget is not null)
+                {
+                    <MudAlert Severity="@(automationValidation?.CanApprove == false ? Severity.Warning : Severity.Info)"
+                              Dense="true"
+                              Variant="Variant.Outlined"
+                              Class="mt-2">
+                        @if (automationValidation?.CanApprove == false)
+                        {
+                            <span>
+                                Automation target blocked:
+                                <strong>@(suggestion.AutomationTarget.TaskTemplateName ?? suggestion.AutomationTarget.OrchestrationJobDefinitionId ?? suggestion.AutomationTarget.OrchestrationRequestDefinitionId)</strong>
+                            </span>
+                        }
+                        else
+                        {
+                            <span>
+                                Automation target ready:
+                                <strong>@(suggestion.AutomationTarget.TaskTemplateName ?? suggestion.AutomationTarget.OrchestrationJobDefinitionId ?? suggestion.AutomationTarget.OrchestrationRequestDefinitionId)</strong>
+                            </span>
+                        }
+                    </MudAlert>
+                    @if (automationValidation?.Errors?.Count > 0)
+                    {
+                        <MudList T="string" Dense="true" Class="mt-1">
+                            @foreach (var error in automationValidation.Errors)
+                            {
+                                <MudListItem T="string">@error</MudListItem>
+                            }
+                        </MudList>
+                    }
+                    @if (string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Secondary"
+                                   Class="mt-2"
+                                   Disabled="@(automationApprovalRunning || automationValidationLoading.Contains(suggestion.ArticleId) || automationValidation?.CanApprove == false)"
+                                   OnClick="() => ApproveAutomationAsync(suggestion)">
+                            @(automationValidationLoading.Contains(suggestion.ArticleId)
+                                ? "Validating..."
+                                : automationApprovalRunning
+                                    ? "Starting..."
+                                    : "Approve Automation")
+                        </MudButton>
+                    }
+                }
+                <MudStack Row="true" Spacing="1" Class="mt-2">
+                    <MudButton Variant="Variant.Outlined"
+                               Size="Size.Small"
+                               Disabled="@feedbackSubmitting"
+                               OnClick='@(() => SubmitSuggestionFeedbackAsync(suggestion, "helpful"))'>
+                        Helpful
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined"
+                               Size="Size.Small"
+                               Disabled="@feedbackSubmitting"
+                               OnClick='@(() => SubmitSuggestionFeedbackAsync(suggestion, "not_helpful"))'>
+                        Not Helpful
+                    </MudButton>
+                </MudStack>
+                @if (suggestionFeedback is not null)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mt-1">
+                        Feedback: @suggestionFeedback.FeedbackValue.Replace('_', ' ') by @(suggestionFeedback.CreatedByName ?? "operator")
+                    </MudText>
+                }
+            </MudPaper>
+        }
+    }
+
+    @if (automationRuns.Count > 0)
+    {
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudText Typo="Typo.subtitle2" Class="mb-2">Automation Runs</MudText>
+            <MudStack Spacing="1">
+                @foreach (var run in automationRuns)
+                {
+                    var automationFeedback = GetLatestFeedback("automation", requestId: run.RequestId);
+                    <MudPaper Class="pa-2" Outlined="true">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                            <MudText Typo="Typo.body2">
+                                <MudLink Href="@($"/requests/{run.RequestId}")">@run.RequestTrackingId</MudLink>
+                            </MudText>
+                            <MudChip T="string" Variant="Variant.Outlined" Size="Size.Small">
+                                @(run.LastAutomationStatus ?? run.RequestTaskStatus ?? run.WorkflowStatus ?? run.RequestState ?? "Pending")
+                            </MudChip>
+                        </MudStack>
+                        @if (!string.IsNullOrWhiteSpace(run.ArticleTitle))
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block">
+                                From KB article: @run.ArticleTitle
+                            </MudText>
+                        }
+                        <MudText Typo="Typo.caption" Class="d-block">
+                            Task: @(run.RequestTaskTitle ?? "Automation task")
+                        </MudText>
+                        <MudText Typo="Typo.caption" Class="d-block">
+                            Created: @run.CreatedAt.ToLocalTime().ToString("g")
+                        </MudText>
+                        @if (!string.IsNullOrWhiteSpace(run.OrchestrationRunId))
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block">
+                                External orchestration run: @run.OrchestrationRunId
+                            </MudText>
+                        }
+                        <MudStack Row="true" Spacing="1" Class="mt-2">
+                            <MudButton Variant="Variant.Outlined"
+                                       Size="Size.Small"
+                                       Disabled="@feedbackSubmitting"
+                                       OnClick='@(() => SubmitAutomationFeedbackAsync(run, "resolved"))'>
+                                Resolved Issue
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined"
+                                       Size="Size.Small"
+                                       Disabled="@feedbackSubmitting"
+                                       OnClick='@(() => SubmitAutomationFeedbackAsync(run, "not_resolved"))'>
+                                Did Not Resolve
+                            </MudButton>
+                        </MudStack>
+                        @if (automationFeedback is not null)
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block mt-1">
+                                Outcome: @automationFeedback.FeedbackValue.Replace('_', ' ') by @(automationFeedback.CreatedByName ?? "operator")
+                            </MudText>
+                        }
+                    </MudPaper>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+
+    @if (auditEntries.Count > 0)
+    {
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudText Typo="Typo.subtitle2" Class="mb-2">AI Audit</MudText>
+            <MudStack Spacing="1">
+                @foreach (var auditEntry in auditEntries.Take(10))
+                {
+                    <MudPaper Class="pa-2" Outlined="true">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                            <MudText Typo="Typo.body2">@auditEntry.OperationName</MudText>
+                            <MudText Typo="Typo.caption">@auditEntry.CreatedAt.ToLocalTime().ToString("g")</MudText>
+                        </MudStack>
+                        <MudText Typo="Typo.caption" Class="d-block">
+                            Provider: @auditEntry.ProviderName / @auditEntry.ModelId
+                        </MudText>
+                        @if (!string.IsNullOrWhiteSpace(auditEntry.Notes))
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block">
+                                Notes: @auditEntry.Notes
+                            </MudText>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(auditEntry.CorrelationId))
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block">
+                                Correlation: @auditEntry.CorrelationId
+                            </MudText>
+                        }
+                    </MudPaper>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+
+    @if (requesterDraft is not null)
+    {
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                <MudText Typo="Typo.subtitle2">Requester Draft</MudText>
+                <MudChip T="string"
+                         Color="@(requesterDraft.RequiresClarification ? Color.Warning : Color.Success)"
+                         Variant="Variant.Outlined"
+                         Size="Size.Small">
+                    @(requesterDraft.RequiresClarification ? "Clarification Needed" : requesterDraft.ConfidenceLabel)
+                </MudChip>
+            </MudStack>
+
+            @if (!string.IsNullOrWhiteSpace(requesterDraft.SuggestedArticleTitle))
+            {
+                <MudText Typo="Typo.caption" Class="d-block mb-2">
+                    Grounded on
+                    <MudLink Href="@requesterDraft.SuggestedArticleLink" Target="_blank">@requesterDraft.SuggestedArticleTitle</MudLink>
+                </MudText>
+            }
+
+            <MudTextField T="string"
+                          @bind-Value="requesterDraftBody"
+                          Label="Draft Reply"
+                          Lines="8"
+                          Variant="Variant.Outlined"
+                          FullWidth="true"
+                          Class="mb-2" />
+
+            @if (requesterDraft.FollowUpQuestions.Count > 0)
+            {
+                <MudCheckBox T="bool"
+                             @bind-Value="includeRequesterFollowUpQuestions"
+                             Color="Color.Primary"
+                             Class="mb-1">
+                    Include follow-up questions
+                </MudCheckBox>
+                <MudText Typo="Typo.caption" Class="mb-1">Suggested Follow-up Questions</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var question in requesterDraft.FollowUpQuestions)
+                    {
+                        <MudListItem T="string">@question</MudListItem>
+                    }
+                </MudList>
+            }
+
+            @if (string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase))
+            {
+                <MudStack Row="true" Spacing="1" Class="mt-2">
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               Disabled="@requesterDraftSending"
+                               OnClick="ApproveAndSendRequesterDraftAsync">
+                        @(requesterDraftSending ? "Sending..." : "Approve And Send")
+                    </MudButton>
+                </MudStack>
+            }
+        </MudPaper>
+    }
+
+    <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+        <MudButton OnClick="GenerateKnowledge" Disabled="kbWorking">Generate Knowledge</MudButton>
+        <MudButton OnClick="RegenerateKnowledge" Disabled="kbWorking || articleId is null">Regenerate</MudButton>
+        <MudButton OnClick="ApproveKnowledge" Disabled="kbWorking || articleId is null">Approve</MudButton>
+    </MudStack>
+</MudStack>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+    [Parameter] public string TicketType { get; set; } = "incidents";
+    [Parameter] public string? OrganizationId { get; set; }
+    [Parameter] public EventCallback<List<KnowledgeSuggestion>> OnSuggestionsLoaded { get; set; }
+    [Parameter] public bool ShowStatusSummary { get; set; } = true;
+
+    private List<KnowledgeSuggestion> suggestions = new();
+    private List<TicketAutomationRunDto> automationRuns = new();
+    private List<TicketAiFeedbackDto> feedbackEntries = new();
+    private List<TicketAiAuditEntryDto> auditEntries = new();
+    private Dictionary<string, TicketAutomationValidationDto> automationValidationResults = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> automationValidationLoading = new(StringComparer.OrdinalIgnoreCase);
+    private RequesterReplyDraftDto? requesterDraft;
+    private ChangeAiReviewDto? changeAiReview;
+    private OrganizationAiReadinessDto? aiReadiness;
+    private OrganizationAiRuntimeStatusDto? aiRuntimeStatus;
+    private bool kbWorking;
+    private bool requesterDraftSending;
+    private bool automationApprovalRunning;
+    private bool feedbackSubmitting;
+    private string requesterDraftBody = string.Empty;
+    private bool includeRequesterFollowUpQuestions;
+    private bool suggestionsDisabled;
+    private string? articleId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSuggestionsAsync();
+    }
+
+    private async Task LoadSuggestionsAsync()
+    {
+        try
+        {
+            kbWorking = true;
+            await LoadAiReadinessAsync();
+            await LoadChangeReviewAsync();
+
+            var postResp = await HelpdeskApi.PostAsJsonAsync($"api/v1/tickets/{TicketId}/suggest-knowledge", new { });
+            if (postResp.StatusCode == System.Net.HttpStatusCode.NoContent)
+            {
+                suggestionsDisabled = true;
+                suggestions = new List<KnowledgeSuggestion>();
+                await OnSuggestionsLoaded.InvokeAsync(suggestions);
+                return;
+            }
+
+            for (var i = 0; i < 10; i++)
+            {
+                var resp = await HelpdeskApi.GetAsync($"api/v1/tickets/{TicketId}/suggest-knowledge");
+
+                if (resp.StatusCode == System.Net.HttpStatusCode.NoContent)
+                {
+                    await Task.Delay(600);
+                    continue;
+                }
+
+                if (resp.IsSuccessStatusCode)
+                {
+                    suggestions = await resp.Content.ReadFromJsonAsync<List<KnowledgeSuggestion>>() ?? new();
+                }
+                else
+                {
+                    suggestions = new List<KnowledgeSuggestion>();
+                }
+
+                break;
+            }
+
+            await LoadAutomationValidationAsync();
+            await LoadFeedbackAsync();
+
+            var auditResponse = await HelpdeskApi.GetAsync($"api/v1/tickets/{TicketId}/ai-audit");
+            if (auditResponse.IsSuccessStatusCode)
+            {
+                auditEntries = await auditResponse.Content.ReadFromJsonAsync<List<TicketAiAuditEntryDto>>() ?? new();
+            }
+            else
+            {
+                auditEntries = new List<TicketAiAuditEntryDto>();
+            }
+
+            var automationRunsResponse = await HelpdeskApi.GetAsync($"api/v1/tickets/{TicketId}/automation-approvals");
+            if (automationRunsResponse.IsSuccessStatusCode)
+            {
+                automationRuns = await automationRunsResponse.Content.ReadFromJsonAsync<List<TicketAutomationRunDto>>() ?? new();
+            }
+            else
+            {
+                automationRuns = new List<TicketAutomationRunDto>();
+            }
+
+            var requesterReplyResponse = await HelpdeskApi.GetAsync($"api/v1/tickets/{TicketId}/requester-reply-draft");
+            if (requesterReplyResponse.IsSuccessStatusCode)
+            {
+                requesterDraft = await requesterReplyResponse.Content.ReadFromJsonAsync<RequesterReplyDraftDto>();
+                requesterDraftBody = requesterDraft?.DraftReply ?? string.Empty;
+                includeRequesterFollowUpQuestions = requesterDraft?.RequiresClarification == true
+                    && requesterDraft.FollowUpQuestions.Count > 0;
+            }
+            else
+            {
+                requesterDraft = null;
+                requesterDraftBody = string.Empty;
+                includeRequesterFollowUpQuestions = false;
+            }
+        }
+        catch
+        {
+            suggestions = new List<KnowledgeSuggestion>();
+            automationRuns = new List<TicketAutomationRunDto>();
+            feedbackEntries = new List<TicketAiFeedbackDto>();
+            auditEntries = new List<TicketAiAuditEntryDto>();
+            automationValidationResults = new Dictionary<string, TicketAutomationValidationDto>(StringComparer.OrdinalIgnoreCase);
+            automationValidationLoading.Clear();
+            requesterDraft = null;
+            requesterDraftBody = string.Empty;
+            includeRequesterFollowUpQuestions = false;
+            changeAiReview = null;
+            aiReadiness = null;
+            aiRuntimeStatus = null;
+        }
+        finally
+        {
+            kbWorking = false;
+            await OnSuggestionsLoaded.InvokeAsync(suggestions);
+            StateHasChanged();
+        }
+    }
+
+    private Task GenerateKnowledge() => GenerateOrRegenerate(false);
+
+    private async Task LoadChangeReviewAsync()
+    {
+        if (!string.Equals(TicketType, "changes", StringComparison.OrdinalIgnoreCase))
+        {
+            changeAiReview = null;
+            return;
+        }
+
+        var response = await HelpdeskApi.GetAsync($"api/v1/changes/{TicketId}/ai-review");
+        changeAiReview = response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<ChangeAiReviewDto>()
+            : null;
+    }
+
+    private Task RegenerateKnowledge() => GenerateOrRegenerate(true);
+
+    private async Task GenerateOrRegenerate(bool regenerate)
+    {
+        try
+        {
+            kbWorking = true;
+            var url = $"api/v1/tickets/{TicketId}/generate-knowledge" + (regenerate ? "?regenerate=true" : string.Empty);
+            var response = await HelpdeskApi.PostAsJsonAsync(url, new { });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var article = await response.Content.ReadFromJsonAsync<ArticleDto>();
+                if (article is not null)
+                {
+                    articleId = article.Id;
+                    Snackbar.Add(regenerate ? "Article regenerated." : "Draft article generated.", Severity.Success);
+                    NavigationManager.NavigateTo($"/kb/{article.Id}");
+                }
+            }
+            else
+            {
+                Snackbar.Add("Knowledge generation failed.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Knowledge generation failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            kbWorking = false;
+        }
+    }
+
+    private async Task ApproveKnowledge()
+    {
+        if (articleId is null)
+            return;
+
+        try
+        {
+            kbWorking = true;
+            var dto = new UpdateKbStateDto { State = KnowledgeBaseArticleState.Published };
+            var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/kb/{articleId}/state", dto);
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Article approved.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add("Approval failed.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Approval failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            kbWorking = false;
+        }
+    }
+
+    private static Color GetConfidenceColor(KnowledgeSuggestion suggestion) =>
+        suggestion.IsHighConfidence
+            ? Color.Success
+            : string.Equals(suggestion.ConfidenceLabel, "Medium", StringComparison.OrdinalIgnoreCase)
+                ? Color.Warning
+                : Color.Default;
+
+    private async Task ApproveAndSendRequesterDraftAsync()
+    {
+        if (requesterDraft is null)
+            return;
+
+        try
+        {
+            requesterDraftSending = true;
+            var response = await HelpdeskApi.PostAsJsonAsync(
+                $"api/v1/tickets/{TicketId}/requester-reply-draft/approve-send",
+                new ApproveRequesterReplyDraftDto
+                {
+                    EditedReply = requesterDraftBody,
+                    IncludeFollowUpQuestions = includeRequesterFollowUpQuestions
+                });
+
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Requester draft sent through the incident notification flow.", Severity.Success);
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add(string.IsNullOrWhiteSpace(error) ? "Failed to send requester draft." : error, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to send requester draft: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            requesterDraftSending = false;
+        }
+    }
+
+    private async Task ApproveAutomationAsync(KnowledgeSuggestion suggestion)
+    {
+        try
+        {
+            automationApprovalRunning = true;
+            var response = await HelpdeskApi.PostAsJsonAsync(
+                $"api/v1/tickets/{TicketId}/automation-approvals",
+                new ApproveTicketAutomationDto
+                {
+                    ArticleId = suggestion.ArticleId
+                });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<TicketAutomationApprovalResultDto>();
+                await RefreshAutomationRunsAsync();
+                Snackbar.Add(
+                    result is null
+                        ? "Automation request created."
+                        : $"Automation request {result.RequestTrackingId} created.",
+                    Severity.Success);
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add(string.IsNullOrWhiteSpace(error) ? "Failed to approve automation." : error, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to approve automation: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            automationApprovalRunning = false;
+        }
+    }
+
+    private async Task RefreshAutomationRunsAsync()
+    {
+        var response = await HelpdeskApi.GetAsync($"api/v1/tickets/{TicketId}/automation-approvals");
+        automationRuns = response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<List<TicketAutomationRunDto>>() ?? new()
+            : new List<TicketAutomationRunDto>();
+    }
+
+    private async Task LoadFeedbackAsync()
+    {
+        var response = await HelpdeskApi.GetAsync($"api/v1/tickets/{TicketId}/ai-feedback");
+        feedbackEntries = response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<List<TicketAiFeedbackDto>>() ?? new()
+            : new List<TicketAiFeedbackDto>();
+    }
+
+    private async Task LoadAutomationValidationAsync()
+    {
+        automationValidationResults = new Dictionary<string, TicketAutomationValidationDto>(StringComparer.OrdinalIgnoreCase);
+        automationValidationLoading.Clear();
+
+        if (!string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var articleIds = suggestions
+            .Where(x => x.AutomationTarget is not null && !string.IsNullOrWhiteSpace(x.ArticleId))
+            .Select(x => x.ArticleId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var articleId in articleIds)
+        {
+            automationValidationLoading.Add(articleId);
+            try
+            {
+                var response = await HelpdeskApi.GetAsync($"api/v1/tickets/{TicketId}/automation-approvals/{articleId}/validation");
+                var result = await response.Content.ReadFromJsonAsync<TicketAutomationValidationDto>();
+                if (result is not null)
+                {
+                    automationValidationResults[articleId] = result;
+                }
+                else if (!response.IsSuccessStatusCode)
+                {
+                    automationValidationResults[articleId] = new TicketAutomationValidationDto
+                    {
+                        ArticleId = articleId,
+                        CanApprove = false,
+                        Summary = "Automation validation failed.",
+                        Errors = ["Automation validation failed."]
+                    };
+                }
+            }
+            catch
+            {
+                automationValidationResults[articleId] = new TicketAutomationValidationDto
+                {
+                    ArticleId = articleId,
+                    CanApprove = false,
+                    Summary = "Automation validation failed.",
+                    Errors = ["Automation validation failed."]
+                };
+            }
+            finally
+            {
+                automationValidationLoading.Remove(articleId);
+            }
+        }
+    }
+
+    private TicketAiFeedbackDto? GetLatestFeedback(string feedbackType, string? articleId = null, string? requestId = null)
+    {
+        return feedbackEntries.FirstOrDefault(x =>
+            string.Equals(x.FeedbackType, feedbackType, StringComparison.OrdinalIgnoreCase)
+            && (articleId is null || string.Equals(x.ArticleId, articleId, StringComparison.OrdinalIgnoreCase))
+            && (requestId is null || string.Equals(x.RequestId, requestId, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private async Task SubmitSuggestionFeedbackAsync(KnowledgeSuggestion suggestion, string feedbackValue)
+    {
+        await SubmitFeedbackAsync(new SubmitTicketAiFeedbackDto
+        {
+            FeedbackType = "suggestion",
+            FeedbackValue = feedbackValue,
+            ArticleId = suggestion.ArticleId
+        });
+    }
+
+    private async Task SubmitAutomationFeedbackAsync(TicketAutomationRunDto run, string feedbackValue)
+    {
+        await SubmitFeedbackAsync(new SubmitTicketAiFeedbackDto
+        {
+            FeedbackType = "automation",
+            FeedbackValue = feedbackValue,
+            RequestId = run.RequestId,
+            ArticleId = run.ArticleId
+        });
+    }
+
+    private async Task SubmitFeedbackAsync(SubmitTicketAiFeedbackDto dto)
+    {
+        try
+        {
+            feedbackSubmitting = true;
+            var response = await HelpdeskApi.PostAsJsonAsync($"api/v1/tickets/{TicketId}/ai-feedback", dto);
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadFeedbackAsync();
+                Snackbar.Add("AI feedback recorded.", Severity.Success);
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add(string.IsNullOrWhiteSpace(error) ? "Failed to record AI feedback." : error, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to record AI feedback: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            feedbackSubmitting = false;
+        }
+    }
+
+    private async Task LoadAiReadinessAsync()
+    {
+        if (string.IsNullOrWhiteSpace(OrganizationId))
+        {
+            aiReadiness = null;
+            return;
+        }
+
+        var response = await HelpdeskApi.GetAsync($"api/v1/organizations/{OrganizationId}/ai-kb-settings/readiness");
+        aiReadiness = response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<OrganizationAiReadinessDto>()
+            : null;
+
+        var runtimeResponse = await HelpdeskApi.GetAsync($"api/v1/organizations/{OrganizationId}/ai-kb-settings/runtime-status");
+        aiRuntimeStatus = runtimeResponse.IsSuccessStatusCode
+            ? await runtimeResponse.Content.ReadFromJsonAsync<OrganizationAiRuntimeStatusDto>()
+            : null;
+    }
+
+    private static Severity GetRuntimeSeverity(string? status) =>
+        string.Equals(status, "Ready", StringComparison.OrdinalIgnoreCase)
+            ? Severity.Success
+            : string.Equals(status, "Degraded", StringComparison.OrdinalIgnoreCase)
+                ? Severity.Warning
+                : Severity.Error;
+
+    private static Color GetChangeReviewColor(ChangeAiReviewDto review) =>
+        review.Status switch
+        {
+            ChangeReviewStatus.Complete when review.GateState == ChangeReviewGateState.Pass => Color.Success,
+            ChangeReviewStatus.Complete when review.GateState == ChangeReviewGateState.Acknowledged => Color.Info,
+            ChangeReviewStatus.Complete when review.GateState == ChangeReviewGateState.Warning => Color.Warning,
+            ChangeReviewStatus.Pending => Color.Info,
+            ChangeReviewStatus.Failed => Color.Error,
+            ChangeReviewStatus.Stale => Color.Warning,
+            _ => Color.Default
+        };
+
+    private static string GetChangeReviewLabel(ChangeAiReviewDto review) =>
+        review.Status switch
+        {
+            ChangeReviewStatus.Complete when review.GateState == ChangeReviewGateState.Pass => "Passed",
+            ChangeReviewStatus.Complete when review.GateState == ChangeReviewGateState.Acknowledged => "Acknowledged",
+            ChangeReviewStatus.Complete when review.GateState == ChangeReviewGateState.Warning => "Warning",
+            ChangeReviewStatus.Pending => "Pending",
+            ChangeReviewStatus.Failed => "Failed",
+            ChangeReviewStatus.Stale => "Stale",
+            _ => "Not Run"
+        };
+}

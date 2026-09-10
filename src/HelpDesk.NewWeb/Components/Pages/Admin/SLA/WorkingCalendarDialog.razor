@@ -1,0 +1,209 @@
+@using Helpdesk.Shared.DTOs.Sla
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Enums
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form" Model="Model">
+            <MudGrid Spacing="2" Class="sla-calendar-editor">
+                <MudItem xs="12" md="3">
+                    <MudPaper Outlined="true" Class="pa-3 sla-settings-card">
+                        <MudText Typo="Typo.subtitle2" Class="mb-2">Calendar</MudText>
+                        <MudTextField @bind-Value="Model.Name" Label="Name" Required="true" Dense="true" Margin="Margin.Dense" />
+                        @if (HasFixedTenant)
+                        {
+                            <MudTextField T="string" Label="Tenant" Value="@ResolveTenantName(Model.TenantId)" Disabled="true" Dense="true" Margin="Margin.Dense" />
+                        }
+                        else
+                        {
+                            <MudSelect T="CalendarScopeType" @bind-Value="Model.ScopeType" Label="Scope" Dense="true" Margin="Margin.Dense">
+                                <MudSelectItem Value="CalendarScopeType.SystemDefault">System Default</MudSelectItem>
+                                <MudSelectItem Value="CalendarScopeType.Tenant">Tenant</MudSelectItem>
+                            </MudSelect>
+                            <MudSelect T="string" Label="Tenant" @bind-Value="Model.TenantId" Required="@(Model.ScopeType == CalendarScopeType.Tenant)" Disabled="Model.ScopeType == CalendarScopeType.SystemDefault" Dense="true" Margin="Margin.Dense">
+                                @foreach (var tenant in Tenants)
+                                {
+                                    <MudSelectItem T="string" Value="@tenant.Id">@tenant.Name</MudSelectItem>
+                                }
+                            </MudSelect>
+                        }
+                        <MudTextField @bind-Value="Model.TimeZoneId" Label="Time Zone" Dense="true" Margin="Margin.Dense" />
+                        <MudCheckBox @bind-Value="Model.IsActive" Label="Active" Dense="true" />
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" md="9">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Weekly Rules</MudText>
+                    <div class="sla-weekly-wrap">
+                        <MudTable T="WorkingDayRuleDto" Items="OrderedRules" Dense="true" Hover="true" Breakpoint="Breakpoint.None" Class="sla-weekly-table">
+                            <HeaderContent>
+                                <MudTh>Day / Working</MudTh>
+                                <MudTh>Start</MudTh>
+                                <MudTh>End</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd>
+                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                        <MudCheckBox T="bool"
+                                                     Value="context.IsWorkingDay"
+                                                     ValueChanged="@(value => OnWorkingDayChanged(context, value))"
+                                                     Dense="true" />
+                                        <MudText Typo="Typo.body2">@(((DayOfWeek)context.DayOfWeek).ToString())</MudText>
+                                    </MudStack>
+                                </MudTd>
+                                <MudTd>
+                                    <MudTimePicker Label="Start"
+                                                   Time="@(GetStartTime(context))"
+                                                   TimeChanged="@(value => SetStartTime(context, value))"
+                                                   PickerVariant="PickerVariant.Dialog"
+                                                   Disabled="@(!context.IsWorkingDay)"
+                                                   Dense="true"
+                                                   Margin="Margin.Dense" />
+                                </MudTd>
+                                <MudTd>
+                                    <MudTimePicker Label="End"
+                                                   Time="@(GetEndTime(context))"
+                                                   TimeChanged="@(value => SetEndTime(context, value))"
+                                                   PickerVariant="PickerVariant.Dialog"
+                                                   Disabled="@(!context.IsWorkingDay)"
+                                                   Dense="true"
+                                                   Margin="Margin.Dense" />
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    </div>
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Save" Color="Color.Primary">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public WorkingCalendarDto Model { get; set; } = new();
+    [Parameter] public bool IsCreate { get; set; }
+    [Parameter] public List<TenantLookupDto> Tenants { get; set; } = new();
+    [Parameter] public string? TenantId { get; set; }
+
+    private MudForm form = default!;
+    private bool HasFixedTenant => !string.IsNullOrWhiteSpace(TenantId);
+    private IEnumerable<WorkingDayRuleDto> OrderedRules => Model.WeeklyRules.OrderBy(x => x.DayOfWeek);
+
+    private async Task Save()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        if (HasFixedTenant)
+        {
+            Model.ScopeType = CalendarScopeType.Tenant;
+            Model.TenantId = TenantId;
+        }
+
+        Dialog.Close(DialogResult.Ok(Model));
+    }
+
+    private static TimeSpan? GetStartTime(WorkingDayRuleDto rule)
+    {
+        return rule.WorkingHours.FirstOrDefault()?.Start;
+    }
+
+    private static TimeSpan? GetEndTime(WorkingDayRuleDto rule)
+    {
+        return rule.WorkingHours.FirstOrDefault()?.End;
+    }
+
+    private static void OnWorkingDayChanged(WorkingDayRuleDto rule, bool isWorkingDay)
+    {
+        rule.IsWorkingDay = isWorkingDay;
+        if (!isWorkingDay)
+        {
+            rule.WorkingHours.Clear();
+            return;
+        }
+
+        EnsureSingleRange(rule);
+    }
+
+    private static void SetStartTime(WorkingDayRuleDto rule, TimeSpan? value)
+    {
+        if (!value.HasValue)
+        {
+            return;
+        }
+
+        var range = EnsureSingleRange(rule);
+        range.Start = value.Value;
+        if (range.End <= range.Start)
+        {
+            range.End = range.Start.Add(TimeSpan.FromHours(1));
+        }
+    }
+
+    private static void SetEndTime(WorkingDayRuleDto rule, TimeSpan? value)
+    {
+        if (!value.HasValue)
+        {
+            return;
+        }
+
+        var range = EnsureSingleRange(rule);
+        range.End = value.Value;
+        if (range.End <= range.Start)
+        {
+            range.Start = range.End.Subtract(TimeSpan.FromHours(1));
+        }
+    }
+
+    private static TimeRangeDto EnsureSingleRange(WorkingDayRuleDto rule)
+    {
+        rule.IsWorkingDay = true;
+        var range = rule.WorkingHours.FirstOrDefault();
+        if (range is null)
+        {
+            range = new TimeRangeDto { Start = TimeSpan.FromHours(8), End = TimeSpan.FromHours(17) };
+        }
+
+        rule.WorkingHours = new List<TimeRangeDto> { range };
+        return range;
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private string ResolveTenantName(string? tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return "-";
+        }
+
+        return Tenants.FirstOrDefault(x => string.Equals(x.Id, tenantId, StringComparison.OrdinalIgnoreCase))?.Name ?? tenantId;
+    }
+}
+
+<style>
+    .sla-calendar-editor {
+        min-width: 960px;
+    }
+
+    .sla-settings-card {
+        position: sticky;
+        top: 0;
+    }
+
+    .sla-weekly-wrap {
+        overflow-x: auto;
+    }
+
+    .sla-weekly-table th,
+    .sla-weekly-table td {
+        padding: 4px 8px;
+        vertical-align: middle;
+    }
+</style>

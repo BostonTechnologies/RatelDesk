@@ -1,0 +1,93 @@
+@using Helpdesk.Shared.DTOs.Category
+@using Helpdesk.Shared.Enums
+
+@inject IHttpClientFactory HttpClientFactory
+
+<MudAutocomplete T="TicketCategoryDto"
+                 Label="Add Service Category"
+                 SearchFunc="Search"
+                 ToStringFunc="x => x?.Name"
+                 ValueChanged="AddCategory"
+                 Clearable="true"
+                 Dense="@Dense"
+                 Margin="@Margin"
+                 Variant="Variant.Outlined" />
+
+<MudChipSet T="TicketCategoryDto" Dense="true" Class="mt-1">
+
+    @foreach (var cat in SelectedCategories)
+    {
+        <MudChip T="TicketCategoryDto"
+                 Closeable="true"
+                 Size="Size.Small"
+                 Variant="Variant.Outlined"
+                 OnClose="() => RemoveCategory(cat.Id)">
+
+            @cat.Name
+
+        </MudChip>
+    }
+
+</MudChipSet>
+
+@code {
+    [Parameter] public TicketCategoryType RequestedType { get; set; }
+    [Parameter] public HashSet<Guid> SelectedCategoryIds { get; set; } = new();
+    [Parameter] public EventCallback<HashSet<Guid>> SelectedCategoryIdsChanged { get; set; }
+    [Parameter] public bool Dense { get; set; } = true;
+    [Parameter] public Margin Margin { get; set; } = Margin.None;
+
+    private List<TicketCategoryDto> SelectedCategories = new();
+
+    private async Task<IEnumerable<TicketCategoryDto>> Search(string value)
+    {
+        var api = HttpClientFactory.CreateClient("HelpdeskApi");
+
+        var url = $"api/v1/categories?type={(int)RequestedType}";
+
+        if (!string.IsNullOrWhiteSpace(value))
+            url += $"&search={value}";
+
+        return await api.GetFromJsonAsync<List<TicketCategoryDto>>(url)
+            ?? new();
+    }
+
+    private Task<IEnumerable<TicketCategoryDto>> Search(string value, CancellationToken token)
+    {
+        return Search(value);
+    }
+
+    private async Task AddCategory(TicketCategoryDto cat)
+    {
+        if (cat == null)
+            return;
+
+        if (SelectedCategories.Any(x => x.Id == cat.Id))
+            return;
+
+        SelectedCategories.Add(cat);
+
+        await NotifyChanged();
+    }
+
+    private async Task RemoveCategory(Guid id)
+    {
+        SelectedCategories.RemoveAll(x => x.Id == id);
+
+        await NotifyChanged();
+    }
+
+    private async Task NotifyChanged()
+    {
+        await SelectedCategoryIdsChanged.InvokeAsync(
+            SelectedCategories.Select(x => x.Id).ToHashSet()
+        );
+    }
+
+    protected override void OnParametersSet()
+    {
+        SelectedCategories = SelectedCategories
+            .Where(x => SelectedCategoryIds.Contains(x.Id))
+            .ToList();
+    }
+}

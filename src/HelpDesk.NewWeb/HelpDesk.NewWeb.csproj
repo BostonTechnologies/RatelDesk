@@ -1,0 +1,47 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>aspnet-HelpDesk.NewWeb-1760e944-4c9f-4359-a0b4-fd41725482f9</UserSecretsId>
+    <NoWarn>$(NoWarn);MUD0002;CS0414;CS8601;CS8602;CS8618;CS8974</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishSingleFile>false</PublishSingleFile>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="Data\app.db" CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <PackageReference Include="BlazorMonaco" Version="3.4.0" />
+    <PackageReference Include="SharpCompress" Version="0.50.4" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
+    <PackageReference Include="FluentValidation" Version="12.0.0" />
+    <PackageReference Include="FormCraft" Version="2.5.0" />
+    <PackageReference Include="FormCraft.ForMudBlazor" Version="2.5.0" />
+    <PackageReference Include="Gotho.BlazorPdf.MudBlazor" Version="2.2.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.11" />
+    <PackageReference Include="MudBlazor" Version="8.12.0" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.8.8" />
+    <PackageReference Include="Extensions.MudBlazor.StaticInput" Version="3.2.1" />
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Helpdesk.ServiceDefaults\Helpdesk.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\Helpdesk.Shared\Helpdesk.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Components\Pages\Admin\Requests\Dialogs\" />
+  </ItemGroup>
+
+</Project>

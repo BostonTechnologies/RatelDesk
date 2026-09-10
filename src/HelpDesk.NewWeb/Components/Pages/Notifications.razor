@@ -1,0 +1,1214 @@
+@page "/notifications"
+@attribute [Authorize(Roles = "Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin")]
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using HelpDesk.NewWeb.Models
+@using HelpDesk.NewWeb.Services
+@using Helpdesk.Shared.DTOs.Notification
+@using Microsoft.AspNetCore.Components
+@using Microsoft.Extensions.Options
+@using System.Text.Json
+@using System.Web
+
+@inject ISystemNotificationApiClient NotificationClient
+@inject NotificationStreamService NotificationStream
+@inject NotificationEventBus NotificationEventBus
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IOptions<NotificationPageOptions> NotificationOptions
+@inject ISnackbar Snackbar
+
+<PageTitle>Notifications</PageTitle>
+
+@if (showDeepLinkBanner)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Filled" Class="mb-2">
+        Opened from alert
+    </MudAlert>
+}
+
+<MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4">
+        <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Notifications</MudText>
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">@summary.UnreadCount unread / @summary.TotalCount total</MudChip>
+            <MudChip T="string"
+                     Color="@(isStreamConnected ? Color.Success : Color.Error)"
+                     Variant="Variant.Outlined"
+                     Size="Size.Small">
+                @(isStreamConnected ? "LIVE" : "DISCONNECTED")
+            </MudChip>
+        </MudStack>
+    </MudStack>
+
+    <MudStack Row="true" Spacing="2" Class="mb-2">
+        <MudChip T="string" Variant="Variant.Outlined">24h Events: @last24hCount</MudChip>
+        <MudChip T="string" Color="Color.Error" Variant="Variant.Outlined">Errors: @last24hErrors</MudChip>
+        <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined">Warnings: @last24hWarnings</MudChip>
+    </MudStack>
+
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" md="3">
+            <MudTextField T="string"
+                          @bind-Value="searchTerm"
+                          Label="Search"
+                          Placeholder="Reference, correlation, or text"
+                          Immediate="true"
+                          OnBlur="ReloadTableAsync"
+                          OnKeyUp="@(async _ => await DebouncedReload())" />
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudSelect T="NotificationSeverity?" Value="selectedSeverity" ValueChanged="OnSeverityChanged" Label="Severity" Clearable="true">
+                <MudSelectItem T="NotificationSeverity?" Value="@(null)">All</MudSelectItem>
+                @foreach (var severity in Enum.GetValues<NotificationSeverity>())
+                {
+                    <MudSelectItem T="NotificationSeverity?" Value="@severity">@severity</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudSelect T="string" Value="selectedSource" ValueChanged="OnSourceChanged" Label="Source" Clearable="true">
+                <MudSelectItem T="string" Value="@(null)">All</MudSelectItem>
+                <MudSelectItem T="string" Value="@SourceApplication">Application</MudSelectItem>
+                <MudSelectItem T="string" Value="@SourceInfrastructure">Infrastructure</MudSelectItem>
+                <MudSelectItem T="string" Value="@SourceApi">API</MudSelectItem>
+                <MudSelectItem T="string" Value="@SourceOrchestration">Orchestration</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudSelect T="string" Value="selectedCategory" ValueChanged="OnCategoryChanged" Label="Category" Clearable="true">
+                <MudSelectItem T="string" Value="@(null)">All</MudSelectItem>
+                <MudSelectItem T="string" Value="@CategoryDomainEvent">DomainEvent</MudSelectItem>
+                <MudSelectItem T="string" Value="@CategorySystem">System</MudSelectItem>
+                <MudSelectItem T="string" Value="@CategoryWorkflow">Workflow</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudButton Variant="Variant.Outlined"
+                       Color="@(HasCreatedFilter ? Color.Primary : Color.Default)"
+                       StartIcon="@Icons.Material.Filled.DateRange"
+                       OnClick="OpenCreatedPopover"
+                       title="@CreatedFilterSummary"
+                       Class="notifications-created-button">
+                @CreatedFilterLabel
+            </MudButton>
+            <MudPopover Open="createdPopoverOpen"
+                        AnchorOrigin="Origin.BottomCenter"
+                        TransformOrigin="Origin.TopCenter"
+                        Class="pa-4 notifications-created-popover">
+                <MudStack Spacing="2">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                        <MudText Typo="Typo.subtitle2">Created</MudText>
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="CloseCreatedPopover" />
+                    </MudStack>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="7">
+                            <MudDatePicker Label="From date"
+                                           Date="pendingFromDate"
+                                           DateChanged="OnPendingFromDateChanged"
+                                           Clearable="true" />
+                        </MudItem>
+                        <MudItem xs="12" sm="5">
+                            <MudTimePicker Label="From time"
+                                           Time="pendingFromTime"
+                                           TimeChanged="OnPendingFromTimeChanged"
+                                           Clearable="true"
+                                           Disabled="@(!pendingFromDate.HasValue)" />
+                        </MudItem>
+                        <MudItem xs="12" sm="7">
+                            <MudDatePicker Label="To date"
+                                           Date="pendingToDate"
+                                           DateChanged="OnPendingToDateChanged"
+                                           Clearable="true" />
+                        </MudItem>
+                        <MudItem xs="12" sm="5">
+                            <MudTimePicker Label="To time"
+                                           Time="pendingToTime"
+                                           TimeChanged="OnPendingToTimeChanged"
+                                           Clearable="true"
+                                           Disabled="@(!pendingToDate.HasValue)" />
+                        </MudItem>
+                    </MudGrid>
+                    <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1">
+                        <MudButton Variant="Variant.Text" OnClick="ClearCreatedFilterAsync">Clear</MudButton>
+                        <MudButton Variant="Variant.Outlined" OnClick="CloseCreatedPopover">Cancel</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyCreatedFilterAsync">Apply</MudButton>
+                    </MudStack>
+                </MudStack>
+            </MudPopover>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudButton Variant="Variant.Outlined" OnClick="ClearFilters">Clear</MudButton>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Disabled="@(selectedIds.Count == 0)"
+                       OnClick="BulkMarkReadAsync">
+                Mark Selected Read (@selectedIds.Count)
+            </MudButton>
+        </MudItem>
+        @if (NotificationOptions.Value.EnablePurge)
+        {
+            <MudItem xs="12" sm="6" md="2">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Error"
+                           Disabled="purgeWorking"
+                           OnClick="PurgeNotificationsAsync">
+                    @(purgeWorking ? "Purging..." : "Purge All")
+                </MudButton>
+            </MudItem>
+        }
+    </MudGrid>
+
+    <MudTable T="NotificationDto"
+              @ref="_table"
+              ServerData="LoadServerData"
+              CurrentPage="currentPage"
+              CurrentPageChanged="OnCurrentPageChanged"
+              Dense="true"
+              Hover="true"
+              Breakpoint="Breakpoint.Sm"
+              Class="helpdesk-table"
+              RowClassFunc="GetRowClass"
+              OnRowClick="OnRowClicked"
+              Loading="tableLoading">
+        <HeaderContent>
+            <MudTh>
+                <div @onclick:stopPropagation="true">
+                    <MudCheckBox T="bool"
+                                 Checked="AreAllSelected"
+                                 CheckedChanged="ToggleSelectAll" />
+                </div>
+            </MudTh>
+            <MudTh>
+                <MudTableSortLabel T="NotificationDto" SortLabel="severity">
+                    Severity
+                </MudTableSortLabel>
+            </MudTh>
+            <MudTh>Event</MudTh>
+            <MudTh>Reference</MudTh>
+            <MudTh>
+                <MudTableSortLabel T="NotificationDto" SortLabel="source">
+                    Source
+                </MudTableSortLabel>
+            </MudTh>
+            <MudTh>
+                <MudTableSortLabel T="NotificationDto" SortLabel="category">
+                    Category
+                </MudTableSortLabel>
+            </MudTh>
+            <MudTh>
+                <MudTableSortLabel T="NotificationDto"
+                                   SortLabel="created"
+                                   InitialDirection="SortDirection.Descending">
+                    Created
+                </MudTableSortLabel>
+            </MudTh>
+            <MudTh>State</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd @attributes="GetCellAttributes(context)">
+                <div @onclick:stopPropagation="true">
+                    <MudCheckBox T="bool"
+                                 Checked="@selectedIds.Contains(context.Id)"
+                                 CheckedChanged="@((bool value) => ToggleSelection(context.Id, value))" />
+                </div>
+            </MudTd>
+            <MudTd>
+                <MudIcon Icon="@GetSeverityIcon(context.Severity)" Color="@GetSeverityColor(context.Severity)" />
+            </MudTd>
+            <MudTd>
+                <MudText Class="text-truncate" Style="max-width:260px;">
+                    @context.Title
+                </MudText>
+            </MudTd>
+            <MudTd>
+                <MudText Class="text-truncate" Style="max-width:220px;">
+                    @(context.Reference ?? "-")
+                </MudText>
+            </MudTd>
+            <MudTd>@(context.Source ?? "-")</MudTd>
+            <MudTd>@(context.Category ?? "-")</MudTd>
+            <MudTd>@context.CreatedUtc.ToLocalTime().ToString("g")</MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small" Color="@(context.IsRead ? Color.Success : Color.Warning)">
+                    @(context.IsRead ? "Read" : "Unread")
+                </MudChip>
+            </MudTd>
+            <MudTd>
+                <MudStack Row="true" Spacing="1" @onclick:stopPropagation="true">
+                    @if (!context.IsRead)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => MarkReadAsync(context)">Mark Read</MudButton>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(context.Link))
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="() => OpenLink(context)">Open</MudButton>
+                    }
+                </MudStack>
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">No notifications found.</MudAlert>
+        </NoRecordsContent>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+</MudPaper>
+
+<MudDrawer Anchor="Anchor.Right" Variant="DrawerVariant.Temporary" Width="560px" @bind-Open="drawerOpen">
+    <MudStack Class="pa-4" Spacing="2">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.h6">@(drawerMode == DrawerMode.Timeline ? "Correlated Timeline" : "Event Detail")</MudText>
+            <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="CloseDrawer" />
+        </MudStack>
+
+        @if (drawerMode == DrawerMode.Timeline)
+        {
+            @if (timelineLoading)
+            {
+                <MudProgressCircular Indeterminate="true" />
+            }
+            else if (!string.IsNullOrWhiteSpace(timelineError))
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@timelineError</MudAlert>
+            }
+            else if (timelineEvents.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">No correlated domain events found.</MudAlert>
+            }
+            else
+            {
+                <MudTimeline TimelineOrientation="TimelineOrientation.Vertical" TimelinePosition="TimelinePosition.Left">
+                    @foreach (var item in timelineEvents)
+                    {
+                        <MudTimelineItem TimelineAlign="TimelineAlign.Start">
+                            <ItemDot>
+                                <MudIcon Icon="@GetSeverityIcon(item.Notification.Severity)" Color="@GetSeverityColor(item.Notification.Severity)" />
+                            </ItemDot>
+                            <ItemContent>
+                                <MudPaper Class="pa-3 mb-2">
+                                    <MudStack Spacing="1">
+                                        <MudText Typo="Typo.subtitle1">@item.EventType</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                            @item.Notification.CreatedUtc.ToLocalTime().ToString("g")
+                                        </MudText>
+                                        <MudText Typo="Typo.body2">Source: @(item.Notification.Source ?? "-")</MudText>
+                                        <MudText Typo="Typo.body2">Severity: @item.Notification.Severity</MudText>
+                                        <MudText Typo="Typo.body2">Reference: @(item.Notification.Reference ?? "-")</MudText>
+                                        @if (!string.IsNullOrWhiteSpace(item.Notification.CorrelationId))
+                                        {
+                                            <MudText Typo="Typo.body2">Correlation: @item.Notification.CorrelationId</MudText>
+                                        }
+
+                                        @if (item.StructuredFields.Count > 0)
+                                        {
+                                            <MudDivider Class="my-1" />
+                                            @foreach (var field in item.StructuredFields)
+                                            {
+                                                <MudText Typo="Typo.body2"><strong>@field.Key:</strong> @field.Value</MudText>
+                                            }
+                                        }
+
+                                        <MudExpansionPanels Dense="true">
+                                            <MudExpansionPanel Text="Raw JSON">
+                                                <MudText Typo="Typo.caption" Class="pa-2" Style="white-space: pre-wrap; word-break: break-word;">@item.RawJson</MudText>
+                                            </MudExpansionPanel>
+                                        </MudExpansionPanels>
+                                    </MudStack>
+                                </MudPaper>
+                            </ItemContent>
+                        </MudTimelineItem>
+                    }
+                </MudTimeline>
+            }
+        }
+        else if (drawerMode == DrawerMode.EventDetail && eventDetail is not null)
+        {
+            <MudPaper Class="pa-3">
+                <MudStack Spacing="1">
+                    <MudText Typo="Typo.subtitle1">@eventDetail.EventType</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@eventDetail.Notification.CreatedUtc.ToLocalTime().ToString("g")</MudText>
+                    <MudText Typo="Typo.body2">Severity: @eventDetail.Notification.Severity</MudText>
+                    <MudText Typo="Typo.body2">Source: @(eventDetail.Notification.Source ?? "-")</MudText>
+                    <MudText Typo="Typo.body2">Category: @(eventDetail.Notification.Category ?? "-")</MudText>
+                    @if (!string.IsNullOrWhiteSpace(eventDetail.Notification.TenantId))
+                    {
+                        <MudText Typo="Typo.body2">Tenant: @eventDetail.Notification.TenantId</MudText>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(eventDetail.Notification.Reference))
+                    {
+                        <MudText Typo="Typo.body2">Reference: @eventDetail.Notification.Reference</MudText>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(eventDetail.Notification.CorrelationId))
+                    {
+                        <MudText Typo="Typo.body2">Correlation: @eventDetail.Notification.CorrelationId</MudText>
+                    }
+
+                    @if (eventDetail.StructuredFields.Count > 0)
+                    {
+                        <MudDivider Class="my-1" />
+                        @foreach (var field in eventDetail.StructuredFields)
+                        {
+                            <MudText Typo="Typo.body2"><strong>@field.Key:</strong> @field.Value</MudText>
+                        }
+                    }
+
+                    <MudExpansionPanels Dense="true">
+                        <MudExpansionPanel Text="Raw JSON">
+                            <MudText Typo="Typo.caption" Class="pa-2" Style="white-space: pre-wrap; word-break: break-word;">@eventDetail.RawJson</MudText>
+                        </MudExpansionPanel>
+                    </MudExpansionPanels>
+                </MudStack>
+            </MudPaper>
+        }
+    </MudStack>
+</MudDrawer>
+
+<style>
+    .mud-table {
+        table-layout: fixed;
+    }
+
+    .mud-table td {
+        word-break: break-word;
+    }
+
+    .text-truncate {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .notification-row-clickable {
+        cursor: pointer;
+    }
+
+    .notifications-created-button {
+        min-width: 100%;
+        white-space: nowrap;
+    }
+
+    .notifications-created-popover {
+        width: min(420px, calc(100vw - 32px));
+    }
+
+    .notification-row-live {
+        animation: notification-live-fade 2.5s ease-out;
+        background-color: rgba(33, 150, 243, 0.12);
+    }
+
+    @@keyframes notification-live-fade {
+        0% {
+            background-color: rgba(33, 150, 243, 0.26);
+        }
+
+        100% {
+            background-color: transparent;
+        }
+    }
+</style>
+
+@code {
+    private enum DrawerMode
+    {
+        None,
+        Timeline,
+        EventDetail
+    }
+
+    private MudTable<NotificationDto>? _table;
+    private readonly List<NotificationDto> notifications = new();
+    private readonly List<TimelineEventView> timelineEvents = new();
+    private NotificationSummaryDto summary = new();
+    private string? searchTerm;
+    private NotificationSeverity? selectedSeverity;
+    private string? selectedSource;
+    private string? selectedCategory;
+    private DateTimeOffset? createdFrom;
+    private DateTimeOffset? createdTo;
+    private DateTime? pendingFromDate;
+    private DateTime? pendingToDate;
+    private TimeSpan? pendingFromTime;
+    private TimeSpan? pendingToTime;
+    private bool createdPopoverOpen;
+    private const int DefaultPageSize = 20;
+    private const string SourceApplication = "Application";
+    private const string SourceInfrastructure = "Infrastructure";
+    private const string SourceApi = "API";
+    private const string SourceOrchestration = "Orchestration";
+    private const string CategoryDomainEvent = "DomainEvent";
+    private const string CategorySystem = "System";
+    private const string CategoryWorkflow = "Workflow";
+    private bool drawerOpen;
+    private DrawerMode drawerMode;
+    private bool timelineLoading;
+    private bool tableLoading;
+    private string? timelineError;
+    private bool streamStarted;
+    private bool isStreamConnected;
+    private int last24hCount;
+    private int last24hErrors;
+    private int last24hWarnings;
+    private int activePageSize = DefaultPageSize;
+    private int currentPage;
+    private CancellationTokenSource? debounceCts;
+    private TimelineEventView? eventDetail;
+    private readonly HashSet<Guid> highlightedNotificationIds = new();
+    private string? timelineReference;
+    private string? timelineCorrelationId;
+    private string? timelineTenantId;
+    private bool showDeepLinkBanner;
+    private bool purgeWorking;
+    private readonly HashSet<Guid> selectedIds = new();
+    private string? lastAppliedQuerySignature;
+    private bool HasCreatedFilter => createdFrom.HasValue || createdTo.HasValue;
+    private string CreatedFilterLabel => HasCreatedFilter ? "Created *" : "Created";
+    private string CreatedFilterSummary => FormatCreatedFilterSummary();
+    [SupplyParameterFromQuery(Name = "event")]
+    public Guid? EventId { get; set; }
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? QuerySearch { get; set; }
+    [SupplyParameterFromQuery(Name = "source")]
+    public string? QuerySource { get; set; }
+    private Guid? pendingDeepLinkId;
+    private bool deepLinkHandled;
+    private bool AreAllSelected => notifications.Count > 0
+                                   && notifications.All(n => selectedIds.Contains(n.Id));
+
+    protected override void OnInitialized()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        searchTerm = NormalizeQueryValue(searchTerm);
+        selectedSource = NormalizeQueryValue(selectedSource);
+        selectedCategory = NormalizeQueryValue(selectedCategory);
+        await RefreshSummaryAsync();
+    }
+
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        var uri = new Uri(e.Location);
+        var query = HttpUtility.ParseQueryString(uri.Query);
+
+        if (Guid.TryParse(query["event"], out var id))
+        {
+            pendingDeepLinkId = id;
+            deepLinkHandled = false;
+
+            if (_table is not null)
+                await InvokeAsync(() => _table.ReloadServerData());
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (EventId.HasValue)
+        {
+            pendingDeepLinkId = EventId.Value;
+            deepLinkHandled = false;
+        }
+
+        var normalizedSearch = NormalizeQueryValue(QuerySearch);
+        var normalizedSource = NormalizeQueryValue(QuerySource);
+        var querySignature = $"{normalizedSearch}|{normalizedSource}";
+        if (string.Equals(lastAppliedQuerySignature, querySignature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        lastAppliedQuerySignature = querySignature;
+        searchTerm = normalizedSearch;
+        selectedSource = normalizedSource;
+
+        if (_table is not null)
+        {
+            _ = InvokeAsync(ReloadTableAsync);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !streamStarted)
+        {
+            streamStarted = true;
+            try
+            {
+                await NotificationStream.StartAsync(
+                    async notification =>
+                    {
+                        await InvokeAsync(() =>
+                        {
+                            InsertNotification(notification);
+                            StateHasChanged();
+                        });
+                    },
+                    tenantId: null,
+                    category: null);
+
+                isStreamConnected = true;
+                await InvokeAsync(StateHasChanged);
+            }
+            catch
+            {
+                isStreamConnected = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private async Task<TableData<NotificationDto>> LoadServerData(TableState state, CancellationToken token)
+    {
+        tableLoading = true;
+        var safePageIndex = Math.Max(state.Page, 0);
+        currentPage = safePageIndex;
+        var page = safePageIndex + 1;
+        var pageSize = state.PageSize <= 0 ? DefaultPageSize : state.PageSize;
+        var sortBy = state.SortLabel;
+        var sortDir = state.SortDirection == SortDirection.Ascending ? "asc" : "desc";
+        activePageSize = pageSize;
+
+        try
+        {
+            var summaryTask = NotificationClient.GetSummaryAsync();
+            var dataTask = NotificationClient.GetPagedNotificationsAsync(
+                page,
+                pageSize,
+                searchTerm,
+                selectedSeverity,
+                selectedSource,
+                selectedCategory,
+                createdFrom,
+                createdTo,
+                sortBy,
+                sortDir,
+                token);
+
+            await Task.WhenAll(summaryTask, dataTask);
+
+            summary = await summaryTask;
+            var result = await dataTask;
+
+            notifications.Clear();
+            notifications.AddRange(result.Items);
+            selectedIds.RemoveWhere(id => notifications.All(n => n.Id != id));
+
+            if (pendingDeepLinkId.HasValue && !deepLinkHandled)
+                await HandleDeepLinkAsync(pendingDeepLinkId.Value);
+
+            Recalculate24hSummary();
+
+            return new TableData<NotificationDto>
+            {
+                Items = notifications,
+                TotalItems = result.TotalCount
+            };
+        }
+        finally
+        {
+            tableLoading = false;
+        }
+    }
+
+    private async Task MarkReadAsync(NotificationDto item)
+    {
+        if (item.IsRead)
+            return;
+
+        await NotificationClient.MarkReadAsync(item.Id);
+        item.IsRead = true;
+        selectedIds.Remove(item.Id);
+        summary.UnreadCount = Math.Max(summary.UnreadCount - 1, 0);
+        await NotificationEventBus.NotifyReadAsync(1);
+        StateHasChanged();
+    }
+
+    private async Task OnSeverityChanged(NotificationSeverity? value)
+    {
+        selectedSeverity = value;
+        await ReloadTableAsync();
+    }
+
+    private async Task OnSourceChanged(string? value)
+    {
+        selectedSource = string.IsNullOrWhiteSpace(value) ? null : value;
+        await ReloadTableAsync();
+    }
+
+    private async Task OnCategoryChanged(string? value)
+    {
+        selectedCategory = string.IsNullOrWhiteSpace(value) ? null : value;
+        await ReloadTableAsync();
+    }
+
+    private async Task ClearFilters()
+    {
+        searchTerm = null;
+        selectedSeverity = null;
+        selectedSource = null;
+        selectedCategory = null;
+        createdFrom = null;
+        createdTo = null;
+        pendingFromDate = null;
+        pendingToDate = null;
+        pendingFromTime = null;
+        pendingToTime = null;
+        createdPopoverOpen = false;
+        await ReloadTableAsync();
+    }
+
+    private async Task ReloadTableAsync()
+    {
+        if (_table is null)
+            return;
+
+        currentPage = 0;
+        _table.NavigateTo(0);
+        await _table.ReloadServerData();
+    }
+
+    private Task OnCurrentPageChanged(int page)
+    {
+        currentPage = Math.Max(page, 0);
+        return Task.CompletedTask;
+    }
+
+    private async Task DebouncedReload()
+    {
+        debounceCts?.Cancel();
+        debounceCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(300, debounceCts.Token);
+            await ReloadTableAsync();
+        }
+        catch (TaskCanceledException)
+        {
+            // ignore debounce cancellation
+        }
+    }
+
+    private async Task RefreshSummaryAsync()
+    {
+        summary = await NotificationClient.GetSummaryAsync();
+    }
+
+    private async Task PurgeNotificationsAsync()
+    {
+        if (purgeWorking)
+            return;
+
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Purge all notifications in this development environment?");
+        if (!confirmed)
+            return;
+
+        purgeWorking = true;
+        try
+        {
+            var deleted = await NotificationClient.PurgeAllAsync();
+            notifications.Clear();
+            selectedIds.Clear();
+            timelineEvents.Clear();
+            eventDetail = null;
+            drawerOpen = false;
+            summary = new NotificationSummaryDto();
+            Recalculate24hSummary();
+            Snackbar.Add($"Purged {deleted} notification rows.", Severity.Success);
+            await ReloadTableAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Notification purge failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            purgeWorking = false;
+        }
+    }
+
+    private static string? NormalizeQueryValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private void OpenLink(NotificationDto item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.Link))
+            Navigation.NavigateTo(item.Link);
+    }
+
+    private async Task OnRowClicked(TableRowClickEventArgs<NotificationDto> args)
+    {
+        if (args.Item is null)
+            return;
+
+        if (IsTimelineCandidate(args.Item))
+        {
+            await OpenTimelineAsync(args.Item);
+            return;
+        }
+
+        OpenEventDetail(args.Item);
+    }
+
+    private bool IsTimelineCandidate(NotificationDto item)
+    {
+        return string.Equals(item.Category, CategoryDomainEvent, StringComparison.OrdinalIgnoreCase)
+               && (!string.IsNullOrWhiteSpace(item.Reference) || !string.IsNullOrWhiteSpace(item.CorrelationId));
+    }
+
+    private async Task OpenTimelineAsync(NotificationDto item)
+    {
+        drawerOpen = true;
+        drawerMode = DrawerMode.Timeline;
+        timelineLoading = true;
+        timelineError = null;
+        eventDetail = null;
+        timelineEvents.Clear();
+        timelineReference = item.Reference;
+        timelineCorrelationId = item.CorrelationId;
+        timelineTenantId = item.TenantId;
+
+        try
+        {
+            var timeline = await NotificationClient.GetTimelineAsync(
+                reference: item.Reference,
+                correlationId: item.CorrelationId,
+                tenantId: item.TenantId,
+                take: 500);
+
+            timelineEvents.AddRange(timeline.Select(MapTimelineItem));
+        }
+        catch (Exception ex)
+        {
+            timelineError = ex.Message;
+        }
+        finally
+        {
+            timelineLoading = false;
+        }
+    }
+
+    private void OpenEventDetail(NotificationDto item)
+    {
+        drawerOpen = true;
+        drawerMode = DrawerMode.EventDetail;
+        timelineError = null;
+        timelineLoading = false;
+        timelineEvents.Clear();
+        eventDetail = MapTimelineItem(item);
+    }
+
+    private void CloseDrawer()
+    {
+        drawerOpen = false;
+        drawerMode = DrawerMode.None;
+    }
+
+    private void InsertNotification(NotificationDto dto)
+    {
+        summary.TotalCount += 1;
+        if (!dto.IsRead)
+            summary.UnreadCount += 1;
+
+        if (!MatchesCurrentFilters(dto))
+            return;
+
+        notifications.Insert(0, dto);
+        if (notifications.Count > activePageSize)
+            notifications.RemoveAt(notifications.Count - 1);
+
+        Recalculate24hSummary();
+
+        highlightedNotificationIds.Add(dto.Id);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                await InvokeAsync(() =>
+                {
+                    highlightedNotificationIds.Remove(dto.Id);
+                    StateHasChanged();
+                });
+            }
+            catch
+            {
+                // Ignore lifecycle race during teardown.
+            }
+        });
+
+        if (drawerOpen && drawerMode == DrawerMode.Timeline && MatchesTimelineContext(dto))
+            timelineEvents.Add(MapTimelineItem(dto));
+    }
+
+    private bool MatchesCurrentFilters(NotificationDto dto)
+    {
+        if (selectedSeverity.HasValue && dto.Severity != selectedSeverity.Value)
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(selectedSource)
+            && !string.Equals(dto.Source, selectedSource, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(selectedCategory)
+            && !string.Equals(dto.Category, selectedCategory, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (createdFrom.HasValue && dto.CreatedUtc < createdFrom.Value.UtcDateTime)
+            return false;
+
+        if (createdTo.HasValue && dto.CreatedUtc > createdTo.Value.UtcDateTime)
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+        {
+            var term = searchTerm.Trim();
+            var matches = (dto.Title?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                          || (dto.Message?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                          || (dto.Reference?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                          || (dto.CorrelationId?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false);
+            if (!matches)
+                return false;
+        }
+
+        return true;
+    }
+
+    private void OpenCreatedPopover()
+    {
+        SetPendingCreatedFromApplied();
+        createdPopoverOpen = true;
+    }
+
+    private void CloseCreatedPopover() => createdPopoverOpen = false;
+
+    private Task OnPendingFromDateChanged(DateTime? value)
+    {
+        pendingFromDate = value?.Date;
+        if (!pendingFromDate.HasValue)
+            pendingFromTime = null;
+        return Task.CompletedTask;
+    }
+
+    private Task OnPendingToDateChanged(DateTime? value)
+    {
+        pendingToDate = value?.Date;
+        if (!pendingToDate.HasValue)
+            pendingToTime = null;
+        return Task.CompletedTask;
+    }
+
+    private Task OnPendingFromTimeChanged(TimeSpan? value)
+    {
+        pendingFromTime = value;
+        return Task.CompletedTask;
+    }
+
+    private Task OnPendingToTimeChanged(TimeSpan? value)
+    {
+        pendingToTime = value;
+        return Task.CompletedTask;
+    }
+
+    private async Task ApplyCreatedFilterAsync()
+    {
+        var from = CombineLocalDateTime(pendingFromDate, pendingFromTime, endOfDay: false);
+        var to = CombineLocalDateTime(pendingToDate, pendingToTime, endOfDay: true);
+
+        if (from.HasValue && to.HasValue && from.Value > to.Value)
+        {
+            Snackbar.Add("Created From must be before To.", Severity.Warning);
+            return;
+        }
+
+        createdFrom = from;
+        createdTo = to;
+        createdPopoverOpen = false;
+        await ReloadTableAsync();
+    }
+
+    private async Task ClearCreatedFilterAsync()
+    {
+        pendingFromDate = null;
+        pendingToDate = null;
+        pendingFromTime = null;
+        pendingToTime = null;
+        createdFrom = null;
+        createdTo = null;
+        createdPopoverOpen = false;
+        await ReloadTableAsync();
+    }
+
+    private void SetPendingCreatedFromApplied()
+    {
+        (pendingFromDate, pendingFromTime) = SplitLocalDateTime(createdFrom);
+        (pendingToDate, pendingToTime) = SplitLocalDateTime(createdTo);
+    }
+
+    private static DateTimeOffset? CombineLocalDateTime(DateTime? date, TimeSpan? time, bool endOfDay)
+    {
+        if (!date.HasValue)
+            return null;
+
+        var localTime = time ?? (endOfDay ? new TimeSpan(23, 59, 59) : TimeSpan.Zero);
+        var localDateTime = DateTime.SpecifyKind(date.Value.Date.Add(localTime), DateTimeKind.Unspecified);
+        return new DateTimeOffset(localDateTime, TimeZoneInfo.Local.GetUtcOffset(localDateTime)).ToUniversalTime();
+    }
+
+    private static (DateTime? Date, TimeSpan? Time) SplitLocalDateTime(DateTimeOffset? value)
+    {
+        if (!value.HasValue)
+            return (null, null);
+
+        var local = value.Value.ToLocalTime();
+        return (local.Date, local.TimeOfDay);
+    }
+
+    private string FormatCreatedFilterSummary()
+    {
+        if (!createdFrom.HasValue && !createdTo.HasValue)
+            return "Filter by created date and time";
+
+        if (createdFrom.HasValue && createdTo.HasValue)
+            return $"Created: {FormatCreatedCompact(createdFrom.Value)} - {FormatCreatedCompact(createdTo.Value)}";
+
+        return createdFrom.HasValue
+            ? $"Created from {FormatCreatedCompact(createdFrom.Value)}"
+            : $"Created to {FormatCreatedCompact(createdTo!.Value)}";
+    }
+
+    private static string FormatCreatedCompact(DateTimeOffset value)
+        => value.ToLocalTime().ToString("MM/dd HH:mm");
+
+    private bool MatchesTimelineContext(NotificationDto dto)
+    {
+        if (!string.Equals(dto.Category, CategoryDomainEvent, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var referenceMatches = !string.IsNullOrWhiteSpace(timelineReference)
+                               && string.Equals(dto.Reference, timelineReference, StringComparison.OrdinalIgnoreCase);
+        var correlationMatches = !string.IsNullOrWhiteSpace(timelineCorrelationId)
+                                 && string.Equals(dto.CorrelationId, timelineCorrelationId, StringComparison.OrdinalIgnoreCase);
+
+        if (!(referenceMatches || correlationMatches))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(timelineTenantId)
+            && !string.Equals(dto.TenantId, timelineTenantId, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return true;
+    }
+
+    private string GetRowClass(NotificationDto dto, int _)
+    {
+        return highlightedNotificationIds.Contains(dto.Id)
+            ? "notification-row-clickable notification-row-live"
+            : "notification-row-clickable";
+    }
+
+    private static Dictionary<string, object> GetCellAttributes(NotificationDto dto)
+    {
+        return new Dictionary<string, object>
+        {
+            ["data-notification-id"] = dto.Id.ToString()
+        };
+    }
+
+    private void ToggleSelection(Guid id, bool value)
+    {
+        if (value)
+            selectedIds.Add(id);
+        else
+            selectedIds.Remove(id);
+    }
+
+    private void ToggleSelectAll(bool value)
+    {
+        selectedIds.Clear();
+
+        if (!value)
+            return;
+
+        foreach (var notification in notifications.Where(n => !n.IsRead))
+            selectedIds.Add(notification.Id);
+    }
+
+    private void Recalculate24hSummary()
+    {
+        var cutoff = DateTime.UtcNow.AddHours(-24);
+        var recent = notifications.Where(n => n.CreatedUtc >= cutoff).ToList();
+        last24hCount = recent.Count;
+        last24hErrors = recent.Count(n => n.Severity is NotificationSeverity.Error or NotificationSeverity.Critical);
+        last24hWarnings = recent.Count(n => n.Severity == NotificationSeverity.Warning);
+    }
+
+    private async Task HandleDeepLinkAsync(Guid id)
+    {
+        deepLinkHandled = true;
+        pendingDeepLinkId = null;
+
+        var match = notifications.FirstOrDefault(n => n.Id == id);
+
+        if (match == null)
+        {
+            var single = await NotificationClient.GetByIdAsync(id);
+            if (single != null)
+            {
+                notifications.Insert(0, single);
+                match = single;
+            }
+        }
+
+        if (match == null)
+            return;
+
+        highlightedNotificationIds.Add(match.Id);
+        showDeepLinkBanner = true;
+
+        if (!match.IsRead)
+        {
+            await NotificationClient.MarkReadAsync(match.Id);
+            match.IsRead = true;
+            selectedIds.Remove(match.Id);
+            summary.UnreadCount = Math.Max(summary.UnreadCount - 1, 0);
+            await NotificationEventBus.NotifyReadAsync(1);
+        }
+
+        if (IsTimelineCandidate(match))
+            await OpenTimelineAsync(match);
+        else
+            OpenEventDetail(match);
+
+        await JS.InvokeVoidAsync("scrollToNotificationRow", id.ToString());
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            await InvokeAsync(() =>
+            {
+                showDeepLinkBanner = false;
+                StateHasChanged();
+            });
+        });
+
+        Navigation.NavigateTo("/notifications", replace: true);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task BulkMarkReadAsync()
+    {
+        if (selectedIds.Count == 0)
+            return;
+
+        var ids = selectedIds.ToList();
+        selectedIds.Clear();
+
+        var updated = await NotificationClient.MarkReadBulkAsync(ids);
+
+        var idSet = ids.ToHashSet();
+        foreach (var notification in notifications.Where(n => idSet.Contains(n.Id)))
+            notification.IsRead = true;
+
+        summary.UnreadCount = Math.Max(summary.UnreadCount - updated, 0);
+        await NotificationEventBus.NotifyReadAsync(updated);
+
+        StateHasChanged();
+    }
+
+    private static TimelineEventView MapTimelineItem(NotificationDto notification)
+    {
+        var rawJson = notification.Message;
+        var structuredFields = new List<KeyValuePair<string, string>>();
+        var eventType = notification.Title;
+
+        if (!string.IsNullOrWhiteSpace(rawJson))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(rawJson);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    if (doc.RootElement.TryGetProperty("eventType", out var eventTypeProp)
+                        && eventTypeProp.ValueKind == JsonValueKind.String)
+                    {
+                        eventType = eventTypeProp.GetString() ?? eventType;
+                    }
+
+                    foreach (var property in doc.RootElement.EnumerateObject())
+                    {
+                        if (property.NameEquals("eventType") || property.NameEquals("occurredUtc"))
+                            continue;
+
+                        var value = property.Value.ValueKind switch
+                        {
+                            JsonValueKind.String => property.Value.GetString(),
+                            JsonValueKind.Number => property.Value.GetRawText(),
+                            JsonValueKind.True => "true",
+                            JsonValueKind.False => "false",
+                            JsonValueKind.Null => null,
+                            _ => property.Value.GetRawText()
+                        };
+
+                        if (!string.IsNullOrWhiteSpace(value))
+                            structuredFields.Add(new KeyValuePair<string, string>(property.Name, value!));
+                    }
+                }
+            }
+            catch
+            {
+                // Keep raw JSON visible even if payload parsing fails.
+            }
+        }
+
+        return new TimelineEventView(notification, eventType, rawJson, structuredFields);
+    }
+
+    private static string GetSeverityIcon(NotificationSeverity severity) => severity switch
+    {
+        NotificationSeverity.Warning => Icons.Material.Filled.Warning,
+        NotificationSeverity.Error => Icons.Material.Filled.Error,
+        NotificationSeverity.Critical => Icons.Material.Filled.Dangerous,
+        NotificationSeverity.Success => Icons.Material.Filled.CheckCircle,
+        _ => Icons.Material.Filled.Info
+    };
+
+    private static Color GetSeverityColor(NotificationSeverity severity) => severity switch
+    {
+        NotificationSeverity.Warning => Color.Warning,
+        NotificationSeverity.Error => Color.Error,
+        NotificationSeverity.Critical => Color.Error,
+        NotificationSeverity.Success => Color.Success,
+        _ => Color.Info
+    };
+
+    private sealed record TimelineEventView(
+        NotificationDto Notification,
+        string EventType,
+        string RawJson,
+        List<KeyValuePair<string, string>> StructuredFields);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await NotificationStream.StopAsync();
+        }
+        catch
+        {
+            // ignore teardown exceptions
+        }
+        finally
+        {
+            Navigation.LocationChanged -= OnLocationChanged;
+            isStreamConnected = false;
+            debounceCts?.Cancel();
+            debounceCts?.Dispose();
+        }
+    }
+}

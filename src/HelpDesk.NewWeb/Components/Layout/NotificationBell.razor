@@ -1,0 +1,318 @@
+@using Helpdesk.Shared.DTOs.Notification
+@using HelpDesk.NewWeb.Services
+@using Microsoft.AspNetCore.Components.Web
+@implements IDisposable
+@inject ISystemNotificationApiClient NotificationClient
+@inject NotificationEventBus NotificationEventBus
+@inject NavigationManager Navigation
+
+<div class="notification-bell-anchor"
+     @onmouseenter="OnBellMouseEnter"
+     @onmouseleave="OnBellMouseLeave">
+    <MudBadge
+        Color="Color.Error"
+        Content="@GetBadgeText()"
+        Dot="false"
+        Overlap="true"
+        Visible="@(unreadErrorCount > 0)"
+        Class="notification-badge"
+    >
+        <MudIconButton
+            Icon="@Icons.Material.Filled.Notifications"
+            Color="Color.Inherit"
+            Size="Size.Medium"
+            Class="notification-icon"
+            aria-label="Application events"
+            OnClick="TogglePopover"
+        />
+    </MudBadge>
+
+    @if (isOpen)
+    {
+        <div class="notification-popover-overlay" @onclick="ClosePopover"></div>
+    }
+
+    <MudPopover
+        Open="@isOpen"
+        AnchorOrigin="Origin.BottomRight"
+        TransformOrigin="Origin.TopRight"
+        Class="notification-popover"
+    >
+        <div @onclick:stopPropagation="true"
+             @onmouseenter="OnPopoverMouseEnter"
+             @onmouseleave="OnPopoverMouseLeave">
+            <MudPaper Class="notification-container" Elevation="0">
+                <div tabindex="0" class="notification-content" @onkeydown="HandlePopoverKeyDown" @onkeydown:stopPropagation="true">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="px-3 pt-2 pb-1">
+                        <MudText Typo="Typo.subtitle1">Application Events</MudText>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">@unreadErrorCount</MudChip>
+                            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="ClosePopover" aria-label="Close application events" />
+                        </MudStack>
+                    </MudStack>
+
+                    @if (unreadErrorCount > notifications.Count && notifications.Count > 0)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="px-3 pb-1">
+                            Showing latest @MaxIncidents of @unreadErrorCount events
+                        </MudText>
+                    }
+
+                    <MudDivider />
+
+                    @if (loading)
+                    {
+                        <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Class="pa-6">
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                        </MudStack>
+                    }
+                    else if (notifications.Count == 0)
+                    {
+                        <MudText Class="pa-3" Typo="Typo.body2" Color="Color.Secondary">No active events.</MudText>
+                    }
+                    else
+                    {
+                        <div class="incident-list-scroll" @onwheel:stopPropagation="true">
+                            <MudList T="NotificationDto" Dense="true" Class="px-2 py-1">
+                                @foreach (var notification in notifications)
+                                {
+                                    <MudListItem T="NotificationDto" Class="@GetIncidentItemClass(notification.Severity)" OnClick="() => OpenNotification(notification)">
+                                        <MudStack Row="true" AlignItems="AlignItems.Start" Justify="Justify.SpaceBetween" Class="notification-row">
+                                            <MudStack Spacing="0" Class="notification-copy">
+                                                <MudText Typo="Typo.body2" Class="incident-title">@notification.Title</MudText>
+                                                <MudText Typo="Typo.body2" Class="incident-message">@notification.Message</MudText>
+                                                <MudText Typo="Typo.caption" Color="Color.Secondary">@notification.CreatedUtc.ToLocalTime().ToString("g")</MudText>
+                                            </MudStack>
+
+                                            <div @onclick:stopPropagation="true">
+                                                <MudIconButton
+                                                    Icon="@Icons.Material.Filled.Done"
+                                                    Size="Size.Small"
+                                                    Color="Color.Primary"
+                                                    Disabled="@markingReadIds.Contains(notification.Id)"
+                                                    OnClick="() => MarkReadAsync(notification)"
+                                                    aria-label="Mark event resolved"
+                                                />
+                                            </div>
+                                        </MudStack>
+                                    </MudListItem>
+                                }
+                            </MudList>
+                        </div>
+                    }
+
+                    <MudDivider />
+                    <MudButton FullWidth="true" Variant="Variant.Text" OnClick="NavigateToNotifications">
+                        All Notifications
+                    </MudButton>
+                </div>
+            </MudPaper>
+        </div>
+    </MudPopover>
+</div>
+
+@code {
+    private const int MaxIncidents = 20;
+    private const int HoverOpenDelayMs = 150;
+    private const int HoverCloseDelayMs = 250;
+
+    private readonly HashSet<Guid> markingReadIds = new();
+    private List<NotificationDto> notifications = new();
+    private int unreadErrorCount;
+    private bool loading;
+    private bool isOpen;
+    private bool hoverBell;
+    private bool hoverPopover;
+    private CancellationTokenSource? hoverOpenCts;
+    private CancellationTokenSource? hoverCloseCts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        NotificationEventBus.OnNotificationsRead += HandleNotificationsRead;
+        await LoadIncidentDataAsync();
+    }
+
+    public void Dispose()
+    {
+        NotificationEventBus.OnNotificationsRead -= HandleNotificationsRead;
+        CancelHoverOpen();
+        CancelHoverClose();
+    }
+
+    private Task TogglePopover()
+    {
+        CancelHoverOpen();
+        CancelHoverClose();
+        isOpen = !isOpen;
+        return Task.CompletedTask;
+    }
+
+    private Task ClosePopover()
+    {
+        CancelHoverOpen();
+        CancelHoverClose();
+        isOpen = false;
+        return Task.CompletedTask;
+    }
+
+    private Task OnBellMouseEnter()
+    {
+        hoverBell = true;
+        CancelHoverClose();
+        return OpenAfterDelayAsync();
+    }
+
+    private Task OnBellMouseLeave()
+    {
+        hoverBell = false;
+        return CloseAfterDelayAsync();
+    }
+
+    private Task OnPopoverMouseEnter()
+    {
+        hoverPopover = true;
+        CancelHoverClose();
+        return Task.CompletedTask;
+    }
+
+    private Task OnPopoverMouseLeave()
+    {
+        hoverPopover = false;
+        return CloseAfterDelayAsync();
+    }
+
+    private async Task OpenAfterDelayAsync()
+    {
+        CancelHoverOpen();
+        hoverOpenCts = new CancellationTokenSource();
+        var token = hoverOpenCts.Token;
+
+        try
+        {
+            await Task.Delay(HoverOpenDelayMs, token);
+            if (!token.IsCancellationRequested && (hoverBell || hoverPopover) && !isOpen)
+            {
+                isOpen = true;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task CloseAfterDelayAsync()
+    {
+        CancelHoverClose();
+        hoverCloseCts = new CancellationTokenSource();
+        var token = hoverCloseCts.Token;
+
+        try
+        {
+            await Task.Delay(HoverCloseDelayMs, token);
+            if (!token.IsCancellationRequested && !hoverBell && !hoverPopover && isOpen)
+            {
+                isOpen = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private void CancelHoverOpen()
+    {
+        if (hoverOpenCts is null)
+            return;
+
+        hoverOpenCts.Cancel();
+        hoverOpenCts.Dispose();
+        hoverOpenCts = null;
+    }
+
+    private void CancelHoverClose()
+    {
+        if (hoverCloseCts is null)
+            return;
+
+        hoverCloseCts.Cancel();
+        hoverCloseCts.Dispose();
+        hoverCloseCts = null;
+    }
+
+    private void HandlePopoverKeyDown(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Escape", StringComparison.OrdinalIgnoreCase))
+            _ = ClosePopover();
+    }
+
+    private async Task LoadIncidentDataAsync()
+    {
+        loading = true;
+        try
+        {
+            var summaryTask = NotificationClient.GetErrorSummaryAsync();
+            var notificationsTask = NotificationClient.GetUnreadErrorNotificationsAsync(MaxIncidents);
+            await Task.WhenAll(summaryTask, notificationsTask);
+
+            var summary = await summaryTask;
+            unreadErrorCount = summary.UnreadErrorCount;
+            notifications = await notificationsTask;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task MarkReadAsync(NotificationDto notification)
+    {
+        if (!markingReadIds.Add(notification.Id))
+            return;
+
+        try
+        {
+            await NotificationClient.MarkReadAsync(notification.Id);
+            notifications.Remove(notification);
+            unreadErrorCount = Math.Max(unreadErrorCount - 1, 0);
+            StateHasChanged();
+        }
+        finally
+        {
+            markingReadIds.Remove(notification.Id);
+        }
+    }
+
+    private void HandleNotificationsRead(int count)
+    {
+        unreadErrorCount = Math.Max(unreadErrorCount - count, 0);
+        notifications.RemoveAll(n => n.IsRead);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void NavigateToNotifications()
+    {
+        isOpen = false;
+        Navigation.NavigateTo("/notifications");
+    }
+
+    private void OpenNotification(NotificationDto notification)
+    {
+        isOpen = false;
+        Navigation.NavigateTo($"/notifications?event={notification.Id}");
+    }
+
+    private string GetBadgeText()
+    {
+        if (unreadErrorCount > 999)
+            return "999+";
+
+        return unreadErrorCount.ToString();
+    }
+
+    private static string GetIncidentItemClass(NotificationSeverity severity)
+        => severity == NotificationSeverity.Critical
+            ? "incident-item incident-item--critical"
+            : "incident-item";
+}

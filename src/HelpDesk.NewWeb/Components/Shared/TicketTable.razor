@@ -1,0 +1,507 @@
+@typeparam TTicket
+@using System.Collections.Concurrent
+@using System.Reflection
+@using Helpdesk.Shared.DTOs.User
+
+@inject IHttpClientFactory HttpClientFactory
+
+@if (SelectedCount > 0)
+{
+    <MudPaper Class="helpdesk-bulk-toolbar mb-2 pa-2" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+            <MudText Typo="Typo.body2" Class="helpdesk-bulk-selection-count">@($"{SelectedCount} selected")</MudText>
+            @if (EnableBulkState)
+            {
+                <MudSelect T="TicketState"
+                           @bind-Value="_bulkState"
+                           Placeholder="State"
+                           Dense="true"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Class="helpdesk-bulk-state-picker">
+                    @foreach (var state in Enum.GetValues<TicketState>())
+                    {
+                        <MudSelectItem T="TicketState" Value="@state">@state</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestBulkState">Update</MudButton>
+            }
+
+            <MudSelect T="string"
+                       @bind-Value="_bulkAssigneeId"
+                       Placeholder="Assignee"
+                       Dense="true"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       Class="helpdesk-bulk-assignee-picker">
+                <MudSelectItem T="string" Value="@string.Empty">Unassigned</MudSelectItem>
+                @foreach (var user in _teamMembers)
+                {
+                    <MudSelectItem T="string" Value="@user.Id">@user.Name (@user.Email)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" OnClick="RequestBulkAssign">Assign</MudButton>
+
+            @if (BulkActions.Count > 0)
+            {
+                <MudSelect T="string"
+                           @bind-Value="_bulkAction"
+                           Placeholder="Actions"
+                           Dense="true"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Class="helpdesk-bulk-action-picker">
+                    @foreach (var action in BulkActions)
+                    {
+                        <MudSelectItem T="string" Value="@action.Key">@action.Label</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Default"
+                           Disabled="@string.IsNullOrWhiteSpace(_bulkAction)"
+                           OnClick="RequestBulkAction">
+                    Run
+                </MudButton>
+            }
+        </MudStack>
+    </MudPaper>
+}
+
+<MudTable T="TTicket"
+          @ref="_table"
+          ServerData="ServerData"
+          Dense="true"
+          Hover="true"
+          Elevation="0"
+          Striped="false"
+          Bordered="false"
+          Breakpoint="Breakpoint.Md"
+          Class="helpdesk-table"
+          MultiSelection="true"
+          RowClass="ticket-row"
+          SelectedItems="SelectedItems"
+          SelectedItemsChanged="HandleSelectedItemsChanged"
+          OnRowClick="HandleRowClick">
+    <HeaderContent>
+        <MudTh>Tracking ID</MudTh>
+        <MudTh>Updated</MudTh>
+        @if (HasCustomerOrgName)
+        {
+            <MudTh>Customer</MudTh>
+        }
+        @if (HasCustomerUser)
+        {
+            <MudTh>For</MudTh>
+        }
+        <MudTh>Subject</MudTh>
+        <MudTh>State</MudTh>
+        <MudTh>Assignee</MudTh>
+        <MudTh>Priority</MudTh>
+    </HeaderContent>
+
+    <RowTemplate>
+        <MudTd DataLabel="Tracking ID">@GetStringValue(context, "TrackingId")</MudTd>
+        <MudTd DataLabel="Updated">@FormatUpdatedAt(context)</MudTd>
+        @if (HasCustomerOrgName)
+        {
+            <MudTd DataLabel="Customer">@GetStringValue(context, "CustomerOrgName")</MudTd>
+        }
+        @if (HasCustomerUser)
+        {
+            <MudTd DataLabel="For">
+                @if (CustomerTemplate is not null)
+                {
+                    @CustomerTemplate(context)
+                }
+                else
+                {
+                    @RenderDefaultCustomer(context)
+                }
+            </MudTd>
+        }
+        <MudTd DataLabel="Subject">
+            @if (SubjectTemplate is not null)
+            {
+                @SubjectTemplate(context)
+            }
+            else
+            {
+                @GetDefaultSubject(context)
+            }
+        </MudTd>
+        <MudTd DataLabel="State">
+            @if (StateTemplate is not null)
+            {
+                @StateTemplate(context)
+            }
+            else
+            {
+                @RenderDefaultState(context)
+            }
+        </MudTd>
+        <MudTd DataLabel="Assignee">
+            @if (AssigneeTemplate is not null)
+            {
+                @AssigneeTemplate(context)
+            }
+            else
+            {
+                @RenderDefaultAssignee(context)
+            }
+        </MudTd>
+        <MudTd DataLabel="Priority">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@GetPriorityColor(context)">
+                @GetPriorityText(context)
+            </MudChip>
+        </MudTd>
+    </RowTemplate>
+
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new int[] { 10, 20, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    [Parameter] public string TicketType { get; set; } = default!;
+    [Parameter] public Func<TableState, CancellationToken, Task<TableData<TTicket>>> ServerData { get; set; } = default!;
+    [Parameter] public EventCallback<string> OnRowClick { get; set; }
+    [Parameter] public RenderFragment<TTicket>? SubjectTemplate { get; set; }
+    [Parameter] public RenderFragment<TTicket>? StateTemplate { get; set; }
+    [Parameter] public RenderFragment<TTicket>? AssigneeTemplate { get; set; }
+    [Parameter] public RenderFragment<TTicket>? CustomerTemplate { get; set; }
+    [Parameter] public HashSet<TTicket> SelectedItems { get; set; } = new();
+    [Parameter] public EventCallback<HashSet<TTicket>> SelectedItemsChanged { get; set; }
+    [Parameter] public EventCallback BulkStateRequested { get; set; }
+    [Parameter] public EventCallback BulkAssignRequested { get; set; }
+    [Parameter] public IReadOnlyList<BulkActionOption> BulkActions { get; set; } = [];
+    [Parameter] public EventCallback<string> BulkActionRequested { get; set; }
+    [Parameter] public bool EnableBulkState { get; set; } = true;
+
+    public TicketState SelectedBulkState => _bulkState;
+    public string? SelectedBulkAssigneeId => string.IsNullOrWhiteSpace(_bulkAssigneeId) ? null : _bulkAssigneeId;
+
+    private static readonly ConcurrentDictionary<string, PropertyInfo?> PropertyCache = new(StringComparer.Ordinal);
+
+    private readonly List<UserDto> _teamMembers = new();
+    private MudTable<TTicket>? _table;
+    private TicketState _bulkState = TicketState.New;
+    private string _bulkAssigneeId = string.Empty;
+    private string? _bulkAction;
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private int SelectedCount => SelectedItems?.Count ?? 0;
+    private bool HasCustomerOrgName => ResolveProperty("CustomerOrgName") is not null;
+    private bool HasCustomerUser => ResolveProperty("CustomerId") is not null
+        || ResolveProperty("CustomerName") is not null
+        || ResolveProperty("CustomerEmail") is not null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTeamMembersAsync();
+    }
+
+    public Task ReloadServerData()
+    {
+        return _table?.ReloadServerData() ?? Task.CompletedTask;
+    }
+
+    private async Task LoadTeamMembersAsync()
+    {
+        try
+        {
+            var users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users");
+            if (users is null)
+            {
+                return;
+            }
+
+            _teamMembers.Clear();
+            _teamMembers.AddRange(users);
+        }
+        catch
+        {
+            _teamMembers.Clear();
+        }
+    }
+
+    private async Task HandleSelectedItemsChanged(HashSet<TTicket> selectedItems)
+    {
+        SelectedItems = selectedItems;
+        await SelectedItemsChanged.InvokeAsync(selectedItems);
+    }
+
+    private async Task HandleRowClick(TableRowClickEventArgs<TTicket> args)
+    {
+        if (args.Item is null)
+        {
+            return;
+        }
+
+        var id = GetStringValue(args.Item, "Id");
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return;
+        }
+
+        await OnRowClick.InvokeAsync(id);
+    }
+
+    private Task RequestBulkState()
+    {
+        return BulkStateRequested.InvokeAsync();
+    }
+
+    private Task RequestBulkAssign()
+    {
+        return BulkAssignRequested.InvokeAsync();
+    }
+
+    private Task RequestBulkAction()
+    {
+        return string.IsNullOrWhiteSpace(_bulkAction)
+            ? Task.CompletedTask
+            : BulkActionRequested.InvokeAsync(_bulkAction);
+    }
+
+    private static PropertyInfo? ResolveProperty(string propertyName)
+    {
+        return PropertyCache.GetOrAdd(propertyName, static (name, ticketType) =>
+            ticketType.GetProperty(name), typeof(TTicket));
+    }
+
+    private static TValue GetPropertyValue<TValue>(TTicket ticket, string propertyName)
+    {
+        var property = ResolveProperty(propertyName);
+        if (property is null)
+        {
+            return default!;
+        }
+
+        var value = property.GetValue(ticket);
+        if (value is null)
+        {
+            return default!;
+        }
+
+        if (value is TValue typed)
+        {
+            return typed;
+        }
+
+        try
+        {
+            return (TValue)Convert.ChangeType(value, typeof(TValue));
+        }
+        catch
+        {
+            return default!;
+        }
+    }
+
+    private static string GetStringValue(TTicket ticket, string propertyName)
+    {
+        return GetPropertyValue<object>(ticket, propertyName)?.ToString() ?? string.Empty;
+    }
+
+    private static void SetPropertyValue<TValue>(TTicket ticket, string propertyName, TValue value)
+    {
+        var property = ResolveProperty(propertyName);
+        if (property is null || !property.CanWrite)
+        {
+            return;
+        }
+
+        property.SetValue(ticket, value);
+    }
+
+    private static string GetDefaultSubject(TTicket ticket)
+    {
+        var subject = GetStringValue(ticket, "Subject");
+        return string.IsNullOrWhiteSpace(subject) ? GetStringValue(ticket, "Title") : subject;
+    }
+
+    private static string FormatUpdatedAt(TTicket ticket)
+    {
+        var updatedAt = GetPropertyValue<DateTime?>(ticket, "UpdatedAt");
+        return updatedAt?.ToString("dd MMM yy") ?? string.Empty;
+    }
+
+    private static TicketState GetState(TTicket ticket)
+    {
+        return GetPropertyValue<TicketState>(ticket, "State");
+    }
+
+    private static TicketPriority GetPriority(TTicket ticket)
+    {
+        return GetPropertyValue<TicketPriority>(ticket, "Priority");
+    }
+
+    private static string GetStateText(TTicket ticket)
+    {
+        return GetState(ticket).ToString();
+    }
+
+    private static string GetPriorityText(TTicket ticket)
+    {
+        return GetPriority(ticket).ToString();
+    }
+
+    private static Color GetStateColor(TTicket ticket)
+    {
+        return GetState(ticket) switch
+        {
+            TicketState.New => Color.Info,
+            TicketState.WaitingReply => Color.Warning,
+            TicketState.Replied => Color.Secondary,
+            TicketState.InProgress => Color.Primary,
+            TicketState.OnHold => Color.Warning,
+            TicketState.Resolved => Color.Success,
+            _ => Color.Default
+        };
+    }
+
+    private static Color GetPriorityColor(TTicket ticket)
+    {
+        return GetPriority(ticket) switch
+        {
+            TicketPriority.Low => Color.Success,
+            TicketPriority.Medium => Color.Info,
+            TicketPriority.High => Color.Warning,
+            TicketPriority.Critical => Color.Error,
+            _ => Color.Default
+        };
+    }
+
+    private RenderFragment RenderDefaultState(TTicket ticket) => builder =>
+    {
+        var ticketId = GetStringValue(ticket, "Id");
+        if (string.IsNullOrWhiteSpace(ticketId) || string.IsNullOrWhiteSpace(TicketType))
+        {
+            builder.OpenComponent<MudChip<string>>(0);
+            builder.AddAttribute(1, nameof(MudChip<string>.Size), Size.Small);
+            builder.AddAttribute(2, nameof(MudChip<string>.Variant), Variant.Outlined);
+            builder.AddAttribute(3, nameof(MudChip<string>.Color), GetStateColor(ticket));
+            builder.AddAttribute(4, nameof(MudChip<string>.ChildContent), (RenderFragment)(chipBuilder =>
+                chipBuilder.AddContent(5, GetStateText(ticket))));
+            builder.CloseComponent();
+            return;
+        }
+
+        builder.OpenComponent<TicketStatePicker>(6);
+        builder.AddAttribute(7, nameof(TicketStatePicker.TicketId), ticketId);
+        builder.AddAttribute(8, nameof(TicketStatePicker.TicketType), TicketType);
+        builder.AddAttribute(9, nameof(TicketStatePicker.State), GetState(ticket));
+        builder.AddAttribute(10, nameof(TicketStatePicker.StateChanged), EventCallback.Factory.Create<TicketState>(this, async newState =>
+        {
+            SetPropertyValue(ticket, "State", newState);
+            await ReloadServerData();
+        }));
+        builder.CloseComponent();
+    };
+
+    private RenderFragment RenderDefaultAssignee(TTicket ticket) => builder =>
+    {
+        var assignedToId = GetStringValue(ticket, "AssignedToId");
+        if (string.IsNullOrWhiteSpace(assignedToId))
+        {
+            builder.OpenComponent<MudChip<string>>(0);
+            builder.AddAttribute(1, nameof(MudChip<string>.Size), Size.Small);
+            builder.AddAttribute(2, nameof(MudChip<string>.Variant), Variant.Outlined);
+            builder.AddAttribute(3, nameof(MudChip<string>.Color), Color.Default);
+            builder.AddAttribute(4, nameof(MudChip<string>.ChildContent), (RenderFragment)(chipBuilder => chipBuilder.AddContent(5, "Unassigned")));
+            builder.CloseComponent();
+            return;
+        }
+
+        var user = _teamMembers.FirstOrDefault(x => x.Id == assignedToId);
+        var tooltip = user is null ? "Assigned" : $"{user.Name} ({user.Email})";
+        var initials = Initials(user);
+
+        builder.OpenComponent<MudTooltip>(6);
+        builder.AddAttribute(7, nameof(MudTooltip.Text), tooltip);
+        builder.AddAttribute(8, nameof(MudTooltip.ChildContent), (RenderFragment)(tooltipBuilder =>
+        {
+            tooltipBuilder.OpenComponent<MudAvatar>(9);
+            tooltipBuilder.AddAttribute(10, nameof(MudAvatar.Size), Size.Small);
+            tooltipBuilder.AddAttribute(11, nameof(MudAvatar.Color), Color.Default);
+            tooltipBuilder.AddAttribute(12, nameof(MudAvatar.Variant), Variant.Outlined);
+            tooltipBuilder.AddAttribute(13, nameof(MudAvatar.ChildContent), (RenderFragment)(avatarBuilder =>
+                avatarBuilder.AddContent(14, initials)));
+            tooltipBuilder.CloseComponent();
+        }));
+        builder.CloseComponent();
+    };
+
+    private RenderFragment RenderDefaultCustomer(TTicket ticket) => builder =>
+    {
+        var display = FirstNonEmpty(
+            GetStringValue(ticket, "CustomerName"),
+            GetStringValue(ticket, "CustomerEmail"),
+            GetStringValue(ticket, "RequesterEmail"),
+            GetStringValue(ticket, "CustomerId"));
+
+        if (string.IsNullOrWhiteSpace(display))
+        {
+            builder.OpenComponent<MudChip<string>>(0);
+            builder.AddAttribute(1, nameof(MudChip<string>.Size), Size.Small);
+            builder.AddAttribute(2, nameof(MudChip<string>.Variant), Variant.Outlined);
+            builder.AddAttribute(3, nameof(MudChip<string>.Color), Color.Warning);
+            builder.AddAttribute(4, nameof(MudChip<string>.ChildContent), (RenderFragment)(chipBuilder => chipBuilder.AddContent(5, "Select user")));
+            builder.CloseComponent();
+            return;
+        }
+
+        builder.OpenComponent<MudTooltip>(6);
+        builder.AddAttribute(7, nameof(MudTooltip.Text), display);
+        builder.AddAttribute(8, nameof(MudTooltip.ChildContent), (RenderFragment)(tooltipBuilder =>
+        {
+            tooltipBuilder.OpenComponent<MudChip<string>>(9);
+            tooltipBuilder.AddAttribute(10, nameof(MudChip<string>.Size), Size.Small);
+            tooltipBuilder.AddAttribute(11, nameof(MudChip<string>.Variant), Variant.Outlined);
+            tooltipBuilder.AddAttribute(12, nameof(MudChip<string>.Color), Color.Default);
+            tooltipBuilder.AddAttribute(13, nameof(MudChip<string>.ChildContent), (RenderFragment)(chipBuilder =>
+                chipBuilder.AddContent(14, display)));
+            tooltipBuilder.CloseComponent();
+        }));
+        builder.CloseComponent();
+    };
+
+    private static string? FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private static string Initials(UserDto? user)
+    {
+        if (user is null)
+        {
+            return "?";
+        }
+
+        var name = user.Name;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = user.Email;
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return "?";
+        }
+
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return "?";
+        }
+
+        if (parts.Length == 1)
+        {
+            return parts[0].Length >= 2
+                ? $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[0][1])}"
+                : char.ToUpperInvariant(parts[0][0]).ToString();
+        }
+
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+
+    public sealed record BulkActionOption(string Key, string Label);
+}

@@ -1,0 +1,467 @@
+@using HelpDesk.NewWeb.Services
+@using Helpdesk.Shared.DTOs
+@using Helpdesk.Shared.DTOs.AI
+@using Helpdesk.Shared.Enums
+@inject IAiAdminClient AiAdmin
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.SmartToy" class="mr-2 mb-n1" />
+            AI / Model Settings
+        </MudText>
+    </TitleContent>
+
+    <DialogContent>
+        <MudTabs @bind-ActivePanelIndex="_tabIndex">
+            <MudTabPanel Text="PROVIDERS">
+                <MudTable Items="_providers" Hover="true" Dense="true" Bordered="true">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Base URL</MudTh>
+                        <MudTh>Enabled</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">@context.Name</MudTd>
+                        <MudTd DataLabel="Type">@context.ProviderType</MudTd>
+                        <MudTd DataLabel="Base URL">@context.BaseUrl</MudTd>
+                        <MudTd DataLabel="Enabled">@context.IsEnabled</MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" OnClick="() => EditProvider(context)" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="() => DeleteProvider(context)" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Bolt" Size="Size.Small" Title="Test" OnClick="() => TestFromList(context)" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+
+                <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="AddProvider">
+                    Add Provider
+                </MudButton>
+            </MudTabPanel>
+
+            <MudTabPanel Text="PROVIDER EDITOR">
+                <MudForm @ref="_form" Model="_edit" Validated="OnValidated">
+                    <MudTextField Label="Name" @bind-Value="_edit.Name" Required="true" />
+                    <MudSelect T="AiProviderType" Label="Provider Type" @bind-Value="_edit.ProviderType" Required="true">
+                        @foreach (var t in Enum.GetValues<AiProviderType>())
+                        {
+                            <MudSelectItem Value="t">@t</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @if (ShowOpenWebUiHint)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-2">
+                            For an OpenAI-compatible provider, enter its API root (for example, <strong>https://ai.example.com/v1</strong>),
+                            configure the provider's credential in the secret field, and select a discovered model.
+                        </MudAlert>
+                    }
+
+                    <MudTextField Label="Base URL / Endpoint" @bind-Value="_edit.BaseUrl" Required="true"
+                                  HelperText="@BaseUrlHelperText" />
+                    <MudTextField Label="API Key / Bearer Token" @bind-Value="_edit.ApiKey" InputType="InputType.Password"
+                                  Placeholder="Leave blank to keep existing"
+                                  HelperText="@SecretHelperText" />
+
+                    <MudSwitch T="bool" @bind-Value="_edit.IsEnabled" Color="Color.Primary" Label="Enabled" />
+
+                    <MudSelect T="string" Label="Default Model" @bind-Value="_edit.DefaultModel" Clearable="true">
+                        @if (_edit.AvailableModels?.Count > 0)
+                        {
+                            @foreach (var m in _edit.AvailableModels)
+                            {
+                                <MudSelectItem Value="@m">@m</MudSelectItem>
+                            }
+                        }
+                    </MudSelect>
+
+                    <MudStack Row="true" Class="mt-4" Spacing="2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving" OnClick="SaveProvider">
+                            @(_edit.Id is null ? "Create" : "Save")
+                        </MudButton>
+                        <MudButton Disabled="_testing || string.IsNullOrEmpty(_edit.Id)" OnClick="TestConnection">Test Connection</MudButton>
+                        <MudButton Disabled="_refreshing || string.IsNullOrEmpty(_edit.Id)" OnClick="RefreshModels">Refresh Models</MudButton>
+                    </MudStack>
+
+                    @if (_lastTestResult is not null)
+                    {
+                        <MudPaper Class="mt-4 pa-3" Outlined="true">
+                            <MudText Typo="Typo.subtitle2">Last Connection Test</MudText>
+                            <MudText Typo="Typo.body2">Status: @(_lastTestResult.Success ? "OK" : "Failed")</MudText>
+                            @if (!string.IsNullOrWhiteSpace(_lastTestResult.AttemptedUrl))
+                            {
+                                <MudText Typo="Typo.body2">Attempted URL: @_lastTestResult.AttemptedUrl</MudText>
+                            }
+                            @if (_lastTestResult.StatusCode.HasValue)
+                            {
+                                <MudText Typo="Typo.body2">HTTP Status: @_lastTestResult.StatusCode</MudText>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_lastTestResult.Message))
+                            {
+                                <MudText Typo="Typo.body2">Message: @_lastTestResult.Message</MudText>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_lastTestResult.ErrorBody))
+                            {
+                                <MudText Typo="Typo.body2">Body: @_lastTestResult.ErrorBody</MudText>
+                            }
+                        </MudPaper>
+                    }
+                </MudForm>
+            </MudTabPanel>
+
+            <MudTabPanel Text="QUICK CHAT TEST">
+                <MudSelect T="string"
+                           Label="Provider"
+                           Value="_selectedProviderId"
+                           ValueChanged="OnProviderChanged"
+                           Dense="true"
+                           Required="true">
+                    @foreach (var p in _providers)
+                    {
+                        <MudSelectItem Value="@p.Id">@p.Name</MudSelectItem>
+                    }
+                </MudSelect>
+
+                <MudSelect T="string" Label="Model" @bind-Value="_selectedModel" Dense="true" Disabled="_availableModels.Count == 0">
+                    @foreach (var m in _availableModels)
+                    {
+                        <MudSelectItem Value="@m">@m</MudSelectItem>
+                    }
+                </MudSelect>
+
+                <MudTextField Label="Message" @bind-Value="_chatMessage" Lines="3" />
+
+                <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled="_chatLoading || string.IsNullOrEmpty(_selectedProviderId)"
+                           OnClick="SendChat">
+                    Send
+                </MudButton>
+
+                <MudPaper Class="mt-2 pa-2" Elevation="0">@_chatResponse</MudPaper>
+            </MudTabPanel>
+        </MudTabs>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private int _tabIndex;
+    private MudForm? _form;
+
+    private List<AiProviderSummaryDto> _providers = new();
+
+    private EditVm _edit = new();
+    private bool _saving;
+    private bool _testing;
+    private bool _refreshing;
+    private AiProviderTestResultDto? _lastTestResult;
+
+    private string _selectedProviderId = string.Empty;
+    private string _selectedModel = string.Empty;
+    private List<string> _availableModels = new();
+    private string _chatMessage = string.Empty;
+    private string _chatResponse = string.Empty;
+    private bool _chatLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProviders();
+    }
+
+    private async Task LoadProviders()
+    {
+        var page = await AiAdmin.GetProvidersAsync(page: 1, pageSize: 100);
+        _providers = page.Items?.ToList() ?? new();
+        StateHasChanged();
+    }
+
+    private void AddProvider()
+    {
+        _edit = new EditVm
+        {
+            ProviderType = AiProviderType.OpenAICompatible,
+            IsEnabled = true
+        };
+        _lastTestResult = null;
+        _tabIndex = 1;
+    }
+
+    private void EditProvider(AiProviderSummaryDto p)
+    {
+        _edit = new EditVm
+        {
+            Id = p.Id,
+            Name = p.Name,
+            ProviderType = p.ProviderType,
+            BaseUrl = p.BaseUrl,
+            IsEnabled = p.IsEnabled,
+            DefaultModel = p.DefaultModel,
+            AvailableModels = p.Models?.Select(m => m.Name).ToList() ?? new()
+        };
+        _lastTestResult = null;
+        _tabIndex = 1;
+    }
+
+    private async Task DeleteProvider(AiProviderSummaryDto p)
+    {
+        if (await AiAdmin.DeleteProviderAsync(p.Id))
+        {
+            Snackbar.Add("Provider deleted", Severity.Success);
+            await LoadProviders();
+        }
+        else
+        {
+            Snackbar.Add("Delete failed", Severity.Error);
+        }
+    }
+
+    private async Task TestFromList(AiProviderSummaryDto p)
+    {
+        var result = await AiAdmin.TestAsync(p.Id);
+        Snackbar.Add(
+            result.Success ? $"Test OK for {p.Name}" : $"{p.Name} failed: {result.Message ?? "Connection failed"}",
+            result.Success ? Severity.Success : Severity.Error);
+    }
+
+    private async Task SaveProvider()
+    {
+        await _form!.Validate();
+        if (!_form!.IsValid)
+        {
+            return;
+        }
+
+        _saving = true;
+
+        try
+        {
+            if (string.IsNullOrEmpty(_edit.Id))
+            {
+                var dto = new AiProviderCreateDto
+                {
+                    Name = _edit.Name,
+                    ProviderType = _edit.ProviderType,
+                    BaseUrl = _edit.BaseUrl,
+                    ApiKey = string.IsNullOrWhiteSpace(_edit.ApiKey) ? null : _edit.ApiKey,
+                    IsEnabled = _edit.IsEnabled,
+                    DefaultModel = _edit.DefaultModel
+                };
+
+                var created = await AiAdmin.CreateProviderAsync(dto);
+                if (created is null)
+                {
+                    throw new Exception("Create failed");
+                }
+
+                _edit.Id = created.Id;
+                _edit.AvailableModels = created.Models?.Select(m => m.Name).ToList() ?? new();
+                _edit.DefaultModel ??= created.DefaultModel;
+                Snackbar.Add("Provider created", Severity.Success);
+            }
+            else
+            {
+                var upd = new AiProviderUpdateDto
+                {
+                    Name = _edit.Name,
+                    ProviderType = _edit.ProviderType,
+                    BaseUrl = _edit.BaseUrl,
+                    ApiKey = string.IsNullOrWhiteSpace(_edit.ApiKey) ? null : _edit.ApiKey,
+                    IsEnabled = _edit.IsEnabled,
+                    DefaultModel = _edit.DefaultModel
+                };
+
+                var updated = await AiAdmin.UpdateProviderAsync(_edit.Id, upd);
+                if (updated is null)
+                {
+                    throw new Exception("Update failed");
+                }
+
+                _edit.AvailableModels = updated.Models?.Select(m => m.Name).ToList() ?? new();
+                _edit.DefaultModel = updated.DefaultModel ?? _edit.DefaultModel;
+                Snackbar.Add("Provider saved", Severity.Success);
+            }
+
+            await LoadProviders();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task TestConnection()
+    {
+        if (string.IsNullOrEmpty(_edit.Id))
+        {
+            Snackbar.Add("Save provider first, then test.", Severity.Info);
+            return;
+        }
+
+        _testing = true;
+        try
+        {
+            _lastTestResult = await AiAdmin.TestAsync(_edit.Id);
+            if (_lastTestResult.Success)
+            {
+                await RefreshModels(loadModelsMessage: false);
+            }
+
+            Snackbar.Add(
+                _lastTestResult.Success
+                    ? $"Connection OK via {_lastTestResult.AttemptedUrl}"
+                    : _lastTestResult.Message ?? "Connection failed",
+                _lastTestResult.Success ? Severity.Success : Severity.Error);
+        }
+        finally
+        {
+            _testing = false;
+        }
+    }
+
+    private async Task RefreshModels()
+        => await RefreshModels(loadModelsMessage: true);
+
+    private async Task RefreshModels(bool loadModelsMessage)
+    {
+        if (string.IsNullOrEmpty(_edit.Id))
+        {
+            Snackbar.Add("Save provider first, then refresh models.", Severity.Info);
+            return;
+        }
+
+        _refreshing = true;
+        try
+        {
+            var items = (await AiAdmin.GetModelsAsync(_edit.Id)).ToList();
+            _edit.AvailableModels = items.Select(m => m.Name).ToList();
+
+            if (string.IsNullOrWhiteSpace(_edit.DefaultModel) && _edit.AvailableModels.Count > 0)
+            {
+                _edit.DefaultModel = _edit.AvailableModels[0];
+            }
+
+            if (loadModelsMessage)
+            {
+                Snackbar.Add($"Loaded {_edit.AvailableModels.Count} models", Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Model refresh failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private void OnValidated()
+    {
+    }
+
+    private async Task OnProviderChanged(string id)
+    {
+        _selectedProviderId = id;
+
+        _availableModels.Clear();
+        _selectedModel = string.Empty;
+
+        var p = _providers.FirstOrDefault(x => x.Id == id);
+        if (p is null)
+        {
+            return;
+        }
+
+        var stored = p.Models?.Select(m => m.Name).ToList() ?? new();
+        if (stored.Count == 0)
+        {
+            stored = (await AiAdmin.GetModelsAsync(p.Id)).Select(m => m.Name).ToList();
+        }
+
+        _availableModels = stored;
+        if (!string.IsNullOrWhiteSpace(p.DefaultModel) && _availableModels.Contains(p.DefaultModel))
+        {
+            _selectedModel = p.DefaultModel;
+        }
+        else if (_availableModels.Count > 0)
+        {
+            _selectedModel = _availableModels[0];
+        }
+    }
+
+    private async Task SendChat()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedProviderId))
+        {
+            Snackbar.Add("Select a provider", Severity.Info);
+            return;
+        }
+
+        var model = !string.IsNullOrWhiteSpace(_selectedModel)
+            ? _selectedModel
+            : _providers.FirstOrDefault(p => p.Id == _selectedProviderId)?.DefaultModel ?? string.Empty;
+
+        _chatLoading = true;
+        _chatResponse = string.Empty;
+
+        try
+        {
+            var text = await AiAdmin.ChatTestAsync(new AiTestChatRequest
+            {
+                ProviderId = _selectedProviderId,
+                Model = model,
+                Prompt = _chatMessage
+            });
+
+            _chatResponse = text ?? "(no response)";
+        }
+        catch (Exception ex)
+        {
+            _chatResponse = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _chatLoading = false;
+        }
+    }
+
+    private void Close() => Dialog.Close(DialogResult.Ok(true));
+
+    private bool ShowOpenWebUiHint => _edit.ProviderType == AiProviderType.OpenAICompatible;
+
+    private string BaseUrlHelperText => _edit.ProviderType switch
+    {
+        AiProviderType.OpenAICompatible => "Use the provider API root, for example https://ai.example.com/v1. Bare roots are also probed as /v1 then /api.",
+        AiProviderType.OpenAI => "Use the provider API root, typically ending in /v1.",
+        _ => "Enter the provider API root."
+    };
+
+    private string SecretHelperText => _edit.ProviderType == AiProviderType.OpenAICompatible
+        ? "Use a bearer token or API key accepted by the upstream provider. This OpenWebUI instance currently accepts JWT bearer tokens for chat/model calls."
+        : "Stored encrypted; leave blank to keep the existing secret.";
+
+    private sealed class EditVm
+    {
+        public string? Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public AiProviderType ProviderType { get; set; } = AiProviderType.OpenAICompatible;
+        public string BaseUrl { get; set; } = string.Empty;
+        public string? ApiKey { get; set; }
+        public bool IsEnabled { get; set; } = true;
+        public string? DefaultModel { get; set; }
+        public List<string> AvailableModels { get; set; } = new();
+    }
+}

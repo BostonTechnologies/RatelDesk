@@ -1,0 +1,131 @@
+@using System.Net.Http.Json
+@using Helpdesk.Shared.DTOs.Orchestration
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Create External orchestration Target</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="form" Class="orchestration-target-dialog-form">
+            <MudTextField @bind-Value="jobName"
+                          Label="Job Name"
+                          Required="true"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Dense="true" />
+
+            <MudTextField @bind-Value="folderPath"
+                          Label="Folder Path"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Dense="true" />
+
+            <MudTextField @bind-Value="clientIdentity"
+                          Label="Client Identity"
+                          Required="true"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Dense="true" />
+
+            <MudTextField @bind-Value="description"
+                          Label="Description"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Dense="true"
+                          Lines="2" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="@creating"
+                   OnClick="CreateAsync">
+            @(creating ? "Creating..." : "Create")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .orchestration-target-dialog-form {
+        min-width: min(420px, 82vw);
+    }
+</style>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter] public string? InitialJobName { get; set; }
+    [Parameter] public string? InitialFolderPath { get; set; }
+    [Parameter] public string? InitialClientIdentity { get; set; }
+    [Parameter] public string? InitialDescription { get; set; }
+    [Parameter] public int? TenantId { get; set; }
+
+    private MudForm form = default!;
+    private bool creating;
+    private string? jobName;
+    private string? folderPath;
+    private string? clientIdentity;
+    private string? description;
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    protected override void OnInitialized()
+    {
+        jobName = InitialJobName;
+        folderPath = string.IsNullOrWhiteSpace(InitialFolderPath) ? "/helpdesk/requests/" : InitialFolderPath;
+        clientIdentity = string.IsNullOrWhiteSpace(InitialClientIdentity) ? "helpdesk-automation" : InitialClientIdentity;
+        description = InitialDescription;
+    }
+
+    private async Task CreateAsync()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        creating = true;
+        try
+        {
+            var dto = new CreateOrchestrationCatalogRequestDefinitionDto
+            {
+                Name = jobName!.Trim(),
+                FolderPath = string.IsNullOrWhiteSpace(folderPath) ? "/helpdesk/requests/" : folderPath.Trim(),
+                Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+                TenantId = TenantId,
+                ClientIdentity = clientIdentity!.Trim()
+            };
+
+            using var response = await Api.PostAsJsonAsync("api/v1/admin/orchestration/orchestration/catalog/request-definitions", dto);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await response.Content.ReadAsStringAsync());
+            }
+
+            var created = await response.Content.ReadFromJsonAsync<OrchestrationCatalogRequestDefinitionDto>();
+            if (created is null)
+            {
+                throw new InvalidOperationException("External orchestration did not return the created automation target.");
+            }
+
+            Dialog.Close(DialogResult.Ok(created));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to create External orchestration automation target: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            creating = false;
+        }
+    }
+
+    private void Cancel()
+    {
+        Dialog.Cancel();
+    }
+}

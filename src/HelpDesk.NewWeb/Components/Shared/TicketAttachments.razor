@@ -1,0 +1,360 @@
+@using System.Net.Http.Headers
+@using System.Text
+@using Helpdesk.Shared.DTOs.Attachment
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+
+<MudStack Spacing="2">
+    @if (loading)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+    }
+    else if (attachments.Any())
+    {
+        <MudList T="AttachmentDto" Clickable="true" Dense="true">
+            @foreach (var attachment in attachments)
+            {
+                <MudListItem T="AttachmentDto" OnClick="@(() => ViewAttachment(attachment))">
+                    <ChildContent>
+                        <MudStack Spacing="0">
+                            <MudText>@attachment.FileName</MudText>
+                            <MudText Typo="Typo.caption">@GetReadableFileSize(attachment.SizeBytes)</MudText>
+                        </MudStack>
+                    </ChildContent>
+                </MudListItem>
+            }
+        </MudList>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2">No attachments have been uploaded.</MudText>
+    }
+
+    <MudDivider />
+
+    <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+        <MudButton Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.UploadFile"
+                   OnClick="OpenFilePicker">
+            Upload Files
+        </MudButton>
+
+        <MudButton Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.CreateNewFolder"
+                   OnClick="OpenFolderPicker">
+            Upload Folder
+        </MudButton>
+
+        <MudButton Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.Link"
+                   OnClick="ToggleAddUrl">
+            Add URL
+        </MudButton>
+    </MudStack>
+
+    <InputFile id="@_fileInputId" OnChange="HandleFilesSelected" multiple style="display:none" />
+    <InputFile id="@_folderInputId" OnChange="HandleFolderSelected" multiple style="display:none" @attributes="_folderAttributes" />
+
+    @if (showUrlInput)
+    {
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudTextField T="string"
+                          Label="Attachment URL"
+                          Variant="Variant.Outlined"
+                          Class="flex-grow-1"
+                          @bind-Value="urlInput" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddUrlAttachment">
+                Add
+            </MudButton>
+        </MudStack>
+    }
+
+    @if (manualFiles.Any())
+    {
+        <MudText Typo="Typo.caption">Files queued: @manualFiles.Count</MudText>
+    }
+
+    @if (folderFiles.Any())
+    {
+        <MudText Typo="Typo.caption">Folder files queued: @folderFiles.Count</MudText>
+    }
+
+    @if (urlAttachments.Any())
+    {
+        <MudText Typo="Typo.caption">URLs queued: @urlAttachments.Count</MudText>
+    }
+
+    @if (manualFiles.Any() || folderFiles.Any() || urlAttachments.Any())
+    {
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="UploadAsync"
+                   StartIcon="@Icons.Material.Filled.CloudUpload"
+                   Disabled="isUploading">
+            @if (isUploading)
+            {
+                <MudProgressCircular Class="mr-1" Size="Size.Small" Indeterminate="true" />
+            }
+            Upload @GetQueuedCount() item(s)
+        </MudButton>
+    }
+</MudStack>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+    [Parameter] public EventCallback<List<AttachmentDto>> OnAttachmentsLoaded { get; set; }
+
+    private readonly Dictionary<string, object?> _folderAttributes = new()
+    {
+        ["webkitdirectory"] = "",
+        ["directory"] = ""
+    };
+
+    private readonly string _fileInputId = $"ticket-files-{Guid.NewGuid():N}";
+    private readonly string _folderInputId = $"ticket-folder-{Guid.NewGuid():N}";
+
+    private List<AttachmentDto> attachments = new();
+    private List<IBrowserFile> manualFiles = new();
+    private List<IBrowserFile> folderFiles = new();
+    private List<string> urlAttachments = new();
+
+    private bool loading = true;
+    private bool isUploading;
+    private bool showUrlInput;
+    private string urlInput = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAttachmentsAsync();
+    }
+
+    private async Task LoadAttachmentsAsync()
+    {
+        loading = true;
+        try
+        {
+            var result = await HelpdeskApi.GetFromJsonAsync<List<AttachmentDto>>($"api/v1/tickets/{TicketId}/attachments");
+            attachments = result ?? new List<AttachmentDto>();
+            await OnAttachmentsLoaded.InvokeAsync(attachments);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load attachments: {ex.Message}", Severity.Error);
+            attachments = new List<AttachmentDto>();
+            await OnAttachmentsLoaded.InvokeAsync(attachments);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task OpenFilePicker()
+    {
+        await JS.InvokeVoidAsync("eval", $"document.getElementById('{_fileInputId}')?.click();");
+    }
+
+    private async Task OpenFolderPicker()
+    {
+        await JS.InvokeVoidAsync("eval", $"document.getElementById('{_folderInputId}')?.click();");
+    }
+
+    private void ToggleAddUrl()
+    {
+        showUrlInput = !showUrlInput;
+    }
+
+    private void AddUrlAttachment()
+    {
+        if (!Uri.TryCreate(urlInput, UriKind.Absolute, out var parsed) ||
+            (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+        {
+            Snackbar.Add("Enter a valid http/https URL.", Severity.Warning);
+            return;
+        }
+
+        urlAttachments.Add(parsed.ToString());
+        urlInput = string.Empty;
+    }
+
+    private void HandleFilesSelected(InputFileChangeEventArgs e)
+    {
+        manualFiles = e.GetMultipleFiles().ToList();
+        if (manualFiles.Count > 0)
+        {
+            Snackbar.Add($"Queued {manualFiles.Count} file(s) for upload.", Severity.Info);
+        }
+    }
+
+    private void HandleFolderSelected(InputFileChangeEventArgs e)
+    {
+        folderFiles = e.GetMultipleFiles().ToList();
+        if (folderFiles.Count > 0)
+        {
+            Snackbar.Add($"Queued {folderFiles.Count} file(s) from folder.", Severity.Info);
+        }
+    }
+
+    private int GetQueuedCount() => manualFiles.Count + folderFiles.Count + urlAttachments.Count;
+
+    private async Task UploadAsync()
+    {
+        if (GetQueuedCount() == 0)
+            return;
+
+        isUploading = true;
+
+        try
+        {
+            using var content = new MultipartFormDataContent();
+
+            foreach (var file in folderFiles)
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+
+                var fileContent = new ByteArrayContent(ms.ToArray());
+                fileContent.Headers.ContentType = new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType);
+                content.Add(fileContent, "files", file.Name);
+            }
+
+            foreach (var file in manualFiles)
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+
+                var fileContent = new ByteArrayContent(ms.ToArray());
+                fileContent.Headers.ContentType = new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType);
+                content.Add(fileContent, "files", file.Name);
+            }
+
+            foreach (var url in urlAttachments)
+            {
+                var fileName = $"link-{Guid.NewGuid():N}.url";
+                var bytes = Encoding.UTF8.GetBytes($"[InternetShortcut]{Environment.NewLine}URL={url}{Environment.NewLine}");
+                var urlContent = new ByteArrayContent(bytes);
+                urlContent.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+                content.Add(urlContent, "files", fileName);
+            }
+
+            if (!content.Any())
+            {
+                Snackbar.Add("No valid files could be prepared for upload.", Severity.Error);
+                return;
+            }
+
+            var response = await HelpdeskApi.PostAsync($"api/v1/tickets/{TicketId}/attachments", content);
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Attachments uploaded successfully.", Severity.Success);
+                manualFiles.Clear();
+                folderFiles.Clear();
+                urlAttachments.Clear();
+                await LoadAttachmentsAsync();
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Upload failed: {error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Upload failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+
+    private async Task ViewAttachment(AttachmentDto attachment)
+    {
+        var url = $"api/v1/attachments/{attachment.Id}";
+
+        HttpResponseMessage resp;
+        try
+        {
+            resp = await HelpdeskApi.GetAsync(url);
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Failed to fetch attachment: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                Snackbar.Add("Attachment not found or file is missing on server.", Severity.Warning);
+            }
+            else
+            {
+                var err = await resp.Content.ReadAsStringAsync();
+                Snackbar.Add($"Failed to load attachment ({(int)resp.StatusCode}): {err}", Severity.Error);
+            }
+            return;
+        }
+
+        var respCt = resp.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
+        var ct = respCt ?? (attachment.ContentType?.ToLowerInvariant() ?? "");
+
+        byte[] bytes;
+        try
+        {
+            bytes = await resp.Content.ReadAsByteArrayAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to read attachment content: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (ct == "application/pdf")
+        {
+            var base64String = Convert.ToBase64String(bytes);
+            var dataUri = $"data:application/pdf;base64,{base64String}";
+            var parameters = new DialogParameters
+            {
+                { nameof(PdfViewerDialog.PdfUrl), dataUri },
+                { nameof(PdfViewerDialog.FileName), attachment.FileName }
+            };
+            var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+            await DialogService.ShowAsync<PdfViewerDialog>(attachment.FileName, parameters, options);
+            return;
+        }
+
+        if (ct.StartsWith("image/"))
+        {
+            var b64 = Convert.ToBase64String(bytes);
+            var dataUri = $"data:{(respCt ?? attachment.ContentType)};base64,{b64}";
+            var parameters = new DialogParameters
+            {
+                { nameof(Dialogs.ImageViewerDialog.Src), dataUri },
+                { nameof(Dialogs.ImageViewerDialog.Title), attachment.FileName },
+                { nameof(Dialogs.ImageViewerDialog.DownloadName), attachment.FileName }
+            };
+            var options = new DialogOptions { MaxWidth = MaxWidth.False, FullWidth = true, CloseButton = true };
+            await DialogService.ShowAsync<Dialogs.ImageViewerDialog>(attachment.FileName, parameters, options);
+            return;
+        }
+
+        await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+
+    private static string GetReadableFileSize(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        var units = new[] { "B", "KB", "MB", "GB", "TB" };
+        var i = Convert.ToInt32(Math.Floor(Math.Log(bytes, 1024)));
+        return $"{Math.Round(bytes / Math.Pow(1024, i), 2)} {units[i]}";
+    }
+}

@@ -1,0 +1,25 @@
+﻿@using Gotho.BlazorPdf
+@attribute [Authorize]
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@FileName</MudText>
+    </TitleContent>
+    <DialogContent>
+        <div style="height: 75vh; width: 100%;">
+            <PdfViewer Url="@PdfUrl" />
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@Cancel" Color="Color.Primary">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string PdfUrl { get; set; } = string.Empty;
+    [Parameter] public string FileName { get; set; } = string.Empty;
+
+    void Cancel() => MudDialog.Cancel();
+}

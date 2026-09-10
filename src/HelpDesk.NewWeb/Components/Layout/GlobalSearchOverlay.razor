@@ -1,0 +1,224 @@
+@using HelpDesk.NewWeb.Services.Search
+
+@inject IGlobalSearchService SearchService
+@inject NavigationManager Navigation
+
+@if (Open)
+{
+    <div class="global-search-backdrop" @onclick="CloseAsync">
+        <div class="global-search-panel" @onclick:stopPropagation="true">
+            <div class="global-search-input-row">
+                <MudIcon Icon="@Icons.Material.Filled.Search" Size="Size.Medium" />
+                <MudTextField @ref="searchInput"
+                              T="string"
+                              Value="query"
+                              ValueChanged="OnQueryChangedAsync"
+                              Placeholder="Search..."
+                              Immediate="true"
+                              Variant="Variant.Text"
+                              Underline="false"
+                              Class="global-search-input"
+                              OnKeyDown="OnKeyDownAsync" />
+            </div>
+
+            <div class="global-search-body">
+                @if (string.IsNullOrWhiteSpace(query))
+                {
+                    <MudStack Spacing="1" Class="global-search-section-list">
+                        @foreach (var group in groups)
+                        {
+                            <button type="button" class="global-search-row" @onclick="@(() => NavigateAsync(group.Href))">
+                                <MudIcon Icon="@group.Icon" Size="Size.Small" />
+                                <span>@group.Title</span>
+                            </button>
+                        }
+                    </MudStack>
+                }
+                else if (!groups.Any() && isLoading)
+                {
+                    <div class="global-search-loading">
+                        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                    </div>
+                }
+                else if (!groups.Any(g => g.Results.Count > 0 || g.ContinueHref is not null || g.IsLoading || g.TimedOut))
+                {
+                    <div class="global-search-empty">No matches found</div>
+                }
+                else
+                {
+                    <MudStack Spacing="2" Class="global-search-results">
+                        @foreach (var group in groups.Where(g => g.Results.Count > 0 || g.ContinueHref is not null || g.IsLoading || g.TimedOut))
+                        {
+                            <section>
+                                <div class="global-search-group-title">@group.Title</div>
+                                @if (group.IsLoading)
+                                {
+                                    <div class="global-search-status">
+                                        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                                        <span>Searching @(group.Title.ToLowerInvariant())...</span>
+                                    </div>
+                                }
+                                @foreach (var result in group.Results)
+                                {
+                                    <button type="button" class="global-search-result" @onclick="@(() => NavigateAsync(result.Href))">
+                                        <MudIcon Icon="@result.Icon" Size="Size.Small" />
+                                        <span class="global-search-result-main">
+                                            <span class="global-search-result-title">@result.Title</span>
+                                            @if (!string.IsNullOrWhiteSpace(result.Subtitle))
+                                            {
+                                                <span class="global-search-result-subtitle">@result.Subtitle</span>
+                                            }
+                                        </span>
+                                        @if (!string.IsNullOrWhiteSpace(result.Meta))
+                                        {
+                                            <span class="global-search-result-meta">@result.Meta</span>
+                                        }
+                                    </button>
+                                }
+                                @if (group.ContinueHref is not null)
+                                {
+                                    <button type="button" class="global-search-continue" @onclick="@(() => NavigateAsync(group.ContinueHref))">
+                                        <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
+                                        <span>Continue search in @group.Title</span>
+                                        @if (group.TotalCount > 0)
+                                        {
+                                            <span>@group.TotalCount results</span>
+                                        }
+                                        else if (group.TimedOut)
+                                        {
+                                            <span>Still searching</span>
+                                        }
+                                    </button>
+                                }
+                            </section>
+                        }
+                    </MudStack>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback<bool> OpenChanged { get; set; }
+
+    private MudTextField<string>? searchInput;
+    private IReadOnlyList<GlobalSearchGroup> groups = [];
+    private CancellationTokenSource? searchCts;
+    private string? query;
+    private bool isLoading;
+    private bool wasOpen;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Open && !wasOpen)
+        {
+            query = string.Empty;
+            groups = await SearchService.SearchAsync(null);
+            wasOpen = true;
+            _ = FocusInputAsync();
+        }
+        else if (!Open)
+        {
+            wasOpen = false;
+            searchCts?.Cancel();
+        }
+    }
+
+    private async Task FocusInputAsync()
+    {
+        await Task.Delay(50);
+        if (searchInput is not null)
+        {
+            await searchInput.FocusAsync();
+        }
+    }
+
+    private async Task OnQueryChangedAsync(string? value)
+    {
+        query = value;
+        searchCts?.Cancel();
+        searchCts?.Dispose();
+        searchCts = new CancellationTokenSource();
+        var token = searchCts.Token;
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            isLoading = false;
+            groups = await SearchService.SearchAsync(null, token);
+            return;
+        }
+
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            await Task.Delay(250, token);
+            groups = [];
+            await foreach (var group in SearchService.SearchIncrementalAsync(query, token))
+            {
+                UpsertGroup(group);
+                isLoading = groups.Any(g => g.IsLoading);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            if (!token.IsCancellationRequested)
+            {
+                isLoading = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape")
+        {
+            await CloseAsync();
+        }
+        else if (args.Key == "Enter")
+        {
+            var first = groups.SelectMany(g => g.Results).FirstOrDefault();
+            if (first is not null)
+            {
+                await NavigateAsync(first.Href);
+            }
+        }
+    }
+
+    private void UpsertGroup(GlobalSearchGroup group)
+    {
+        var updated = groups.ToList();
+        var index = updated.FindIndex(x => x.Key == group.Key);
+        if (index >= 0)
+        {
+            updated[index] = group;
+        }
+        else
+        {
+            updated.Add(group);
+        }
+
+        groups = updated;
+    }
+
+    private async Task NavigateAsync(string href)
+    {
+        await CloseAsync();
+        Navigation.NavigateTo(href);
+    }
+
+    private async Task CloseAsync()
+    {
+        searchCts?.Cancel();
+        await OpenChanged.InvokeAsync(false);
+    }
+}

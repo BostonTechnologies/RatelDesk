@@ -1,0 +1,99 @@
+@page "/admin/pending-emails"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@using Helpdesk.Shared.DTOs.Worklog
+@using Helpdesk.Shared.Enums
+@using HelpDesk.NewWeb.Services
+@inject ITimelineApiClient TimelineClient
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+        <MudText Typo="Typo.h5">Pending Email Deliveries</MudText>
+        <MudButton
+            Color="Color.Primary"
+            StartIcon="@Icons.Material.Filled.Refresh"
+            OnClick="RetryAll"
+            Disabled="@loading">
+            Retry All
+        </MudButton>
+    </MudStack>
+
+    <MudText Typo="Typo.body2" Class="mb-2">Failed deliveries: @failed.Count</MudText>
+
+    @if (loading)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+    }
+    else if (failed.Count == 0)
+    {
+        <MudAlert Severity="Severity.Success">No failed email deliveries.</MudAlert>
+    }
+    else
+    {
+        <MudTable Items="@failed" Dense="true" Hover="true">
+            <HeaderContent>
+                <MudTh>Created</MudTh>
+                <MudTh>Ticket</MudTh>
+                <MudTh>Recipient</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Retries</MudTh>
+                <MudTh>Message</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Created">@context.CreatedUtc.ToLocalTime().ToString("g")</MudTd>
+                <MudTd DataLabel="Ticket">@context.TicketId</MudTd>
+                <MudTd DataLabel="Recipient">@context.EmailRecipient</MudTd>
+                <MudTd DataLabel="Status">@context.EmailStatus</MudTd>
+                <MudTd DataLabel="Retries">@context.RetryCount</MudTd>
+                <MudTd DataLabel="Message">@context.MessageText</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudPaper>
+
+@code {
+    private List<TicketTimelineEventDto> failed = new();
+    private bool loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            failed = await TimelineClient.GetFailedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load pending emails: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task RetryAll()
+    {
+        loading = true;
+        try
+        {
+            await TimelineClient.RetryAllAsync();
+            Snackbar.Add("Bulk retry completed.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Bulk retry failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+
+        await LoadAsync();
+    }
+}

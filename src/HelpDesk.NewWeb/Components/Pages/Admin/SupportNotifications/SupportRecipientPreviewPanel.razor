@@ -1,0 +1,110 @@
+@using Helpdesk.Shared.DTOs.SupportNotifications
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+        <MudText Typo="Typo.h6">Recipient Preview</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Disabled="@Loading"
+                   OnClick="OnRefresh">
+            Refresh
+        </MudButton>
+    </MudStack>
+
+    @if (Loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (Preview is null || Preview.Recipients.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+            No recipients are currently configured for this event.
+        </MudAlert>
+    }
+    else
+    {
+        var groups = RecipientGroups.ToList();
+        if (groups.Count > 1)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                Multiple active support routes are enabled for this organization.
+            </MudAlert>
+        }
+
+        <MudGrid Spacing="3">
+            @foreach (var group in groups)
+            {
+                <MudItem xs="12" md="6" xl="4">
+                    <MudPaper Outlined="true" Class="pa-3 h-100">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                            <MudIcon Icon="@Icons.Material.Filled.Groups" Color="Color.Info" />
+                            <MudText Typo="Typo.subtitle1">@group.Name</MudText>
+                            <MudSpacer />
+                            <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Dense="true">
+                                @group.Recipients.Count recipient@(group.Recipients.Count == 1 ? string.Empty : "s")
+                            </MudChip>
+                        </MudStack>
+                        <MudList T="SupportNotificationRecipientDto" Dense="true">
+                            @foreach (var recipient in group.Recipients.OrderBy(x => DisplayName(x), StringComparer.OrdinalIgnoreCase))
+                            {
+                                <MudListItem T="SupportNotificationRecipientDto" Value="@recipient">
+                                    <div>
+                                        <MudText Typo="Typo.body2">@DisplayName(recipient)</MudText>
+                                        <MudText Typo="Typo.caption" Class="text-secondary">@recipient.Email</MudText>
+                                    </div>
+                                </MudListItem>
+                            }
+                        </MudList>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+
+        <MudExpansionPanels Class="mt-3">
+            <MudExpansionPanel Text="Details">
+                <MudTable Items="Preview.Recipients.OrderBy(x => x.SupportGroupName).ThenBy(x => x.UserName)" Dense="true" Hover="true" T="SupportNotificationRecipientDto">
+                    <HeaderContent>
+                        <MudTh>Display name</MudTh>
+                        <MudTh>Email</MudTh>
+                        <MudTh>Source support group</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Display name">@DisplayName(context)</MudTd>
+                        <MudTd DataLabel="Email">@context.Email</MudTd>
+                        <MudTd DataLabel="Source support group">@GroupName(context)</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
+</MudPaper>
+
+@code {
+    [Parameter] public SupportNotificationRecipientPreviewDto? Preview { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public EventCallback OnRefresh { get; set; }
+
+    private IEnumerable<RecipientGroup> RecipientGroups
+        => (Preview?.Recipients ?? [])
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.SupportGroupId) ? GroupName(x) : x.SupportGroupId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new RecipientGroup(
+                group.Key,
+                GroupName(group.First()),
+                group.ToList()))
+            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+    private static string DisplayName(SupportNotificationRecipientDto recipient)
+        => string.IsNullOrWhiteSpace(recipient.UserName) ? recipient.UserId : recipient.UserName;
+
+    private static string GroupName(SupportNotificationRecipientDto recipient)
+        => string.IsNullOrWhiteSpace(recipient.SupportGroupName)
+            ? recipient.SupportGroupId ?? "Direct recipient"
+            : recipient.SupportGroupName;
+
+    private sealed record RecipientGroup(
+        string Key,
+        string Name,
+        List<SupportNotificationRecipientDto> Recipients);
+}

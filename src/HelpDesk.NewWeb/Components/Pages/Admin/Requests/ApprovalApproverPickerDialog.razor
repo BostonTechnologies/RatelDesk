@@ -1,0 +1,137 @@
+@using Helpdesk.Shared.DTOs.RequestForm
+
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Select Approvers</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudTextField T="string"
+                          Value="searchText"
+                          ValueChanged="OnSearchChanged"
+                          Placeholder="Search users and customers"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="true" />
+
+            @if (selected.Count > 0)
+            {
+                <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                    @foreach (var approver in selected)
+                    {
+                        <MudChip T="string"
+                                 Size="Size.Small"
+                                 Color="Color.Info"
+                                 Variant="Variant.Outlined"
+                                 OnClose="@(() => Toggle(approver))">
+                            @($"{approver.Name} ({approver.Email})")
+                        </MudChip>
+                    }
+                </MudStack>
+            }
+
+            <MudTable T="RequestTaskApprovalApproverModel" Items="results" Dense="true" Hover="true" Loading="loading">
+                <HeaderContent>
+                    <MudTh></MudTh>
+                    <MudTh>Name</MudTh>
+                    <MudTh>Email</MudTh>
+                    <MudTh>Organization</MudTh>
+                    <MudTh>Source</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudCheckBox T="bool"
+                                     Value="@IsSelected(context)"
+                                     ValueChanged="@(_ => Toggle(context))"
+                                     Dense="true" />
+                    </MudTd>
+                    <MudTd DataLabel="Name">@context.Name</MudTd>
+                    <MudTd DataLabel="Email">@context.Email</MudTd>
+                    <MudTd DataLabel="Organization">@context.OrganizationName</MudTd>
+                    <MudTd DataLabel="Source">@context.Source</MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2">No approvers found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Select</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string? OrganizationId { get; set; }
+    [Parameter] public List<RequestTaskApprovalApproverModel> SelectedApprovers { get; set; } = new();
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    private string searchText = string.Empty;
+    private bool loading;
+    private List<RequestTaskApprovalApproverModel> results = new();
+    private List<RequestTaskApprovalApproverModel> selected = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        selected = SelectedApprovers
+            .Where(x => !string.IsNullOrWhiteSpace(x.Email))
+            .DistinctBy(x => x.Email, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        await SearchAsync();
+    }
+
+    private async Task OnSearchChanged(string value)
+    {
+        searchText = value;
+        await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        loading = true;
+        try
+        {
+            var query = new List<string> { "pageSize=75" };
+            if (!string.IsNullOrWhiteSpace(OrganizationId))
+            {
+                query.Add($"organizationId={Uri.EscapeDataString(OrganizationId)}");
+            }
+            if (!string.IsNullOrWhiteSpace(searchText))
+            {
+                query.Add($"q={Uri.EscapeDataString(searchText)}");
+            }
+
+            results = await Api.GetFromJsonAsync<List<RequestTaskApprovalApproverModel>>(
+                $"api/v1/request-task-approvers?{string.Join("&", query)}") ?? new();
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private bool IsSelected(RequestTaskApprovalApproverModel approver)
+        => selected.Any(x => string.Equals(x.Email, approver.Email, StringComparison.OrdinalIgnoreCase));
+
+    private void Toggle(RequestTaskApprovalApproverModel approver)
+    {
+        var existing = selected.FirstOrDefault(x => string.Equals(x.Email, approver.Email, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            selected.Remove(existing);
+            return;
+        }
+
+        selected.Add(approver);
+    }
+
+    private void Save() => MudDialog.Close(DialogResult.Ok(selected));
+
+    private void Cancel() => MudDialog.Cancel();
+}

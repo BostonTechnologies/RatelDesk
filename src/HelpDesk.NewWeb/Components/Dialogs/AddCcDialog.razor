@@ -1,0 +1,20 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Add CC Listener</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="email" Label="Email" Variant="Variant.Outlined" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" OnClick="Submit" Disabled="string.IsNullOrWhiteSpace(email)">Add</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    private string email = string.Empty;
+
+    private void Submit() => Dialog.Close(DialogResult.Ok(email));
+    private void Cancel() => Dialog.Cancel();
+}

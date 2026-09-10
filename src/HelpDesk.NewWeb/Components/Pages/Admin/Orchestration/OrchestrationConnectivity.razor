@@ -1,0 +1,203 @@
+@page "/settings/connectivity"
+@page "/admin/orchestration/orchestration"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@using System.Net.Http.Json
+@using Helpdesk.Shared.DTOs.Orchestration
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Connectivity Status</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h5">External orchestration Connectivity Status</MudText>
+        <MudSpacer />
+        @if (settings is not null)
+        {
+            <MudText Typo="Typo.caption">Runtime config loaded: @settings.UpdatedAtUtc.LocalDateTime.ToString("g")</MudText>
+        }
+    </MudStack>
+
+    @if (loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (settings is null)
+    {
+        <MudAlert Severity="Severity.Error">Could not load External orchestration connectivity status.</MudAlert>
+    }
+    else
+    {
+        @if (HasLoopbackConfigurationWarning())
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-4">
+                This External orchestration target points to localhost or another loopback address. That only works for local development.
+            </MudAlert>
+        }
+
+        <MudTable Items="ResolvedSettings" Dense="true" Hover="true">
+            <HeaderContent>
+                <MudTh>Setting</MudTh>
+                <MudTh>Value</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Setting">@context.Name</MudTd>
+                <MudTd DataLabel="Value">@context.Value</MudTd>
+            </RowTemplate>
+        </MudTable>
+
+        <MudStack Row="true" Spacing="2" Class="mt-4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@testing" OnClick="TestConnectionAsync">Validate</MudButton>
+            <MudButton Variant="Variant.Outlined" Disabled="@loading" OnClick="LoadAsync">Refresh</MudButton>
+        </MudStack>
+
+        @if (testResult is not null)
+        {
+            <MudAlert Class="mt-4" Severity="@(testResult.Success ? Severity.Success : Severity.Warning)" Variant="Variant.Outlined">
+                @testResult.Message
+                @if (testResult.StatusCode is not null)
+                {
+                    <span> (HTTP @testResult.StatusCode)</span>
+                }
+            </MudAlert>
+        }
+
+        @if (testResult?.Probes?.Count > 0)
+        {
+            <MudTable Class="mt-4" Items="testResult.Probes" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Probe</MudTh>
+                    <MudTh>Target</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>HTTP</MudTh>
+                    <MudTh>Latency (ms)</MudTh>
+                    <MudTh>Remote</MudTh>
+                    <MudTh>When</MudTh>
+                    <MudTh>Message</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Probe">@context.ProbeName</MudTd>
+                    <MudTd DataLabel="Target">@context.Target</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Color="@GetStatusColor(context.Status)" Variant="Variant.Filled">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="HTTP">@context.HttpStatus</MudTd>
+                    <MudTd DataLabel="Latency">@context.LatencyMs</MudTd>
+                    <MudTd DataLabel="Remote">@context.RemoteSystemName</MudTd>
+                    <MudTd DataLabel="When">@context.CheckedAtUtc.ToLocalTime().ToString("yyyy/MM/dd HH:mm:ss zzz")</MudTd>
+                    <MudTd DataLabel="Message">@context.Message</MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    }
+</MudPaper>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private OrchestrationConnectivitySettingsDto? settings;
+    private OrchestrationConnectivityTestResultDto? testResult;
+    private bool loading = true;
+    private bool testing;
+
+    private IReadOnlyList<SettingRow> ResolvedSettings =>
+        settings is null
+            ? []
+            :
+            [
+                new("Enabled", settings.Enabled ? "Yes" : "No"),
+                new("External orchestration API Base URL", Display(settings.BaseUrl)),
+                new("Authority", Display(settings.Authority)),
+                new("Audience", Display(settings.Audience)),
+                new("Scope", Display(settings.Scope)),
+                new("Token Endpoint", Display(settings.TokenEndpoint)),
+                new("Remote Name", Display(settings.RemoteSystemName))
+            ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            settings = await HelpdeskApi.GetFromJsonAsync<OrchestrationConnectivitySettingsDto>("/api/v1/admin/orchestration");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load External orchestration connectivity status: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task TestConnectionAsync()
+    {
+        testing = true;
+        try
+        {
+            using var response = await HelpdeskApi.PostAsync("/api/v1/admin/orchestration/test", null);
+            testResult = await response.Content.ReadFromJsonAsync<OrchestrationConnectivityTestResultDto>()
+                         ?? new OrchestrationConnectivityTestResultDto { Success = false, Message = "Unknown test result." };
+
+            Snackbar.Add(
+                testResult.Message,
+                testResult.Success ? Severity.Success : Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            testResult = new OrchestrationConnectivityTestResultDto
+            {
+                Success = false,
+                Message = ex.Message
+            };
+            Snackbar.Add($"External orchestration validation failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            testing = false;
+        }
+    }
+
+    private static Color GetStatusColor(OrchestrationConnectivityTrafficLight status)
+        => status switch
+        {
+            OrchestrationConnectivityTrafficLight.Green => Color.Success,
+            OrchestrationConnectivityTrafficLight.Amber => Color.Warning,
+            _ => Color.Error
+        };
+
+    private bool HasLoopbackConfigurationWarning()
+    {
+        return IsLoopbackUri(settings?.BaseUrl)
+            || IsLoopbackUri(settings?.Authority)
+            || IsLoopbackUri(settings?.TokenEndpoint);
+    }
+
+    private static bool IsLoopbackUri(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return uri.IsLoopback
+            || string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.Host, "::1", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string Display(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "(not configured)" : value;
+
+    private sealed record SettingRow(string Name, string Value);
+}

@@ -1,0 +1,12 @@
+.git
+.agents
+.codex
+**/bin
+**/obj
+node_modules
+artifacts
+TestResults
+test-results
+playwright-report
+*.user
+*.suo

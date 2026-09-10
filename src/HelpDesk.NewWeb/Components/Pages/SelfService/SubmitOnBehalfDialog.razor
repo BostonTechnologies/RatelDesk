@@ -1,0 +1,139 @@
+@using Helpdesk.Shared.DTOs.Request
+@using System.Net.Http.Json
+
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudTextField T="string"
+                          Value="@searchText"
+                          ValueChanged="OnSearchChanged"
+                          Placeholder="Search users"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Immediate="true"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" />
+
+            @if (loading)
+            {
+                <MudProgressLinear Indeterminate="true" />
+            }
+            else if (!string.IsNullOrWhiteSpace(error))
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">@error</MudAlert>
+            }
+            else if (people.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="submit-on-behalf-empty">No matching users found.</MudText>
+            }
+            else
+            {
+                <MudTable Items="people" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Email</MudTh>
+                        <MudTh>Organization</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">@context.Name</MudTd>
+                        <MudTd DataLabel="Email">@context.Email</MudTd>
+                        <MudTd DataLabel="Organization">@context.OrganizationName</MudTd>
+                        <MudTd DataLabel="Type">@GetSourceLabel(context)</MudTd>
+                        <MudTd DataLabel="Select">
+                            <MudIconButton Icon="@Icons.Material.Filled.Check"
+                                           Color="Color.Primary"
+                                           Size="Size.Small"
+                                           OnClick="@(() => Select(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .submit-on-behalf-empty {
+        color: var(--mud-palette-text-secondary);
+    }
+</style>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private readonly List<SelfServiceRequestUserDto> people = new();
+    private CancellationTokenSource? searchCts;
+    private string? searchText;
+    private string? error;
+    private bool loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SearchAsync();
+    }
+
+    private async Task OnSearchChanged(string? value)
+    {
+        searchText = value;
+        await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        searchCts?.Cancel();
+        searchCts?.Dispose();
+        searchCts = new CancellationTokenSource();
+        var token = searchCts.Token;
+
+        loading = true;
+        error = null;
+        try
+        {
+            var query = Uri.EscapeDataString(searchText ?? string.Empty);
+            var results = await Api.GetFromJsonAsync<List<SelfServiceRequestUserDto>>(
+                $"api/v1/self-service/request-users?query={query}&pageSize=25",
+                token);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            people.Clear();
+            people.AddRange(results ?? new());
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            error = "Unable to search users right now.";
+            people.Clear();
+        }
+        finally
+        {
+            if (!token.IsCancellationRequested)
+            {
+                loading = false;
+            }
+        }
+    }
+
+    private void Select(SelfServiceRequestUserDto person)
+    {
+        Dialog.Close(DialogResult.Ok(person));
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private static string GetSourceLabel(SelfServiceRequestUserDto person) =>
+        person.Source == SelfServiceRequestPersonSource.Customer ? "Customer" : "User";
+}

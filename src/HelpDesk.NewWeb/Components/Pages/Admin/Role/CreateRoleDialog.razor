@@ -1,0 +1,42 @@
+
+@inject IHttpClientFactory HttpClientFactory
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.AddCircle" Class="mr-2 mb-n1" />
+            Create Role
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="form" Model="model" OnValidSubmit="Submit" Class="mt-2">
+            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Create</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private MudForm form = default!;
+    private Helpdesk.Shared.DTOs.Role.RoleDto model = new();
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync("api/v1/roles", model);
+            if (response.IsSuccessStatusCode)
+            {
+                Dialog.Close(DialogResult.Ok(true));
+            }
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

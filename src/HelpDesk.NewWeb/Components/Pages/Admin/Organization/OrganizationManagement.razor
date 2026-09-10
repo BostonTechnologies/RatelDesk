@@ -1,0 +1,900 @@
+@page "/admin/organizations"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+@inject NavigationManager NavigationManager
+
+@using Helpdesk.Shared.DTOs.Orchestration
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Models
+@using MudBlazor
+
+<PageTitle>Organization Management</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h5">Organization Management</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Outlined="true" Class="pa-3 h-100">
+                <MudText Typo="Typo.overline">AI Ready Orgs</MudText>
+                <MudText Typo="Typo.h6">@organizations.Count(org => IsAiReady(org.Id))</MudText>
+                <MudText Typo="Typo.caption" Class="text-secondary">Readiness gates met</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Outlined="true" Class="pa-3 h-100">
+                <MudText Typo="Typo.overline">Runtime Degraded</MudText>
+                <MudText Typo="Typo.h6">@organizations.Count(org => HasRuntimeStatus(org.Id, "Degraded"))</MudText>
+                <MudText Typo="Typo.caption" Class="text-secondary">Fallback or provider issues detected</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Outlined="true" Class="pa-3 h-100">
+                <MudText Typo="Typo.overline">Runtime Unavailable</MudText>
+                <MudText Typo="Typo.h6">@organizations.Count(org => HasRuntimeStatus(org.Id, "Unavailable"))</MudText>
+                <MudText Typo="Typo.caption" Class="text-secondary">Configured AI currently blocked</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Outlined="true" Class="pa-3 h-100">
+                <MudText Typo="Typo.overline">Recent Runtime Evidence</MudText>
+                <MudText Typo="Typo.h6">@organizations.Count(org => HasRecentRuntimeEvidence(org.Id))</MudText>
+                <MudText Typo="Typo.caption" Class="text-secondary">Organizations with fallback/failure events</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4">
+        <MudTextField @bind-Value="searchText"
+                      Label="Search organizations"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Class="me-2"
+                      Style="min-width: 260px;" />
+
+        <MudSelect T="string" @bind-Value="sortMode" Label="Sort" Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width: 220px;">
+            <MudSelectItem Value="@SortByName">Name</MudSelectItem>
+            <MudSelectItem Value="@SortByRuntime">Runtime severity</MudSelectItem>
+            <MudSelectItem Value="@SortByReadiness">Readiness</MudSelectItem>
+            <MudSelectItem Value="@SortByEvidence">Recent runtime evidence</MudSelectItem>
+        </MudSelect>
+
+        <MudChipSet T="string" SelectionMode="SelectionMode.MultiSelection" CheckMark="true">
+            <MudChip T="string"
+                     Color="@(filterAiReadyOnly ? Color.Primary : Color.Default)"
+                     Variant="Variant.Outlined"
+                     OnClick="@ToggleAiReadyFilter">
+                AI ready only
+            </MudChip>
+            <MudChip T="string"
+                     Color="@(filterRuntimeDegradedOnly ? Color.Warning : Color.Default)"
+                     Variant="Variant.Outlined"
+                     OnClick="@ToggleRuntimeDegradedFilter">
+                Runtime degraded only
+            </MudChip>
+            <MudChip T="string"
+                     Color="@(filterRuntimeUnavailableOnly ? Color.Error : Color.Default)"
+                     Variant="Variant.Outlined"
+                     OnClick="@ToggleRuntimeUnavailableFilter">
+                Runtime unavailable only
+            </MudChip>
+            <MudChip T="string"
+                     Color="@(filterRecentEvidenceOnly ? Color.Info : Color.Default)"
+                     Variant="Variant.Outlined"
+                     OnClick="@ToggleRecentEvidenceFilter">
+                Recent evidence only
+            </MudChip>
+        </MudChipSet>
+    </MudStack>
+
+    <MudTable Items="filteredOrganizations" Hover="true" Dense="true" T="OrganizationDto">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Contact Info</MudTh>
+            <MudTh>MSP</MudTh>
+            <MudTh>State</MudTh>
+            <MudTh>External orchestration Tenant</MudTh>
+            <MudTh class="text-center">AI</MudTh>
+            <MudTh class="text-end"></MudTh>
+        </HeaderContent>
+
+        <RowTemplate Context="row">
+            <MudTd DataLabel="Name">@row.Name</MudTd>
+            <MudTd DataLabel="Contact Info">@row.ContactInfo</MudTd>
+            <MudTd DataLabel="MSP">
+                @if (!string.IsNullOrWhiteSpace(row.ItSupportOrganizationId))
+                {
+                    <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Dense="true">
+                        @GetMspOrganizationName(row.ItSupportOrganizationId)
+                    </MudChip>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="text-secondary">Self-managed</MudText>
+                }
+            </MudTd>
+
+            <MudTd DataLabel="State">
+                <MudTooltip Text="@(row.IsEnabled ? "Enabled" : "Disabled")">
+                    <MudIconButton Icon="@(row.IsEnabled ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Block)"
+                                   Color="@(row.IsEnabled ? Color.Success : Color.Error)"
+                                   Size="Size.Small"
+                                   aria-label="@(row.IsEnabled ? "Organization enabled" : "Organization disabled")" />
+                </MudTooltip>
+            </MudTd>
+
+            <MudTd DataLabel="External orchestration Tenant">
+                @if (row.OrchestrationTenantId.HasValue)
+                {
+                    <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Dense="true">
+                        @GetOrchestrationTenantDisplayName(row)
+                    </MudChip>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="text-secondary">Not linked</MudText>
+                }
+            </MudTd>
+
+            <MudTd DataLabel="AI" Class="text-center">
+                @if (TryGetSettings(row.Id, out var settings)
+                    && TryGetReadiness(row.Id, out var readiness)
+                    && TryGetRuntimeStatus(row.Id, out var runtimeStatus))
+                {
+                    <div class="org-ai-status" aria-label="@GetAiStatusSummary(settings, readiness, runtimeStatus)">
+                        <MudTooltip Text="@(settings.EnableAiSearch ? "AI Search on" : "AI Search off")">
+                            <span class="@GetAiSquareClass(settings.EnableAiSearch ? Color.Success : Color.Default)" aria-label="@(settings.EnableAiSearch ? "AI Search on" : "AI Search off")">
+                                <MudIcon Icon="@Icons.Material.Filled.Search" Size="Size.Small" />
+                            </span>
+                        </MudTooltip>
+                        <MudTooltip Text="@(settings.EnableAiAnswers ? "AI Answers on" : "AI Answers off")">
+                            <span class="@GetAiSquareClass(settings.EnableAiAnswers ? Color.Success : Color.Default)" aria-label="@(settings.EnableAiAnswers ? "AI Answers on" : "AI Answers off")">
+                                <MudIcon Icon="@Icons.Material.Filled.QuestionAnswer" Size="Size.Small" />
+                            </span>
+                        </MudTooltip>
+                        <MudTooltip Text="@(readiness.ProductionReady ? "AI Ready" : "AI Blocked")">
+                            <span class="@GetAiSquareClass(readiness.ProductionReady ? Color.Success : Color.Warning)" aria-label="@(readiness.ProductionReady ? "AI Ready" : "AI Blocked")">
+                                <MudIcon Icon="@(readiness.ProductionReady ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.ReportProblem)" Size="Size.Small" />
+                            </span>
+                        </MudTooltip>
+                        <MudTooltip Text="@($"AI Runtime {runtimeStatus.Status}")">
+                            <span class="@GetAiSquareClass(GetRuntimeColor(runtimeStatus.Status))" aria-label="@($"AI Runtime {runtimeStatus.Status}")">
+                                <MudIcon Icon="@Icons.Material.Filled.Speed" Size="Size.Small" />
+                            </span>
+                        </MudTooltip>
+                    </div>
+                }
+                else
+                {
+                    <MudSkeleton Width="104px" Height="24px" Class="mx-auto" />
+                }
+            </MudTd>
+
+            <MudTd Class="text-end">
+                <MudIconButton Icon="@(IsExpanded(row.Id) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                               Color="Color.Default"
+                               Size="Size.Small"
+                               aria-label="@(IsExpanded(row.Id) ? "Collapse organization detail" : "Expand organization detail")"
+                               OnClick="() => ToggleExpanded(row.Id)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                               Color="Color.Primary"
+                               Size="Size.Small"
+                               aria-label="Edit organization"
+                               OnClick="() => OpenEditDialog(row)" />
+                <MudIconButton Icon="@Icons.Material.Filled.SupportAgent"
+                               Color="Color.Info"
+                               Size="Size.Small"
+                               aria-label="Support routing"
+                               OnClick="() => OpenSupportRouting(row)" />
+                <span class="org-runtime-evidence-anchor"
+                      @onmouseenter="() => ShowRuntimeEvidence(row.Id, false)"
+                      @onmouseleave="() => HideRuntimeEvidence(row.Id)"
+                      @onfocusin="() => ShowRuntimeEvidence(row.Id, false)"
+                      @onfocusout="() => HideRuntimeEvidence(row.Id)">
+                    <MudIconButton Icon="@Icons.Material.Filled.Info"
+                                   Color="@GetRuntimeEvidenceActionColor(row.Id)"
+                                   Size="Size.Small"
+                                   aria-label="View runtime evidence"
+                                   OnClick="() => ToggleRuntimeEvidence(row.Id)" />
+                    <MudPopover Open="@IsRuntimeEvidenceOpen(row.Id)"
+                                AnchorOrigin="Origin.BottomRight"
+                                TransformOrigin="Origin.TopRight"
+                                Class="org-runtime-evidence-popover">
+                        <div @onmouseenter="() => ShowRuntimeEvidence(row.Id, runtimeEvidencePinned)"
+                             @onmouseleave="() => HideRuntimeEvidence(row.Id)"
+                             @onclick:stopPropagation="true">
+                            <MudPaper Elevation="8" Class="org-runtime-evidence-panel">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                                    <MudText Typo="Typo.subtitle2">Runtime Evidence</MudText>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                                   Size="Size.Small"
+                                                   aria-label="Close runtime evidence"
+                                                   OnClick="CloseRuntimeEvidence" />
+                                </MudStack>
+                                @if (TryGetRuntimeStatus(row.Id, out var evidenceRuntime))
+                                {
+                                    <MudText Typo="Typo.caption" Class="text-secondary d-block mb-2">
+                                        @GetRuntimeEvidenceSummary(evidenceRuntime)
+                                    </MudText>
+
+                                    if (evidenceRuntime.RecentEvidence.Count > 0)
+                                    {
+                                        <MudStack Spacing="1">
+                                            @foreach (var evidence in evidenceRuntime.RecentEvidence.Take(5))
+                                            {
+                                                <MudText Typo="Typo.body2">@evidence</MudText>
+                                            }
+                                        </MudStack>
+                                    }
+                                    else if (evidenceRuntime.Reasons.Count > 0)
+                                    {
+                                        <MudStack Spacing="1">
+                                            @foreach (var reason in evidenceRuntime.Reasons.Take(5))
+                                            {
+                                                <MudText Typo="Typo.body2">@reason</MudText>
+                                            }
+                                        </MudStack>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.body2" Class="text-secondary">No recent runtime issues</MudText>
+                                    }
+                                }
+                                else
+                                {
+                                    <MudSkeleton Width="220px" />
+                                }
+                            </MudPaper>
+                        </div>
+                    </MudPopover>
+                </span>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               Color="Color.Error"
+                               Size="Size.Small"
+                               aria-label="Delete organization"
+                               OnClick="() => OpenDeleteDialog(row)" />
+            </MudTd>
+        </RowTemplate>
+
+        <ChildRowContent Context="row">
+            @if (IsExpanded(row.Id))
+            {
+                <MudTr Class="mud-theme-surface">
+                    <td colspan="6" class="pa-4">
+                        <MudGrid>
+                            <MudItem xs="12" md="4">
+                                <MudPaper Outlined="true" Class="pa-3 h-100">
+                                    <MudText Typo="Typo.subtitle2" Class="mb-2">Rollout Readiness</MudText>
+                                    @if (TryGetReadiness(row.Id, out var readiness))
+                                    {
+                                        <MudChip T="bool"
+                                                 Color="@(readiness.ProductionReady ? Color.Success : Color.Warning)"
+                                                 Variant="Variant.Filled"
+                                                 Dense="true"
+                                                 Class="mb-2">
+                                            @(readiness.ProductionReady ? "Production ready" : "Blocked")
+                                        </MudChip>
+
+                                        @if (readiness.BlockingReasons.Count > 0)
+                                        {
+                                            <MudList T="string" Dense="true" Clickable="false">
+                                                @foreach (var reason in readiness.BlockingReasons)
+                                                {
+                                                    <MudListItem T="string">
+                                                        <MudText Typo="Typo.body2">@reason</MudText>
+                                                    </MudListItem>
+                                                }
+                                            </MudList>
+                                        }
+                                        else
+                                        {
+                                            <MudText Typo="Typo.body2" Class="text-secondary">No rollout blockers recorded.</MudText>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.body2" Class="text-secondary">Readiness data unavailable.</MudText>
+                                    }
+                                </MudPaper>
+                            </MudItem>
+
+                            <MudItem xs="12" md="4">
+                                <MudPaper Outlined="true" Class="pa-3 h-100">
+                                    <MudText Typo="Typo.subtitle2" Class="mb-2">Runtime Status</MudText>
+                                    @if (TryGetRuntimeStatus(row.Id, out var runtimeStatus))
+                                    {
+                                        <MudChip T="string"
+                                                 Color="@GetRuntimeColor(runtimeStatus.Status)"
+                                                 Variant="Variant.Filled"
+                                                 Dense="true"
+                                                 Class="mb-2">
+                                            @runtimeStatus.Status
+                                        </MudChip>
+
+                                        @if (runtimeStatus.Reasons.Count > 0)
+                                        {
+                                            <MudList T="string" Dense="true" Clickable="false">
+                                                @foreach (var reason in runtimeStatus.Reasons.Take(4))
+                                                {
+                                                    <MudListItem T="string">
+                                                        <MudText Typo="Typo.body2">@reason</MudText>
+                                                    </MudListItem>
+                                                }
+                                            </MudList>
+                                        }
+                                        else
+                                        {
+                                            <MudText Typo="Typo.body2" Class="text-secondary">No active runtime blockers.</MudText>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.body2" Class="text-secondary">Runtime status unavailable.</MudText>
+                                    }
+                                </MudPaper>
+                            </MudItem>
+
+                            <MudItem xs="12" md="4">
+                                <MudPaper Outlined="true" Class="pa-3 h-100">
+                                    <MudText Typo="Typo.subtitle2" Class="mb-2">Recent Runtime Evidence</MudText>
+                                    @if (TryGetRuntimeStatus(row.Id, out var runtimeEvidence) && runtimeEvidence.RecentEvidence.Count > 0)
+                                    {
+                                        <MudList T="string" Dense="true" Clickable="false">
+                                            @foreach (var evidence in runtimeEvidence.RecentEvidence.Take(5))
+                                            {
+                                                <MudListItem T="string">
+                                                    <MudText Typo="Typo.body2">@evidence</MudText>
+                                                </MudListItem>
+                                            }
+                                        </MudList>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.body2" Class="text-secondary">No recent fallback or failure events.</MudText>
+                                    }
+                                </MudPaper>
+                            </MudItem>
+
+                            <MudItem xs="12">
+                                <MudPaper Outlined="true" Class="pa-3">
+                                    <MudText Typo="Typo.subtitle2" Class="mb-2">Provider Detail</MudText>
+                                    @if (TryGetRuntimeStatus(row.Id, out var runtimeProviders) && runtimeProviders.Providers.Count > 0)
+                                    {
+                                        <MudTable Items="runtimeProviders.Providers" Dense="true" Hover="true" T="OrganizationAiRuntimeProviderStatusDto">
+                                            <HeaderContent>
+                                                <MudTh>Channel</MudTh>
+                                                <MudTh>Provider</MudTh>
+                                                <MudTh>Model</MudTh>
+                                                <MudTh>Status</MudTh>
+                                                <MudTh>Evidence</MudTh>
+                                            </HeaderContent>
+                                            <RowTemplate Context="provider">
+                                                <MudTd DataLabel="Channel">@provider.Channel</MudTd>
+                                                <MudTd DataLabel="Provider">@(string.IsNullOrWhiteSpace(provider.ProviderName) ? "Unconfigured" : provider.ProviderName)</MudTd>
+                                                <MudTd DataLabel="Model">@(string.IsNullOrWhiteSpace(provider.ModelId) ? "-" : provider.ModelId)</MudTd>
+                                                <MudTd DataLabel="Status">
+                                                    <MudChip T="string"
+                                                             Color="@GetRuntimeColor(provider.Status)"
+                                                             Variant="Variant.Outlined"
+                                                             Dense="true">
+                                                        @provider.Status
+                                                    </MudChip>
+                                                </MudTd>
+                                                <MudTd DataLabel="Evidence">
+                                                    @if (provider.Reasons.Count > 0)
+                                                    {
+                                                        <MudText Typo="Typo.body2">@provider.Reasons[0]</MudText>
+                                                    }
+                                                    else if (provider.RecentEvidence.Count > 0)
+                                                    {
+                                                        <MudText Typo="Typo.body2">@provider.RecentEvidence[0]</MudText>
+                                                    }
+                                                    else
+                                                    {
+                                                        <MudText Typo="Typo.body2" Class="text-secondary">No issues recorded</MudText>
+                                                    }
+                                                </MudTd>
+                                            </RowTemplate>
+                                        </MudTable>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.body2" Class="text-secondary">No provider detail available.</MudText>
+                                    }
+                                </MudPaper>
+                            </MudItem>
+                        </MudGrid>
+                    </td>
+                </MudTr>
+            }
+        </ChildRowContent>
+    </MudTable>
+</MudPaper>
+
+<style>
+    .org-ai-status {
+        display: inline-grid;
+        grid-template-columns: repeat(4, 24px);
+        width: 96px;
+        border: 1px solid var(--mud-palette-lines-default);
+        border-radius: 6px;
+        overflow: hidden;
+        vertical-align: middle;
+    }
+
+    .org-ai-square {
+        width: 24px;
+        height: 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-right: 1px solid var(--mud-palette-lines-default);
+        background: var(--mud-palette-surface);
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .org-ai-square:last-child {
+        border-right: 0;
+    }
+
+    .org-ai-square-success {
+        background: color-mix(in srgb, var(--mud-palette-success) 14%, var(--mud-palette-surface));
+        color: var(--mud-palette-success);
+    }
+
+    .org-ai-square-warning {
+        background: color-mix(in srgb, var(--mud-palette-warning) 16%, var(--mud-palette-surface));
+        color: var(--mud-palette-warning);
+    }
+
+    .org-ai-square-error {
+        background: color-mix(in srgb, var(--mud-palette-error) 14%, var(--mud-palette-surface));
+        color: var(--mud-palette-error);
+    }
+
+    .org-ai-square-default {
+        background: var(--mud-palette-action-default-hover);
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .org-runtime-evidence-anchor {
+        display: inline-flex;
+        position: relative;
+        vertical-align: middle;
+    }
+
+    .org-runtime-evidence-popover {
+        max-width: min(420px, calc(100vw - 32px));
+    }
+
+    .org-runtime-evidence-panel {
+        width: min(420px, calc(100vw - 32px));
+        max-height: 360px;
+        overflow: auto;
+        padding: 12px;
+    }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? QuerySearch { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private List<OrganizationDto> organizations = new();
+    private List<OrchestrationCatalogTenantDto> orchestrationTenants = new();
+    private string searchText = string.Empty;
+    private string? appliedQuerySearch;
+    private string sortMode = SortByRuntime;
+    private bool filterAiReadyOnly;
+    private bool filterRuntimeDegradedOnly;
+    private bool filterRuntimeUnavailableOnly;
+    private bool filterRecentEvidenceOnly;
+    private string? runtimeEvidencePopoverOrgId;
+    private bool runtimeEvidencePinned;
+    // Cache: orgId -> settings
+    private readonly Dictionary<string, OrganizationAiKbSettingsDto> _settings = new();
+    private readonly Dictionary<string, OrganizationAiReadinessDto> _readiness = new();
+    private readonly Dictionary<string, OrganizationAiRuntimeStatusDto> _runtimeStatuses = new();
+    private readonly HashSet<string> expandedOrganizationIds = new(StringComparer.OrdinalIgnoreCase);
+    private const string SortByName = "name";
+    private const string SortByRuntime = "runtime";
+    private const string SortByReadiness = "readiness";
+    private const string SortByEvidence = "evidence";
+
+    private IEnumerable<OrganizationDto> filteredOrganizations => GetFilteredOrganizations();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOrganizations();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!string.Equals(appliedQuerySearch, QuerySearch, StringComparison.Ordinal))
+        {
+            appliedQuerySearch = QuerySearch;
+            searchText = QuerySearch ?? string.Empty;
+        }
+    }
+
+    private async Task LoadOrganizations()
+    {
+        organizations = await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations")
+                        ?? new();
+        await LoadOrchestrationTenantsAsync();
+
+        _settings.Clear();
+        _readiness.Clear();
+        _runtimeStatuses.Clear();
+        // fetch settings in parallel
+        var tasks = organizations.Select(async org =>
+        {
+            try
+            {
+                var s = await HelpdeskApi
+                    .GetFromJsonAsync<OrganizationAiKbSettingsDto>($"api/v1/organizations/{org.Id}/ai-kb-settings");
+
+                if (s is not null)
+                    _settings[org.Id] = s;
+            }
+            catch
+            {
+                // Keep loading the other AI surfaces even if settings fail for one org.
+            }
+
+            try
+            {
+                var readiness = await HelpdeskApi
+                    .GetFromJsonAsync<OrganizationAiReadinessDto>($"api/v1/organizations/{org.Id}/ai-kb-settings/readiness");
+                if (readiness is not null)
+                {
+                    _readiness[org.Id] = readiness;
+                }
+                else
+                {
+                    _readiness[org.Id] = CreateUnavailableReadiness("Readiness data returned no content.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _readiness[org.Id] = CreateUnavailableReadiness($"Readiness could not be loaded: {ex.Message}");
+            }
+
+            try
+            {
+                var runtimeStatus = await HelpdeskApi
+                    .GetFromJsonAsync<OrganizationAiRuntimeStatusDto>($"api/v1/organizations/{org.Id}/ai-kb-settings/runtime-status");
+                if (runtimeStatus is not null)
+                {
+                    _runtimeStatuses[org.Id] = runtimeStatus;
+                }
+                else
+                {
+                    _runtimeStatuses[org.Id] = CreateUnavailableRuntimeStatus("Runtime status returned no content.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _runtimeStatuses[org.Id] = CreateUnavailableRuntimeStatus($"Runtime status could not be loaded: {ex.Message}");
+            }
+        }).ToArray();
+
+        await Task.WhenAll(tasks);
+        StateHasChanged();
+    }
+
+    private async Task LoadOrchestrationTenantsAsync()
+    {
+        try
+        {
+            orchestrationTenants = await HelpdeskApi.GetFromJsonAsync<List<OrchestrationCatalogTenantDto>>(
+                "api/v1/admin/orchestration/orchestration/catalog/tenants") ?? new();
+        }
+        catch
+        {
+            orchestrationTenants = new();
+        }
+    }
+
+    private bool TryGetSettings(string orgId, out OrganizationAiKbSettingsDto dto)
+        => _settings.TryGetValue(orgId, out dto!);
+
+    private bool TryGetReadiness(string orgId, out OrganizationAiReadinessDto dto)
+        => _readiness.TryGetValue(orgId, out dto!);
+
+    private bool TryGetRuntimeStatus(string orgId, out OrganizationAiRuntimeStatusDto dto)
+        => _runtimeStatuses.TryGetValue(orgId, out dto!);
+
+    private bool IsAiReady(string orgId)
+        => _readiness.TryGetValue(orgId, out var readiness) && readiness.ProductionReady;
+
+    private bool HasRuntimeStatus(string orgId, string status)
+        => _runtimeStatuses.TryGetValue(orgId, out var runtimeStatus)
+            && string.Equals(runtimeStatus.Status, status, StringComparison.OrdinalIgnoreCase);
+
+    private bool HasRecentRuntimeEvidence(string orgId)
+        => _runtimeStatuses.TryGetValue(orgId, out var runtimeStatus)
+            && runtimeStatus.RecentEvidence.Count > 0;
+
+    private bool MatchesSearch(OrganizationDto org)
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+        {
+            return true;
+        }
+
+        return (org.Name?.Contains(searchText, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (org.DnsName?.Contains(searchText, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (org.ContactInfo?.Contains(searchText, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    private bool MatchesFilters(OrganizationDto org)
+    {
+        if (filterAiReadyOnly && !IsAiReady(org.Id))
+        {
+            return false;
+        }
+
+        if (filterRuntimeDegradedOnly && !HasRuntimeStatus(org.Id, "Degraded"))
+        {
+            return false;
+        }
+
+        if (filterRuntimeUnavailableOnly && !HasRuntimeStatus(org.Id, "Unavailable"))
+        {
+            return false;
+        }
+
+        if (filterRecentEvidenceOnly && !HasRecentRuntimeEvidence(org.Id))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private IEnumerable<OrganizationDto> GetFilteredOrganizations()
+    {
+        var query = organizations
+            .Where(MatchesSearch)
+            .Where(MatchesFilters);
+
+        return sortMode switch
+        {
+            SortByRuntime => query
+                .OrderBy(org => GetRuntimeSeverity(org.Id))
+                .ThenBy(org => org.Name, StringComparer.OrdinalIgnoreCase),
+            SortByReadiness => query
+                .OrderByDescending(org => IsAiReady(org.Id))
+                .ThenBy(org => GetRuntimeSeverity(org.Id))
+                .ThenBy(org => org.Name, StringComparer.OrdinalIgnoreCase),
+            SortByEvidence => query
+                .OrderByDescending(org => GetEvidenceCount(org.Id))
+                .ThenBy(org => GetRuntimeSeverity(org.Id))
+                .ThenBy(org => org.Name, StringComparer.OrdinalIgnoreCase),
+            _ => query.OrderBy(org => org.Name, StringComparer.OrdinalIgnoreCase)
+        };
+    }
+
+    private int GetRuntimeSeverity(string orgId)
+    {
+        if (!_runtimeStatuses.TryGetValue(orgId, out var runtimeStatus))
+        {
+            return 3;
+        }
+
+        return runtimeStatus.Status.ToLowerInvariant() switch
+        {
+            "unavailable" => 0,
+            "degraded" => 1,
+            "ready" => 2,
+            _ => 3
+        };
+    }
+
+    private int GetEvidenceCount(string orgId)
+        => _runtimeStatuses.TryGetValue(orgId, out var runtimeStatus)
+            ? runtimeStatus.RecentEvidence.Count
+            : 0;
+
+    private static OrganizationAiReadinessDto CreateUnavailableReadiness(string reason)
+        => new()
+        {
+            ProductionReady = false,
+            BlockingReasons = [reason]
+        };
+
+    private static OrganizationAiRuntimeStatusDto CreateUnavailableRuntimeStatus(string reason)
+        => new()
+        {
+            Status = "Unknown",
+            Reasons = [reason]
+        };
+
+    private static Color GetRuntimeColor(string? status)
+        => status?.ToLowerInvariant() switch
+        {
+            "ready" => Color.Success,
+            "degraded" => Color.Warning,
+            "unavailable" => Color.Error,
+            _ => Color.Default
+        };
+
+    private static string GetAiSquareClass(Color color)
+        => color switch
+        {
+            Color.Success => "org-ai-square org-ai-square-success",
+            Color.Warning => "org-ai-square org-ai-square-warning",
+            Color.Error => "org-ai-square org-ai-square-error",
+            _ => "org-ai-square org-ai-square-default"
+        };
+
+    private static string GetAiStatusSummary(
+        OrganizationAiKbSettingsDto settings,
+        OrganizationAiReadinessDto readiness,
+        OrganizationAiRuntimeStatusDto runtimeStatus)
+        => $"AI Search {(settings.EnableAiSearch ? "on" : "off")}, "
+           + $"AI Answers {(settings.EnableAiAnswers ? "on" : "off")}, "
+           + $"AI {(readiness.ProductionReady ? "ready" : "blocked")}, "
+           + $"Runtime {runtimeStatus.Status}";
+
+    private static string GetRuntimeEvidenceSummary(OrganizationAiRuntimeStatusDto runtimeStatus)
+    {
+        if (runtimeStatus.RecentEvidence.Count > 0)
+        {
+            return $"{runtimeStatus.RecentEvidence.Count} recent event{(runtimeStatus.RecentEvidence.Count == 1 ? string.Empty : "s")}";
+        }
+
+        if (runtimeStatus.Reasons.Count > 0)
+        {
+            return $"{runtimeStatus.Reasons.Count} runtime reason{(runtimeStatus.Reasons.Count == 1 ? string.Empty : "s")}";
+        }
+
+        return "No recent runtime issues";
+    }
+
+    private string GetOrchestrationTenantDisplayName(OrganizationDto organization)
+    {
+        if (organization.OrchestrationTenantId is { } tenantId)
+        {
+            var catalogName = orchestrationTenants.FirstOrDefault(x => x.TenantId == tenantId)?.Name;
+            if (!string.IsNullOrWhiteSpace(catalogName))
+            {
+                return catalogName;
+            }
+
+            return string.IsNullOrWhiteSpace(organization.OrchestrationTenantName)
+                ? $"Tenant {tenantId}"
+                : organization.OrchestrationTenantName;
+        }
+
+        return "Not linked";
+    }
+
+    private string GetMspOrganizationName(string? organizationId)
+    {
+        if (string.IsNullOrWhiteSpace(organizationId))
+        {
+            return "Self-managed";
+        }
+
+        return organizations.FirstOrDefault(x => string.Equals(x.Id, organizationId, StringComparison.OrdinalIgnoreCase))?.Name
+            ?? organizationId;
+    }
+
+    private Color GetRuntimeEvidenceActionColor(string orgId)
+    {
+        if (!_runtimeStatuses.TryGetValue(orgId, out var runtimeStatus))
+        {
+            return Color.Default;
+        }
+
+        return runtimeStatus.RecentEvidence.Count > 0 || runtimeStatus.Reasons.Count > 0
+            ? GetRuntimeColor(runtimeStatus.Status)
+            : Color.Default;
+    }
+
+    private bool IsRuntimeEvidenceOpen(string orgId)
+        => string.Equals(runtimeEvidencePopoverOrgId, orgId, StringComparison.OrdinalIgnoreCase);
+
+    private void ShowRuntimeEvidence(string orgId, bool pinned)
+    {
+        runtimeEvidencePopoverOrgId = orgId;
+        runtimeEvidencePinned = pinned;
+    }
+
+    private void HideRuntimeEvidence(string orgId)
+    {
+        if (runtimeEvidencePinned || !IsRuntimeEvidenceOpen(orgId))
+        {
+            return;
+        }
+
+        runtimeEvidencePopoverOrgId = null;
+    }
+
+    private void ToggleRuntimeEvidence(string orgId)
+    {
+        if (IsRuntimeEvidenceOpen(orgId) && runtimeEvidencePinned)
+        {
+            CloseRuntimeEvidence();
+            return;
+        }
+
+        runtimeEvidencePopoverOrgId = orgId;
+        runtimeEvidencePinned = true;
+    }
+
+    private void CloseRuntimeEvidence()
+    {
+        runtimeEvidencePopoverOrgId = null;
+        runtimeEvidencePinned = false;
+    }
+
+    private void ToggleAiReadyFilter()
+        => filterAiReadyOnly = !filterAiReadyOnly;
+
+    private void ToggleRuntimeDegradedFilter()
+        => filterRuntimeDegradedOnly = !filterRuntimeDegradedOnly;
+
+    private void ToggleRuntimeUnavailableFilter()
+        => filterRuntimeUnavailableOnly = !filterRuntimeUnavailableOnly;
+
+    private void ToggleRecentEvidenceFilter()
+        => filterRecentEvidenceOnly = !filterRecentEvidenceOnly;
+
+    private bool IsExpanded(string orgId)
+        => expandedOrganizationIds.Contains(orgId);
+
+    private void ToggleExpanded(string orgId)
+    {
+        if (!expandedOrganizationIds.Add(orgId))
+        {
+            expandedOrganizationIds.Remove(orgId);
+        }
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateOrganizationDialog>("Create Organization", options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+            await LoadOrganizations();
+    }
+
+    private async Task OpenEditDialog(OrganizationDto org)
+    {
+        var parameters = new DialogParameters
+        {
+            ["Organization"] = org,
+            ["Organizations"] = organizations
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<EditOrganizationDialog>("Edit Organization", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+            await LoadOrganizations();
+    }
+
+    private async Task OpenDeleteDialog(OrganizationDto org)
+    {
+        var parameters = new DialogParameters { ["Organization"] = org };
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraSmall };
+        var dialog = await DialogService.ShowAsync<DeleteOrganizationDialog>("Delete Organization", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+            await LoadOrganizations();
+    }
+
+    private void OpenSupportRouting(OrganizationDto org)
+        => NavigationManager.NavigateTo($"/admin/support-routing?organizationId={Uri.EscapeDataString(org.Id)}");
+}

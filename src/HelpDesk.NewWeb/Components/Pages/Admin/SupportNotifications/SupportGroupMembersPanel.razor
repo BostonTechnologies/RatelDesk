@@ -1,0 +1,244 @@
+@using HelpDesk.NewWeb.Services
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.SupportNotifications
+@using Helpdesk.Shared.DTOs.User
+@inject ISupportNotificationAdminClient Client
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+        <div>
+            <MudText Typo="Typo.h6">Support Groups</MudText>
+            <MudText Typo="Typo.body2" Class="text-secondary">Provider-owned teams that can receive routing notifications and support customer organizations.</MudText>
+        </div>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenCreateGroupDialogAsync">
+            Add Group
+        </MudButton>
+    </MudStack>
+
+    <MudGrid Spacing="2" Class="mb-3">
+        <MudItem xs="12" md="5">
+            <MudTextField @bind-Value="groupSearch"
+                          Label="Search groups"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="true" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudSelect T="string" @bind-Value="ownerFilter" Label="Owner organization" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
+                @foreach (var organization in Organizations.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" md="3" Class="d-flex align-center">
+            <MudSwitch T="bool" @bind-Value="showDisabled" Label="Show disabled groups" />
+        </MudItem>
+    </MudGrid>
+
+    <MudTable Items="FilteredGroups" Dense="true" Hover="true" T="SupportGroupDto">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Owner</MudTh>
+            <MudTh>Description</MudTh>
+            <MudTh>Enabled</MudTh>
+            <MudTh class="text-end">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">
+                <MudText Typo="Typo.subtitle2">@context.Name</MudText>
+            </MudTd>
+            <MudTd DataLabel="Owner">@OrganizationName(context.OwningOrganizationId)</MudTd>
+            <MudTd DataLabel="Description">@(string.IsNullOrWhiteSpace(context.Description) ? "-" : context.Description)</MudTd>
+            <MudTd DataLabel="Enabled">
+                <MudChip T="string" Color="@(context.IsEnabled ? Color.Success : Color.Default)" Variant="Variant.Outlined" Dense="true">
+                    @(context.IsEnabled ? "Enabled" : "Disabled")
+                </MudChip>
+            </MudTd>
+            <MudTd Class="text-end">
+                <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Edit" OnClick="() => OpenEditGroupDialogAsync(context)">Edit</MudButton>
+                    <MudButton Size="Size.Small"
+                               Variant="Variant.Outlined"
+                               Color="@(context.IsEnabled ? Color.Warning : Color.Success)"
+                               OnClick="() => ToggleGroupAsync(context)">
+                        @(context.IsEnabled ? "Disable" : "Enable")
+                    </MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Groups" OnClick="() => OpenMembersDialogAsync(context)">Manage Members</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="() => DeleteGroupAsync(context)">Delete</MudButton>
+                </MudStack>
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Class="text-secondary">No support groups match the current filters.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+</MudPaper>
+
+@code {
+    [Parameter] public List<SupportGroupDto> Groups { get; set; } = new();
+    [Parameter] public List<OrganizationDto> Organizations { get; set; } = new();
+    [Parameter] public List<UserDto> Users { get; set; } = new();
+    [Parameter] public string? DefaultOwningOrganizationId { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private string groupSearch = string.Empty;
+    private string? ownerFilter;
+    private bool showDisabled;
+
+    private IEnumerable<SupportGroupDto> FilteredGroups
+        => Groups
+            .Where(x => showDisabled || x.IsEnabled)
+            .Where(x => string.IsNullOrWhiteSpace(ownerFilter) || string.Equals(x.OwningOrganizationId, ownerFilter, StringComparison.OrdinalIgnoreCase))
+            .Where(x => string.IsNullOrWhiteSpace(groupSearch) ||
+                        Contains(x.Name, groupSearch) ||
+                        Contains(x.Description, groupSearch) ||
+                        Contains(OrganizationName(x.OwningOrganizationId), groupSearch))
+            .OrderBy(x => OrganizationName(x.OwningOrganizationId), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+    private async Task OpenCreateGroupDialogAsync()
+    {
+        var parameters = new DialogParameters
+        {
+            ["Organizations"] = Organizations,
+            ["DefaultOwningOrganizationId"] = ownerFilter ?? DefaultOwningOrganizationId
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<SupportGroupDialog>("Create Support Group", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not SupportGroupDialog.SupportGroupFormModel model)
+        {
+            return;
+        }
+
+        try
+        {
+            await Client.CreateGroupAsync(new CreateSupportGroupDto
+            {
+                OwningOrganizationId = model.OwningOrganizationId,
+                Name = model.Name,
+                Description = model.Description,
+                IsEnabled = model.IsEnabled
+            });
+            Snackbar.Add("Support group created.", Severity.Success);
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task OpenEditGroupDialogAsync(SupportGroupDto group)
+    {
+        var parameters = new DialogParameters
+        {
+            ["Group"] = group,
+            ["Organizations"] = Organizations,
+            ["DefaultOwningOrganizationId"] = DefaultOwningOrganizationId
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<SupportGroupDialog>("Edit Support Group", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not SupportGroupDialog.SupportGroupFormModel model)
+        {
+            return;
+        }
+
+        try
+        {
+            await Client.UpdateGroupAsync(group.Id, new UpdateSupportGroupDto
+            {
+                OwningOrganizationId = model.OwningOrganizationId,
+                Name = model.Name,
+                Description = model.Description,
+                IsEnabled = model.IsEnabled
+            });
+            Snackbar.Add("Support group saved.", Severity.Success);
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task OpenMembersDialogAsync(SupportGroupDto group)
+    {
+        var parameters = new DialogParameters
+        {
+            ["Group"] = group,
+            ["Organizations"] = Organizations,
+            ["Users"] = Users,
+            ["OnChanged"] = async () => await OnChanged.InvokeAsync()
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<SupportGroupMembersDialog>("Manage Members", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled && result.Data is true)
+        {
+            await OnChanged.InvokeAsync();
+        }
+    }
+
+    private async Task ToggleGroupAsync(SupportGroupDto group)
+    {
+        try
+        {
+            await Client.UpdateGroupAsync(group.Id, new UpdateSupportGroupDto
+            {
+                OwningOrganizationId = group.OwningOrganizationId,
+                Name = group.Name,
+                Description = group.Description,
+                IsEnabled = !group.IsEnabled
+            });
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task DeleteGroupAsync(SupportGroupDto group)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Delete Support Group",
+            $"Delete '{group.Name}'?",
+            yesText: "Delete",
+            cancelText: "Cancel");
+        if (confirm != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await Client.DeleteGroupAsync(group.Id);
+            Snackbar.Add("Support group deleted.", Severity.Success);
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private string OrganizationName(string? id)
+        => Organizations.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase))?.Name
+           ?? id
+           ?? "-";
+
+    private static bool Contains(string? value, string search)
+        => !string.IsNullOrWhiteSpace(value) && value.Contains(search, StringComparison.OrdinalIgnoreCase);
+}

@@ -1,0 +1,20 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.1.2">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>aebd4bb1-4e59-4c19-aeb9-6db8c9a258a6</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Helpdesk.API\Helpdesk.API.csproj" />
+    <ProjectReference Include="..\HelpDesk.NewWeb\HelpDesk.NewWeb.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MessagePack" Version="2.5.302" />
+  </ItemGroup>
+
+</Project>

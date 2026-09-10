@@ -1,0 +1,35 @@
+<p style="margin:0 0 16px 0;">Hello {{{USER_NAME}}},</p>
+<p style="margin:0 0 18px 0;">A change has been submitted in RatelDesk.</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%; border-collapse:collapse; margin:0 0 22px 0; background:#f6fbff; border:1px solid #c9e6f7; border-left:4px solid {{PRIMARY_COLOR}}; border-radius:6px;">
+  <tr><td style="padding:16px 18px;">
+    <div style="font-size:12px; line-height:16px; color:#526173; text-transform:uppercase;">Change submitted</div>
+    <div style="font-size:22px; line-height:30px; color:#0f2438; font-weight:700;">{{{TICKET_REF}}}</div>
+    <div style="font-size:16px; line-height:24px; color:#152033;">{{{CHANGE_TITLE}}}</div>
+  </td></tr>
+</table>
+
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="width:100%; border-collapse:collapse; margin:0 0 20px 0; border:1px solid #dbe5ee;">
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; width:36%; border-bottom:1px solid #dbe5ee;">Type</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee; font-weight:700;">{{CHANGE_TYPE}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Priority</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{CHANGE_PRIORITY}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Organization</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{CHANGE_ORGANIZATION}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Requested for</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{CHANGE_REQUESTED_FOR}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Implementor</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{CHANGE_IMPLEMENTOR}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Implementation start</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{CHANGE_IMPLEMENTATION_START}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Implementation end</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{CHANGE_IMPLEMENTATION_END}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Scope of Change</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{CHANGE_SCOPE_OF_CHANGE}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Affected Systems or Services</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{{CHANGE_AFFECTED_SYSTEMS}}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Implementation Steps</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{{CHANGE_IMPLEMENTATION_STEPS}}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173; border-bottom:1px solid #dbe5ee;">Validation Steps</td><td style="padding:10px 12px; color:#152033; border-bottom:1px solid #dbe5ee;">{{{CHANGE_VALIDATION_STEPS}}}</td></tr>
+  <tr><td style="padding:10px 12px; background:#f8fbff; color:#526173;">Rollback Plan</td><td style="padding:10px 12px; color:#152033;">{{CHANGE_ROLLBACK_PLAN}}</td></tr>
+</table>
+
+<p style="margin:0 0 18px 0;">Open the secure change view to review the implementation plan and next actions.</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin:0 0 8px 0;">
+  <tr>
+    <td style="background:#f59e0b; border-radius:6px;">
+      <a href="{{{CHANGE_VIEW_LINK}}}" style="display:inline-block; padding:12px 18px; background:#f59e0b; border:1px solid #d97706; color:#111827 !important; text-decoration:none !important; font-weight:700; line-height:20px; border-radius:6px;">View Change</a>
+    </td>
+  </tr>
+</table>

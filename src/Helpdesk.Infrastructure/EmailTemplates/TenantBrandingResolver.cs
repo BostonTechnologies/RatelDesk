@@ -1,0 +1,185 @@
+using System.Text.Encodings.Web;
+using System.Text.RegularExpressions;
+using Helpdesk.Application.Services.EmailTemplates;
+using Helpdesk.Application.WorkLogs;
+using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Services;
+using Microsoft.Extensions.Configuration;
+
+namespace Helpdesk.Infrastructure.EmailTemplates;
+
+public sealed class TenantBrandingResolver(
+    IRepository<TenantBranding> tenantBrandingRepository,
+    IImageLinkSigner imageLinkSigner,
+    IConfiguration configuration) : ITenantBrandingResolver
+{
+    private static readonly TimeSpan EmailLogoTokenLifetime = TimeSpan.FromDays(30);
+    private static readonly Regex TenantLogoPathPattern = new(
+        "^/api/tenants/(?<tenantId>[^/]+)/branding/logo/(?<filename>[^/?#]+)$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public async Task<TenantBrandingResolved> ResolveAsync(
+        string? tenantId,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        var defaults = BuildDefault();
+        if (!int.TryParse(tenantId, out var parsedTenantId))
+            return defaults;
+
+        var branding = (await tenantBrandingRepository.GetAllAsync())
+            .FirstOrDefault(x => x.TenantId == parsedTenantId);
+        if (branding is null)
+            return defaults;
+
+        var logoHtml = BuildLogoHtml(branding.LogoUrl, defaults.LogoHtml);
+        return new TenantBrandingResolved
+        {
+            BrandName = string.IsNullOrWhiteSpace(branding.BrandName) ? defaults.BrandName : branding.BrandName,
+            LogoHtml = logoHtml,
+            FooterHtml = string.IsNullOrWhiteSpace(branding.FooterHtml) ? defaults.FooterHtml : branding.FooterHtml,
+            PrimaryColor = string.IsNullOrWhiteSpace(branding.PrimaryColor) ? defaults.PrimaryColor : branding.PrimaryColor,
+            FromName = string.IsNullOrWhiteSpace(branding.FromName) ? defaults.FromName : branding.FromName,
+            ReplyTo = string.IsNullOrWhiteSpace(branding.ReplyTo) ? defaults.ReplyTo : branding.ReplyTo
+        };
+    }
+
+    private TenantBrandingResolved BuildDefault()
+    {
+        var defaultBrandName = configuration["EmailBrand:BrandName"] ?? "RatelDesk";
+        var defaultLogoHtml = configuration["EmailBrand:LogoHtml"] ?? BuildDefaultLogoHtml();
+        var defaultFooterHtml = configuration["EmailBrand:FooterHtml"] ?? """
+            <div style="margin:0;">
+              <strong style="color:#152033;">RatelDesk</strong><br />
+              This message was sent by the RatelDesk support platform. You can reply to ticket emails to add an update.
+            </div>
+            """;
+        var defaultColor = configuration["EmailBrand:PrimaryColor"] ?? "#0ea5e9";
+        var defaultReplyTo = configuration["EmailBrand:ReplyTo"] ?? string.Empty;
+        var defaultFromName = configuration["EmailBrand:FromName"] ?? defaultBrandName;
+
+        return new TenantBrandingResolved
+        {
+            BrandName = defaultBrandName,
+            LogoHtml = defaultLogoHtml,
+            FooterHtml = defaultFooterHtml,
+            PrimaryColor = defaultColor,
+            FromName = defaultFromName,
+            ReplyTo = defaultReplyTo
+        };
+    }
+
+    private string BuildLogoHtml(string? logoUrl, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(logoUrl))
+            return fallback;
+
+        var resolvedUrl = ResolveEmailLogoUrl(logoUrl.Trim());
+        if (string.IsNullOrWhiteSpace(resolvedUrl))
+            return fallback;
+
+        var encodedUrl = HtmlEncoder.Default.Encode(resolvedUrl);
+        return $"<img src=\"{encodedUrl}\" alt=\"RatelDesk\" width=\"220\" style=\"display:block; width:220px; max-width:100%; height:auto; border:0;\" />";
+    }
+
+    private string? ResolveEmailLogoUrl(string logoUrl)
+    {
+        if (TryBuildFreshTenantLogoUrl(logoUrl, out var refreshedUrl))
+            return refreshedUrl;
+
+        if (TryCreateHttpAbsoluteUri(logoUrl, out var absoluteUri))
+            return absoluteUri.ToString();
+
+        return BuildAbsoluteUrl(logoUrl);
+    }
+
+    private bool TryBuildFreshTenantLogoUrl(string logoUrl, out string? refreshedUrl)
+    {
+        refreshedUrl = null;
+        var path = ExtractPath(logoUrl);
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        var match = TenantLogoPathPattern.Match(path);
+        if (!match.Success)
+            return false;
+
+        var tenantId = Uri.UnescapeDataString(match.Groups["tenantId"].Value);
+        var filename = Uri.UnescapeDataString(match.Groups["filename"].Value);
+        var token = imageLinkSigner.GenerateToken(
+            "tenant-brand",
+            tenantId,
+            filename,
+            DateTimeOffset.UtcNow.Add(EmailLogoTokenLifetime));
+
+        var relative =
+            $"/api/tenants/{Uri.EscapeDataString(tenantId)}/branding/logo/{Uri.EscapeDataString(filename)}?token={Uri.EscapeDataString(token)}";
+        var baseUrl = ExtractBaseUrl(logoUrl) ?? GetPublicApiBaseUrl();
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return false;
+
+        refreshedUrl = $"{baseUrl.TrimEnd('/')}{relative}";
+        return true;
+    }
+
+    private static string? ExtractPath(string logoUrl)
+    {
+        if (TryCreateHttpAbsoluteUri(logoUrl, out var absoluteUri))
+            return absoluteUri.AbsolutePath;
+
+        var queryIndex = logoUrl.IndexOfAny(['?', '#']);
+        var path = queryIndex >= 0 ? logoUrl[..queryIndex] : logoUrl;
+        return path.StartsWith("/", StringComparison.Ordinal) ? path : $"/{path}";
+    }
+
+    private static string? ExtractBaseUrl(string logoUrl)
+    {
+        if (!TryCreateHttpAbsoluteUri(logoUrl, out var absoluteUri))
+            return null;
+
+        return absoluteUri.IsDefaultPort
+            ? $"{absoluteUri.Scheme}://{absoluteUri.Host}"
+            : $"{absoluteUri.Scheme}://{absoluteUri.Host}:{absoluteUri.Port}";
+    }
+
+    private string? BuildAbsoluteUrl(string logoUrl)
+    {
+        var baseUrl = GetPublicApiBaseUrl();
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return null;
+
+        var normalizedPath = logoUrl.StartsWith("/", StringComparison.Ordinal) ? logoUrl : $"/{logoUrl}";
+        return $"{baseUrl.TrimEnd('/')}{normalizedPath}";
+    }
+
+    private string? GetPublicApiBaseUrl() => configuration["StorageOptions:PublicApiBaseUrl"]?.TrimEnd('/');
+
+    private static bool TryCreateHttpAbsoluteUri(string value, out Uri uri)
+    {
+        if (Uri.TryCreate(value, UriKind.Absolute, out uri!) &&
+            (string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        uri = null!;
+        return false;
+    }
+
+    private string BuildDefaultLogoHtml()
+    {
+        var configuredLogoUrl = configuration["EmailBrand:LogoUrl"];
+        if (!string.IsNullOrWhiteSpace(configuredLogoUrl))
+            return BuildLogoHtml(configuredLogoUrl, string.Empty);
+
+        var publicApiBaseUrl = GetPublicApiBaseUrl();
+        if (string.IsNullOrWhiteSpace(publicApiBaseUrl))
+            return string.Empty;
+
+        var logoPath = configuration["EmailBrand:LogoPath"] ?? "/email-brand/rateldesk-mark.svg";
+        var normalizedPath = logoPath.StartsWith("/", StringComparison.Ordinal) ? logoPath : $"/{logoPath}";
+        return BuildLogoHtml($"{publicApiBaseUrl}{normalizedPath}", string.Empty);
+    }
+}

@@ -1,0 +1,27 @@
+@attribute [Authorize(Roles = "Request.User,Request.Manager,HelpdeskAdmin")]
+
+@using Helpdesk.Shared.DTOs.Request
+
+@inject IHttpClientFactory HttpClientFactory
+
+<OperatorTicketCreateForm Title="Create New Request"
+                          CreateAsync="CreateRequestAsync" />
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private Task<HttpResponseMessage> CreateRequestAsync(OperatorTicketCreateFormModel model)
+    {
+        var dto = new CreateRequestDto
+        {
+            Title = model.Title,
+            Description = model.Description,
+            Priority = model.Priority,
+            OrganizationId = model.OrganizationId,
+            CustomerId = model.CustomerId,
+            AssignedToId = model.AssignedToId
+        };
+
+        return HelpdeskApi.PostAsJsonAsync("api/v1/requests", dto);
+    }
+}

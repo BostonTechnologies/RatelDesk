@@ -1,0 +1,64 @@
+@using HelpDesk.NewWeb.Services
+@using Helpdesk.Shared.AiAssistant.Chat
+@using System.Text.Json
+
+<section class="ai-assistant-activity" data-testid="ai-assistant-activity">
+    <button type="button" class="activity-heading" aria-expanded="@expanded.ToString().ToLowerInvariant()" @onclick="Toggle">
+        <MudIcon Icon="@(expanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)" />
+        <span>AiAssistant activity · @Turn.Summary</span>
+        @if (!Turn.Completed && State == ChatState.Processing)
+        {
+            <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+            <span>Working…</span>
+        }
+    </button>
+    @if (expanded)
+    {
+        @foreach (var operation in Turn.Operations)
+        {
+            var metadata = operation.Metadata;
+            <div class="activity-row" @key="operation.Sequence">
+                <MudIcon Icon="@Icon(metadata)" Color="@(metadata?.Outcome == "failed" ? Color.Error : Color.Default)" />
+                <span class="activity-name">@(metadata is null ? "Tool activity (legacy record)" : $"{metadata.ProviderName ?? (metadata.ToolKind == "skill" ? "Skill" : "")}{(metadata.ProviderName is not null || metadata.ToolKind == "skill" ? " · " : "")}{metadata.DisplayName}")</span>
+                <span>@(metadata?.Outcome ?? (operation.Result is null ? "Running" : "Finished"))</span>
+                @if (metadata?.DurationMs is { } ms) { <span>@((ms / 1000d).ToString("0.##"))s</span> }
+            </div>
+        }
+        @foreach (var item in Turn.Activity)
+        {
+            <div class="activity-interaction">
+                <MudText Style="white-space: pre-wrap; overflow-wrap: anywhere">@item.Text</MudText>
+                @if (item.Type == "approval_request" && State == ChatState.AwaitingApproval && !Turn.Activity.Any(x => x.Type == "approval_response" && x.CallId == item.CallId))
+                {
+                    @foreach (var option in JsonSerializer.Deserialize<List<ChatOption>>(item.OptionsJson ?? "[]") ?? [])
+                    {
+                        <MudButton Disabled="Busy" OnClick="@(() => Approval.InvokeAsync((item.CallId!, option.Key)))">@option.Label</MudButton>
+                    }
+                }
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public ChatTurn Turn { get; set; } = null!;
+    [Parameter] public ChatState State { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<(string CallId, string Key)> Approval { get; set; }
+    private bool expanded, initialized, completed;
+    protected override void OnParametersSet()
+    {
+        if (!initialized || completed != Turn.Completed) expanded = Turn.InitiallyExpanded;
+        if (Turn.HasError || (Turn.HasPendingApproval && State != ChatState.Archived)) expanded = true;
+        completed = Turn.Completed; initialized = true;
+    }
+    private void Toggle() => expanded = !expanded;
+    private static string Icon(ChatActivityMetadata? metadata) => metadata?.Outcome == "failed" ? Icons.Material.Filled.ErrorOutline
+        : metadata?.ToolKind switch
+        {
+            "skill" => Icons.Material.Filled.MenuBook,
+            "mcp" => Icons.Material.Filled.Hub,
+            "discovery" => Icons.Material.Filled.Search,
+            _ => Icons.Material.Filled.Build
+        };
+}

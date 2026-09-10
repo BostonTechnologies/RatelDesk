@@ -1,0 +1,256 @@
+@using Helpdesk.Shared.DTOs.Customer
+@using Helpdesk.Shared.DTOs.Organization
+
+@inject IDialogService DialogService
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudAutocomplete T="CustomerPickerOption"
+                 Label="User the ticket is for"
+                 Placeholder="@Placeholder"
+                 Value="@SelectedOption"
+                 ValueChanged="OnOptionChanged"
+                 SearchFunc="SearchCustomers"
+                 ToStringFunc="@(option => option?.Label)"
+                 Variant="Variant.Outlined"
+                 Dense="@Dense"
+                 Margin="@Margin"
+                 Required="true"
+                 Disabled="@Disabled"
+                 Clearable="true"
+                 ResetValueOnEmptyText="true"
+                 CoerceText="false"
+                 DebounceInterval="250"
+                 Adornment="Adornment.End"
+                 AdornmentIcon="@Icons.Material.Filled.Search">
+    <ItemTemplate Context="option">
+        @if (option.IsCreateOption)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="py-1">
+                <MudIcon Icon="@Icons.Material.Filled.AddCircle" Size="Size.Small" />
+                <MudText Typo="Typo.body2">@option.Label</MudText>
+            </MudStack>
+        }
+        else if (option.Customer is not null)
+        {
+            <MudStack Spacing="0" Class="py-1">
+                <MudText Typo="Typo.body2">@option.Customer.Name</MudText>
+                <MudText Typo="Typo.caption">@option.Customer.Email</MudText>
+            </MudStack>
+        }
+    </ItemTemplate>
+    <NoItemsTemplate>
+        <MudText Typo="Typo.body2" Class="px-3 py-2">
+            @NoItemsText
+        </MudText>
+    </NoItemsTemplate>
+</MudAutocomplete>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [Parameter]
+    public string? OrganizationId { get; set; }
+
+    [Parameter]
+    public string? CustomerId { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> CustomerIdChanged { get; set; }
+
+    [Parameter]
+    public List<OrganizationDto> Organizations { get; set; } = new();
+
+    [Parameter]
+    public bool Dense { get; set; }
+
+    [Parameter]
+    public Margin Margin { get; set; } = Margin.Normal;
+
+    private List<CustomerDto> customers = new();
+    private string? loadedOrganizationId;
+    private CustomerPickerOption? SelectedOption => string.IsNullOrWhiteSpace(CustomerId)
+        ? null
+        : customers
+            .Where(x => x.Id == CustomerId)
+            .Select(x => new CustomerPickerOption { Customer = x })
+            .FirstOrDefault();
+
+    [Parameter]
+    public bool AllowCreate { get; set; } = true;
+
+    [Parameter]
+    public bool LockWhenSingleCustomer { get; set; }
+
+    private bool Disabled => string.IsNullOrWhiteSpace(OrganizationId) || (LockWhenSingleCustomer && customers.Count == 1);
+    private string Placeholder => string.IsNullOrWhiteSpace(OrganizationId)
+        ? "Select an organization first"
+        : "Search by name or email";
+    private string NoItemsText => string.IsNullOrWhiteSpace(OrganizationId)
+        ? "Select an organization first."
+        : AllowCreate
+            ? "Type to search or create a customer."
+            : "No eligible customers were found.";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.Equals(loadedOrganizationId, OrganizationId, StringComparison.Ordinal))
+        {
+            loadedOrganizationId = OrganizationId;
+            customers.Clear();
+            if (!string.IsNullOrWhiteSpace(CustomerId))
+            {
+                await CustomerIdChanged.InvokeAsync(null);
+            }
+
+            if (!string.IsNullOrWhiteSpace(OrganizationId))
+            {
+                await LoadCustomersAsync();
+                if (LockWhenSingleCustomer && customers.Count == 1)
+                {
+                    await CustomerIdChanged.InvokeAsync(customers[0].Id);
+                }
+            }
+        }
+    }
+
+    public async Task RefreshAsync()
+    {
+        await LoadCustomersAsync();
+    }
+
+    private async Task LoadCustomersAsync()
+    {
+        if (string.IsNullOrWhiteSpace(OrganizationId))
+        {
+            customers.Clear();
+            return;
+        }
+
+        try
+        {
+            var all = await HelpdeskApi.GetFromJsonAsync<List<CustomerDto>>($"api/v1/ticketing/customers?organizationId={Uri.EscapeDataString(OrganizationId)}") ?? new();
+            customers = all
+                .Where(x => x.IsEnabled)
+                .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            customers.Clear();
+            Snackbar.Add("Unable to load customers right now.", Severity.Warning);
+        }
+    }
+
+    private async Task<IEnumerable<CustomerPickerOption>> SearchCustomers(string value, CancellationToken token)
+    {
+        if (Disabled)
+        {
+            return Enumerable.Empty<CustomerPickerOption>();
+        }
+
+        if (!string.Equals(loadedOrganizationId, OrganizationId, StringComparison.Ordinal))
+        {
+            await OnParametersSetAsync();
+        }
+
+        var term = value?.Trim() ?? string.Empty;
+        var matches = string.IsNullOrWhiteSpace(term)
+            ? customers.Take(20)
+            : customers
+                .Where(x => Contains(x.Name, term) || Contains(x.Email, term))
+                .Take(20);
+
+        var options = matches
+            .Select(x => new CustomerPickerOption { Customer = x })
+            .ToList();
+
+        if (AllowCreate && !string.IsNullOrWhiteSpace(term) && !customers.Any(x => IsExactMatch(x, term)))
+        {
+            options.Add(new CustomerPickerOption
+            {
+                IsCreateOption = true,
+                SearchText = term
+            });
+        }
+
+        return options;
+    }
+
+    private async Task OnOptionChanged(CustomerPickerOption? option)
+    {
+        if (option is null)
+        {
+            await CustomerIdChanged.InvokeAsync(null);
+            return;
+        }
+
+        if (option.IsCreateOption)
+        {
+            await OpenCreateCustomerDialog(option.SearchText);
+            return;
+        }
+
+        await CustomerIdChanged.InvokeAsync(option.Customer?.Id);
+    }
+
+    private async Task OpenCreateCustomerDialog(string searchText)
+    {
+        if (string.IsNullOrWhiteSpace(OrganizationId))
+        {
+            Snackbar.Add("Select an organization before creating a customer.", Severity.Warning);
+            return;
+        }
+
+        var (name, email) = ParseSearchText(searchText);
+        var parameters = new DialogParameters
+        {
+            ["Organizations"] = Organizations,
+            ["OrganizationId"] = OrganizationId,
+            ["LockOrganization"] = true,
+            ["InitialName"] = name,
+            ["InitialEmail"] = email,
+            ["Title"] = "Create User"
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CustomerCreateDialog>("Create User", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled)
+        {
+            await CustomerIdChanged.InvokeAsync(null);
+            return;
+        }
+
+        await LoadCustomersAsync();
+
+        var created = result.Data as CustomerDto;
+        var createdId = created?.Id;
+        if (string.IsNullOrWhiteSpace(createdId) && !string.IsNullOrWhiteSpace(created?.Email))
+        {
+            createdId = customers.FirstOrDefault(x => string.Equals(x.Email, created.Email, StringComparison.OrdinalIgnoreCase))?.Id;
+        }
+
+        if (!string.IsNullOrWhiteSpace(createdId))
+        {
+            await CustomerIdChanged.InvokeAsync(createdId);
+        }
+    }
+
+    private static (string Name, string Email) ParseSearchText(string searchText)
+    {
+        var value = searchText.Trim();
+        if (value.Contains('@', StringComparison.Ordinal))
+        {
+            return (value[..value.IndexOf('@')], value);
+        }
+
+        return (value, string.Empty);
+    }
+
+    private static bool Contains(string? value, string term) =>
+        !string.IsNullOrWhiteSpace(value) && value.Contains(term, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsExactMatch(CustomerDto customer, string term) =>
+        string.Equals(customer.Email, term, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(customer.Name, term, StringComparison.OrdinalIgnoreCase);
+}

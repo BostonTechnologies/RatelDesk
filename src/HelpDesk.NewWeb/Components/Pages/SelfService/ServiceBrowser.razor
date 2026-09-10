@@ -1,0 +1,241 @@
+@page "/self-service"
+@page "/self-service/{ServiceId}"
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+
+@using System.Net.Http.Json
+@using MudBlazor
+@using Helpdesk.Shared.DTOs.Service
+
+<PageTitle>Self Service</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="self-service-page">
+    <section class="self-service-header">
+        <MudBreadcrumbs Items="_breadcrumbs" Class="self-service-breadcrumbs" />
+        <div class="self-service-heading-row">
+            <div class="self-service-heading-copy">
+                <MudText Typo="Typo.h3" HtmlTag="h1" Class="self-service-title">@CurrentCatalogTitle</MudText>
+                <MudText Typo="Typo.body2" Class="self-service-description">
+                    Browse available service folders and request cards. Pick a request to get started, or open a folder to find the right option.
+                </MudText>
+            </div>
+            <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" Class="self-service-total-chip">
+                @VisibleRequestSummary
+            </MudChip>
+        </div>
+        <MudDivider Class="self-service-divider" />
+        <MudTextField @bind-Value="searchString"
+                      Placeholder="Search services and requests"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Immediate="true"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Class="self-service-search" />
+    </section>
+
+    @if (loading)
+    {
+        <MudProgressLinear Indeterminate="true" Class="self-service-loading" />
+        <div class="self-service-card-grid">
+            @for (var i = 0; i < 8; i++)
+            {
+                <MudSkeleton Class="self-service-card-skeleton" />
+            }
+        </div>
+    }
+    else if (!filteredItems.Any())
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">No items found.</MudAlert>
+    }
+    else
+    {
+        <div class="self-service-card-grid">
+            @foreach (var item in filteredItems)
+            {
+                <button type="button"
+                        class="self-service-catalog-card @GetCardClass(item)"
+                        title="@item.Name"
+                        @onclick="() => OpenItem(item)">
+                    <span class="self-service-card-top">
+                        <span class="self-service-icon-shell">
+                            @if (item.ItemType == ServiceItemType.Service)
+                            {
+                                <MudBadge Color="Color.Primary"
+                                          Content="@GetBadgeText(item)"
+                                          Overlap="true"
+                                          Visible="@(item.AvailableRequestCount > 0)"
+                                          Class="self-service-count-badge">
+                                    <span class="self-service-icon-button" aria-hidden="true">
+                                        <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Large" />
+                                    </span>
+                                </MudBadge>
+                            }
+                            else
+                            {
+                                <span class="self-service-icon-button" aria-hidden="true">
+                                    <MudIcon Icon="@Icons.Material.Filled.NoteAdd" Size="Size.Large" />
+                                </span>
+                            }
+                        </span>
+                        <span class="self-service-card-arrow" aria-hidden="true">
+                            <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
+                        </span>
+                    </span>
+
+                    <span class="self-service-card-body">
+                        <span class="self-service-card-title">@item.Name</span>
+                        <span class="self-service-card-description">@GetDescription(item)</span>
+                    </span>
+
+                    <span class="self-service-card-footer">
+                        @if (item.ItemType == ServiceItemType.Service)
+                        {
+                            <span class="self-service-card-meta">@GetRequestCountText(item.AvailableRequestCount)</span>
+                        }
+                        else
+                        {
+                            <span class="self-service-card-meta">Request</span>
+                            @if (item.ReleaseStatus == Helpdesk.Shared.Models.RequestFormReleaseStatus.InTesting)
+                            {
+                                <span class="self-service-status-pill">In Testing</span>
+                            }
+                        }
+                    </span>
+                </button>
+            }
+        </div>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public string? ServiceId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? QuerySearch { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private bool loading = true;
+    private string? searchString;
+    private List<ServiceItemDto> serviceItems = new();
+    private List<BreadcrumbItem> _breadcrumbs = new();
+    private string? appliedQuerySearch;
+
+    private IEnumerable<ServiceItemDto> filteredItems =>
+        string.IsNullOrWhiteSpace(searchString)
+            ? serviceItems
+            : serviceItems.Where(i =>
+                (i.Name?.Contains(searchString, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (i.Description?.Contains(searchString, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    private string CurrentCatalogTitle => _breadcrumbs.Count > 1
+        ? _breadcrumbs[^1].Text
+        : "Self Service";
+
+    private string VisibleRequestSummary
+    {
+        get
+        {
+            var directRequests = serviceItems.Count(i => i.ItemType == ServiceItemType.RequestForm);
+            var nestedRequests = serviceItems
+                .Where(i => i.ItemType == ServiceItemType.Service)
+                .Sum(i => i.AvailableRequestCount);
+            return GetRequestCountText(directRequests + nestedRequests);
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.Equals(appliedQuerySearch, QuerySearch, StringComparison.Ordinal))
+        {
+            appliedQuerySearch = QuerySearch;
+            searchString = QuerySearch;
+        }
+
+        loading = true;
+        try
+        {
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load items: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadData()
+    {
+        var endpoint = string.IsNullOrWhiteSpace(ServiceId)
+            ? "api/v1/service-items"
+            : $"api/v1/service-items/{ServiceId}";
+
+        serviceItems = await HelpdeskApi.GetFromJsonAsync<List<ServiceItemDto>>(endpoint) ?? new();
+        await BuildBreadcrumbs();
+        StateHasChanged();
+    }
+
+    private async Task BuildBreadcrumbs()
+    {
+        var items = new List<BreadcrumbItem> { new("Self Service", "/self-service", false) };
+
+        if (!string.IsNullOrWhiteSpace(ServiceId))
+        {
+            try
+            {
+                var chain = await HelpdeskApi.GetFromJsonAsync<List<BreadcrumbDto>>($"api/v1/services/{ServiceId}/breadcrumb");
+                if (chain is not null && chain.Any())
+                {
+                    foreach (var c in chain)
+                    {
+                        items.Add(new BreadcrumbItem(c.Name, $"/self-service/{c.Id}", false));
+                    }
+                    items[^1] = new BreadcrumbItem(items[^1].Text, href: null, disabled: true);
+                    _breadcrumbs = items;
+                    return;
+                }
+            }
+            catch
+            {
+                // ignore breadcrumb errors
+            }
+        }
+
+        _breadcrumbs = items;
+    }
+
+    private void OpenItem(ServiceItemDto item)
+    {
+        if (item.ItemType == ServiceItemType.Service)
+        {
+            NavigationManager.NavigateTo($"/self-service/{item.Id}");
+        }
+        else
+        {
+            NavigationManager.NavigateTo($"/self-service/request/{item.Id}");
+        }
+    }
+
+    private static string GetCardClass(ServiceItemDto item) =>
+        item.ItemType == ServiceItemType.Service
+            ? "self-service-folder-card"
+            : "self-service-request-card";
+
+    private static string GetBadgeText(ServiceItemDto item) =>
+        item.AvailableRequestCount > 99 ? "99+" : item.AvailableRequestCount.ToString();
+
+    private static string GetRequestCountText(int count) =>
+        count == 1 ? "1 request" : $"{count} requests";
+
+    private static string GetDescription(ServiceItemDto item) =>
+        string.IsNullOrWhiteSpace(item.Description)
+            ? (item.ItemType == ServiceItemType.Service
+                ? "Open this folder to browse request options."
+                : "Start this self-service request.")
+            : item.Description;
+}

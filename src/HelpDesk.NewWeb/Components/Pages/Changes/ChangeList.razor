@@ -1,0 +1,407 @@
+@page "/changes"
+
+@using Helpdesk.Shared.DTOs
+@using Helpdesk.Shared.DTOs.Change
+@using Helpdesk.Shared.DTOs.User
+
+@attribute [Authorize(Roles = "Change.User,Change.Manager,HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager NavigationManager
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Changes</PageTitle>
+
+<div class="helpdesk-page">
+<MudPaper Class="helpdesk-content-surface pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="helpdesk-page-header">
+        <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Changes</MudText>
+        <MudSpacer />
+        <MudTooltip Text="Historic">
+            <MudIconButton Icon="@Icons.Material.Filled.History"
+                           Color="@(historicOnly ? Color.Primary : Color.Default)"
+                           Variant="@(historicOnly ? Variant.Filled : Variant.Outlined)"
+                           aria-label="Show historic changes"
+                           OnClick="ToggleHistoric" />
+        </MudTooltip>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+
+    <div class="helpdesk-list-toolbar">
+        <MudTextField @bind-Value="search"
+                      Placeholder="Search changes"
+                      Adornment="Adornment.Start"
+                      Icon="@Icons.Material.Filled.Search"
+                      Immediate="true"
+                      OnBlur="Reload"
+                      OnKeyUp="@(async _ => await DebouncedReload())"
+                      Class="helpdesk-list-search" />
+
+        <MudCheckBox T="bool"
+                     @bind-Value="aiInvolvedOnly"
+                     Color="Color.Primary">
+            AI involved only
+        </MudCheckBox>
+    </div>
+
+    <TicketTable TTicket="ChangeDto"
+                 @ref="_table"
+                 TicketType="changes"
+                 ServerData="LoadServerData"
+                 SelectedItems="_selected"
+                 SelectedItemsChanged="@(x => _selected = x)"
+                 OnRowClick="NavigateToChange"
+                 StateTemplate="RenderLifecycleState"
+                 EnableBulkState="false"
+                 BulkStateRequested="ApplyBulkState"
+                 BulkAssignRequested="ApplyBulkAssign">
+        <SubjectTemplate Context="change">
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.body2">@change.Title</MudText>
+                @if (change.AiSuggestionCount > 0 || change.AiAuditCount > 0 || change.LastAiActivityAt.HasValue)
+                {
+                    <MudStack Row="true" Spacing="1" Class="mt-1">
+                        @if (change.AiSuggestionCount > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                                @($"{change.AiSuggestionCount} AI suggestion{(change.AiSuggestionCount == 1 ? string.Empty : "s")}")
+                            </MudChip>
+                        }
+                        @if (change.AiAuditCount > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Outlined">
+                                @($"{change.AiAuditCount} AI event{(change.AiAuditCount == 1 ? string.Empty : "s")}")
+                            </MudChip>
+                        }
+                        @if (change.LastAiActivityAt.HasValue)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @($"AI active {change.LastAiActivityAt.Value.ToLocalTime():g}")
+                            </MudChip>
+                        }
+                    </MudStack>
+                }
+            </MudStack>
+        </SubjectTemplate>
+        <AssigneeTemplate Context="change">
+            @RenderImplementor(change)
+        </AssigneeTemplate>
+        <CustomerTemplate Context="change">
+            @RenderRequestedFor(change)
+        </CustomerTemplate>
+    </TicketTable>
+</MudPaper>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? QuerySearch { get; set; }
+
+    [SupplyParameterFromQuery]
+    public bool ActiveOnly { get; set; }
+
+    [SupplyParameterFromQuery(Name = "lifecycleState")]
+    public string? LifecycleStateQuery { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private TicketTable<ChangeDto>? _table;
+    private string? search;
+    private CancellationTokenSource? _debounceCts;
+    private HashSet<ChangeDto> _selected = new();
+    private List<UserDto> teamMembers = new();
+    private bool aiInvolvedOnly;
+    private bool historicOnly;
+    private string? appliedQuerySearch;
+
+    protected override void OnParametersSet()
+    {
+        if (!string.Equals(appliedQuerySearch, QuerySearch, StringComparison.Ordinal))
+        {
+            appliedQuerySearch = QuerySearch;
+            search = QuerySearch;
+            _ = _table?.ReloadServerData();
+        }
+    }
+
+    private async Task<TableData<ChangeDto>> LoadServerData(TableState state, CancellationToken cancellationToken)
+    {
+        var page = state.Page + 1;
+        var pageSize = state.PageSize <= 0 ? 10 : state.PageSize;
+        var url = $"api/v1/changes?page={page}&pageSize={pageSize}";
+
+        if (aiInvolvedOnly)
+        {
+            url += "&aiInvolved=true";
+        }
+
+        if (ActiveOnly)
+        {
+            url += "&activeOnly=true";
+        }
+
+        var lifecycleState = ParseLifecycleStateQuery(LifecycleStateQuery);
+        if (lifecycleState.HasValue)
+        {
+            url += $"&lifecycleState={lifecycleState.Value}";
+        }
+
+        if (historicOnly)
+        {
+            url += "&historicOnly=true";
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            url += $"&q={Uri.EscapeDataString(search)}";
+        }
+
+        if (teamMembers.Count == 0)
+        {
+            try { teamMembers = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users", cancellationToken) ?? new(); }
+            catch { teamMembers = new(); }
+        }
+
+        PagedResponse<ChangeDto> response;
+        try
+        {
+            response = await HelpdeskApi.GetFromJsonAsync<PagedResponse<ChangeDto>>(url, cancellationToken) ?? new();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            Snackbar.Add("Unable to load changes right now. Please refresh and try again.", Severity.Error);
+            response = new PagedResponse<ChangeDto>();
+        }
+
+        return new TableData<ChangeDto>
+        {
+            Items = response.Items ?? new List<ChangeDto>(),
+            TotalItems = response.TotalCount
+        };
+    }
+
+    private void NavigateToDetail(string ticketType, string id)
+    {
+        NavigationManager.NavigateTo($"/{ticketType}/{id}");
+    }
+
+    private void NavigateToChange(string id) => NavigateToDetail("changes", id);
+
+    private static RenderFragment RenderRequestedFor(ChangeDto change) => builder =>
+    {
+        var display = FormatShortPerson(change.RequestedForUserName, change.RequestedForUserEmail, change.RequestedForUserId);
+        var tooltip = FormatPerson(change.RequestedForUserName, change.RequestedForUserEmail, change.RequestedForUserId);
+        builder.OpenComponent<MudTooltip>(0);
+        builder.AddAttribute(1, nameof(MudTooltip.Text), tooltip);
+        builder.AddAttribute(2, nameof(MudTooltip.ChildContent), (RenderFragment)(tooltipBuilder =>
+        {
+            tooltipBuilder.OpenComponent<MudChip<string>>(3);
+            tooltipBuilder.AddAttribute(4, nameof(MudChip<string>.Size), Size.Small);
+            tooltipBuilder.AddAttribute(5, nameof(MudChip<string>.Variant), Variant.Outlined);
+            tooltipBuilder.AddAttribute(6, nameof(MudChip<string>.Color), string.IsNullOrWhiteSpace(display) ? Color.Warning : Color.Info);
+            tooltipBuilder.AddAttribute(7, nameof(MudChip<string>.ChildContent), (RenderFragment)(chipBuilder =>
+                chipBuilder.AddContent(8, string.IsNullOrWhiteSpace(display) ? "Missing requested-for" : display)));
+            tooltipBuilder.CloseComponent();
+        }));
+        builder.CloseComponent();
+    };
+
+    private static RenderFragment RenderImplementor(ChangeDto change) => builder =>
+    {
+        var display = FormatShortPerson(change.ImplementorUserName, change.ImplementorUserEmail, change.ImplementorUserId);
+        var tooltip = FormatPerson(change.ImplementorUserName, change.ImplementorUserEmail, change.ImplementorUserId);
+        builder.OpenComponent<MudTooltip>(0);
+        builder.AddAttribute(1, nameof(MudTooltip.Text), tooltip);
+        builder.AddAttribute(2, nameof(MudTooltip.ChildContent), (RenderFragment)(tooltipBuilder =>
+        {
+            tooltipBuilder.OpenComponent<MudAvatar>(3);
+            tooltipBuilder.AddAttribute(4, nameof(MudAvatar.Size), Size.Medium);
+            tooltipBuilder.AddAttribute(5, nameof(MudAvatar.Color), string.IsNullOrWhiteSpace(display) ? Color.Warning : Color.Primary);
+            tooltipBuilder.AddAttribute(6, nameof(MudAvatar.Variant), Variant.Filled);
+            tooltipBuilder.AddAttribute(7, nameof(MudAvatar.ChildContent), (RenderFragment)(avatarBuilder =>
+                avatarBuilder.AddContent(8, Initials(display))));
+            tooltipBuilder.CloseComponent();
+        }));
+        builder.CloseComponent();
+    };
+
+    private RenderFragment RenderLifecycleState(ChangeDto change) => builder =>
+    {
+        builder.OpenComponent<ChangeLifecycleStatePicker>(0);
+        builder.AddAttribute(1, nameof(ChangeLifecycleStatePicker.ChangeId), change.Id);
+        builder.AddAttribute(2, nameof(ChangeLifecycleStatePicker.LifecycleState), change.LifecycleState);
+        builder.AddAttribute(3, nameof(ChangeLifecycleStatePicker.ChangeUpdated), EventCallback.Factory.Create<ChangeDto>(this, async updated =>
+        {
+            change.State = updated.State;
+            change.LifecycleState = updated.LifecycleState;
+            change.UpdatedAt = updated.UpdatedAt;
+            await Reload();
+        }));
+        builder.CloseComponent();
+    };
+
+    private static string FormatPerson(string? name, string? email, string? fallbackId)
+    {
+        if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(email))
+        {
+            return $"{name} ({email})";
+        }
+
+        return FirstNonEmpty(name, email, fallbackId) ?? string.Empty;
+    }
+
+    private static string FormatShortPerson(string? name, string? email, string? fallbackId)
+    {
+        var value = FirstNonEmpty(name, email, fallbackId) ?? string.Empty;
+        return value.Contains('@', StringComparison.Ordinal)
+            ? value.Split('@')[0]
+            : value;
+    }
+
+    private static string Initials(string? display)
+    {
+        if (string.IsNullOrWhiteSpace(display))
+        {
+            return "?";
+        }
+
+        var parts = display.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1)
+        {
+            return parts[0].Length >= 2
+                ? $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[0][1])}"
+                : char.ToUpperInvariant(parts[0][0]).ToString();
+        }
+
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+
+    private static string? FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private static ChangeLifecycleState? ParseLifecycleStateQuery(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return Enum.TryParse<ChangeLifecycleState>(value, ignoreCase: true, out var state)
+            ? state
+            : null;
+    }
+
+    private static string GetLifecycleLabel(ChangeLifecycleState state) => state switch
+    {
+        ChangeLifecycleState.Draft => "Draft",
+        ChangeLifecycleState.Submitted => "Submitted",
+        ChangeLifecycleState.PendingApproval => "Pending Approval",
+        ChangeLifecycleState.ApprovedForImplementation => "Approved For Implementation",
+        ChangeLifecycleState.ImplementationInProgress => "Implementation In Progress",
+        ChangeLifecycleState.ImplementedSuccess => "Implemented - Success",
+        ChangeLifecycleState.ImplementedBackedOut => "Implemented - Backed Out",
+        _ => state.ToString()
+    };
+
+    private static Color GetLifecycleColor(ChangeLifecycleState state) => state switch
+    {
+        ChangeLifecycleState.Submitted => Color.Info,
+        ChangeLifecycleState.PendingApproval => Color.Warning,
+        ChangeLifecycleState.ApprovedForImplementation => Color.Primary,
+        ChangeLifecycleState.ImplementationInProgress => Color.Secondary,
+        ChangeLifecycleState.ImplementedSuccess => Color.Success,
+        ChangeLifecycleState.ImplementedBackedOut => Color.Warning,
+        _ => Color.Default
+    };
+
+    private async Task OpenCreateDialog()
+    {
+        var parameters = new DialogParameters();
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.False,
+            FullWidth = true,
+            FullScreen = false
+        };
+        var dialog = await DialogService.ShowAsync<CreateChangeDialog>("Create Change", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is ChangeDto createdChange && !string.IsNullOrWhiteSpace(createdChange.Id))
+        {
+            NavigateToChange(createdChange.Id);
+            return;
+        }
+
+        if (!result.Canceled && _table is not null)
+        {
+            await _table.ReloadServerData();
+        }
+    }
+
+    private Task Reload()
+    {
+        _selected.Clear();
+        return _table?.ReloadServerData() ?? Task.CompletedTask;
+    }
+
+    private async Task ToggleHistoric()
+    {
+        historicOnly = !historicOnly;
+        await Reload();
+    }
+
+    private async Task DebouncedReload()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(300, _debounceCts.Token);
+            await Reload();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task ApplyBulkState()
+    {
+        if (_selected.Count == 0 || _table is null) return;
+
+        var ids = _selected.Select(x => x.Id).ToList();
+        var selectedState = _table.SelectedBulkState;
+        var response = await HelpdeskApi.PostAsJsonAsync("/api/v1/changes/bulk/state", new { Ids = ids, NewState = selectedState, Comment = (string?)null });
+        if (response.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Updated {_selected.Count} change(s) to {selectedState}", Severity.Success);
+            await Reload();
+        }
+        else
+        {
+            Snackbar.Add("Bulk update failed", Severity.Error);
+        }
+    }
+
+    private async Task ApplyBulkAssign()
+    {
+        if (_selected.Count == 0 || _table is null) return;
+
+        var ids = _selected.Select(x => x.Id).ToList();
+        var assigneeId = _table.SelectedBulkAssigneeId;
+        var response = await HelpdeskApi.PostAsJsonAsync("/api/v1/changes/bulk/assign", new { Ids = ids, AssignedToId = assigneeId });
+        if (response.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Assigned {_selected.Count} change(s)", Severity.Success);
+            await Reload();
+        }
+        else
+        {
+            Snackbar.Add("Bulk assign failed", Severity.Error);
+        }
+    }
+
+}

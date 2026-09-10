@@ -1,0 +1,171 @@
+@inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.Sla
+@using Helpdesk.Shared.Enums
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudText Typo="Typo.h6">Working Calendars</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="@string.IsNullOrWhiteSpace(TenantId)" OnClick="AddCalendar">Create</MudButton>
+    </MudStack>
+
+    @if (string.IsNullOrWhiteSpace(TenantId))
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">Select a tenant to view working calendars.</MudText>
+    }
+    else
+    {
+        <div class="sla-table-wrap">
+            <MudTable Items="FilteredCalendars" Dense="true" Hover="true" Breakpoint="Breakpoint.None" Class="sla-compact-table">
+                <HeaderContent>
+                    <MudTh>Name</MudTh>
+                    <MudTh>Timezone</MudTh>
+                    <MudTh>Active</MudTh>
+                    <MudTh Class="sla-actions"></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Name</MudTd>
+                    <MudTd>@context.TimeZoneId</MudTd>
+                    <MudTd>@(context.IsActive ? "Yes" : "No")</MudTd>
+                    <MudTd Class="sla-actions">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" OnClick="() => EditCalendar(context)" />
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </div>
+    }
+</MudPaper>
+
+<style>
+    .sla-table-wrap {
+        overflow-x: auto;
+    }
+
+    .sla-compact-table th,
+    .sla-compact-table td {
+        white-space: nowrap;
+        padding: 4px 8px;
+    }
+
+    .sla-actions {
+        width: 48px;
+        text-align: right;
+    }
+</style>
+
+@code {
+    [Parameter] public string? TenantId { get; set; }
+    [Parameter] public List<TenantLookupDto> Tenants { get; set; } = new();
+    [Parameter] public EventCallback CalendarsChanged { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<WorkingCalendarDto> calendars = new();
+    private IEnumerable<WorkingCalendarDto> FilteredCalendars => calendars
+        .Where(x => x.ScopeType == CalendarScopeType.Tenant && string.Equals(x.TenantId, TenantId, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(x => x.Name);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        calendars = await HelpdeskApi.GetFromJsonAsync<List<WorkingCalendarDto>>("api/v1/sla-calendars") ?? new();
+    }
+
+    private async Task AddCalendar()
+    {
+        if (string.IsNullOrWhiteSpace(TenantId))
+        {
+            Snackbar.Add("Please select a tenant first.", Severity.Warning);
+            return;
+        }
+
+        var model = new WorkingCalendarDto
+        {
+            Name = "New Calendar",
+            TenantId = TenantId,
+            ScopeType = CalendarScopeType.Tenant,
+            IsActive = true,
+            TimeZoneId = "Africa/Johannesburg",
+            WeeklyRules = Enumerable.Range(0, 7).Select(day => new WorkingDayRuleDto
+            {
+                DayOfWeek = day,
+                IsWorkingDay = day is >= 1 and <= 5,
+                WorkingHours = day is >= 1 and <= 5
+                    ? new List<TimeRangeDto> { new() { Start = TimeSpan.FromHours(8), End = TimeSpan.FromHours(17) } }
+                    : new List<TimeRangeDto>()
+            }).ToList()
+        };
+
+        await OpenDialogAsync(model, isCreate: true);
+    }
+
+    private Task EditCalendar(WorkingCalendarDto calendar)
+    {
+        var clone = new WorkingCalendarDto
+        {
+            Id = calendar.Id,
+            Name = calendar.Name,
+            ScopeType = CalendarScopeType.Tenant,
+            TenantId = TenantId,
+            TimeZoneId = calendar.TimeZoneId,
+            IsActive = calendar.IsActive,
+            WeeklyRules = calendar.WeeklyRules.Select(x => new WorkingDayRuleDto
+            {
+                DayOfWeek = x.DayOfWeek,
+                IsWorkingDay = x.IsWorkingDay,
+                WorkingHours = x.WorkingHours.Select(y => new TimeRangeDto { Start = y.Start, End = y.End }).ToList()
+            }).ToList(),
+            Exceptions = calendar.Exceptions.Select(x => new CalendarExceptionDto
+            {
+                Date = x.Date,
+                IsWorkingDayOverride = x.IsWorkingDayOverride,
+                WorkingHoursOverride = x.WorkingHoursOverride.Select(y => new TimeRangeDto { Start = y.Start, End = y.End }).ToList(),
+                Note = x.Note
+            }).ToList()
+        };
+
+        return OpenDialogAsync(clone, isCreate: false);
+    }
+
+    private async Task OpenDialogAsync(WorkingCalendarDto model, bool isCreate)
+    {
+        var parameters = new DialogParameters
+        {
+            ["Model"] = model,
+            ["IsCreate"] = isCreate,
+            ["Tenants"] = Tenants,
+            ["TenantId"] = TenantId
+        };
+        var dialog = await DialogService.ShowAsync<WorkingCalendarDialog>(isCreate ? "Create Calendar" : "Edit Calendar", parameters, new DialogOptions
+        {
+            MaxWidth = MaxWidth.Large,
+            FullWidth = true
+        });
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not WorkingCalendarDto payload)
+        {
+            return;
+        }
+
+        payload.ScopeType = CalendarScopeType.Tenant;
+        payload.TenantId = TenantId;
+        var response = isCreate
+            ? await HelpdeskApi.PostAsJsonAsync("api/v1/sla-calendars", payload)
+            : await HelpdeskApi.PutAsJsonAsync($"api/v1/sla-calendars/{payload.Id}", payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            Snackbar.Add($"Failed to save: {error}", Severity.Error);
+            return;
+        }
+
+        await LoadAsync();
+        await CalendarsChanged.InvokeAsync();
+    }
+}

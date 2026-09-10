@@ -1,0 +1,173 @@
+@page "/assets/{Id}"
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Asset: @(asset?.Name ?? "...")</PageTitle>
+
+@if (loading)
+{
+    <MudPaper Class="pa-4 d-flex justify-center">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    </MudPaper>
+}
+else if (asset == null)
+{
+    <MudAlert Severity="Severity.Error">Could not load the asset.</MudAlert>
+}
+else
+{
+    <MudCard Class="pa-4">
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudTextField Value="@asset.Name" ValueChanged="((string v) => OnNameChanged(v))" Label="Name" Variant="Variant.Outlined" Required="true" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField Value="@asset.Type" ValueChanged="((string? v) => OnTypeChanged(v))" Label="Type" Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField Value="@asset.Manufacturer" ValueChanged="((string? v) => OnManufacturerChanged(v))" Label="Manufacturer" Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField Value="@asset.Model" ValueChanged="((string? v) => OnModelChanged(v))" Label="Model" Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField Value="@asset.SerialNumber" ValueChanged="((string? v) => OnSerialChanged(v))" Label="Serial Number" Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField Value="@asset.Notes" ValueChanged="((string? v) => OnNotesChanged(v))" Label="Notes" Variant="Variant.Outlined" Lines="3" />
+            </MudItem>
+        </MudGrid>
+        <MudCardActions Class="px-4 pt-4">
+            <MudButton OnClick="RevertChanges" Disabled="!hasChanges || isUpdating">Revert</MudButton>
+            <MudButton OnClick="SaveChangesAsync" Variant="Variant.Filled" Color="Color.Primary" Disabled="!hasChanges || isUpdating">
+                @if (isUpdating)
+                {
+                    <MudProgressCircular Class="mr-2" Size="Size.Small" Indeterminate="true" />
+                }
+                Save Changes
+            </MudButton>
+        </MudCardActions>
+    </MudCard>
+}
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [Parameter] public string Id { get; set; } = string.Empty;
+
+    private Asset? asset;
+    private Asset? originalAsset;
+    private bool loading = true;
+    private bool isUpdating = false;
+    private bool hasChanges = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            originalAsset = await HelpdeskApi.GetFromJsonAsync<Asset>($"api/v1/assets/{Id}");
+            if (originalAsset != null)
+            {
+                asset = new Asset
+                {
+                    Id = originalAsset.Id,
+                    Name = originalAsset.Name,
+                    Type = originalAsset.Type,
+                    Manufacturer = originalAsset.Manufacturer,
+                    Model = originalAsset.Model,
+                    SerialNumber = originalAsset.SerialNumber,
+                    Notes = originalAsset.Notes,
+                    OrganizationId = originalAsset.OrganizationId
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading asset: {ex.Message}", Severity.Error);
+            asset = null;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void OnNameChanged(string value)
+    {
+        if (asset is null) return;
+        asset.Name = value;
+        hasChanges = true;
+    }
+    private void OnTypeChanged(string? value)
+    {
+        if (asset is null) return;
+        asset.Type = value;
+        hasChanges = true;
+    }
+    private void OnManufacturerChanged(string? value)
+    {
+        if (asset is null) return;
+        asset.Manufacturer = value;
+        hasChanges = true;
+    }
+    private void OnModelChanged(string? value)
+    {
+        if (asset is null) return;
+        asset.Model = value;
+        hasChanges = true;
+    }
+    private void OnSerialChanged(string? value)
+    {
+        if (asset is null) return;
+        asset.SerialNumber = value;
+        hasChanges = true;
+    }
+    private void OnNotesChanged(string? value)
+    {
+        if (asset is null) return;
+        asset.Notes = value;
+        hasChanges = true;
+    }
+
+    private void RevertChanges()
+    {
+        if (originalAsset is null || asset is null) return;
+        asset.Name = originalAsset.Name;
+        asset.Type = originalAsset.Type;
+        asset.Manufacturer = originalAsset.Manufacturer;
+        asset.Model = originalAsset.Model;
+        asset.SerialNumber = originalAsset.SerialNumber;
+        asset.Notes = originalAsset.Notes;
+        hasChanges = false;
+    }
+
+    private async Task SaveChangesAsync()
+    {
+        if (asset is null || !hasChanges) return;
+        isUpdating = true;
+        try
+        {
+            var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/assets/{Id}", asset);
+            if (response.IsSuccessStatusCode)
+            {
+                originalAsset = await response.Content.ReadFromJsonAsync<Asset>();
+                asset = originalAsset;
+                hasChanges = false;
+                Snackbar.Add("Asset saved successfully!", Severity.Success);
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Error saving asset: {error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"A client-side error occurred: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            isUpdating = false;
+        }
+    }
+}

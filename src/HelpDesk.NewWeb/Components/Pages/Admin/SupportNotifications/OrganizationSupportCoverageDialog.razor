@@ -1,0 +1,133 @@
+@using System.ComponentModel.DataAnnotations
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.SupportNotifications
+@using Helpdesk.Shared.Enums
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(Coverage is null ? Icons.Material.Filled.AddCircle : Icons.Material.Filled.Edit)" Class="mr-2 mb-n1" />
+            @(Coverage is null ? "Add Coverage Route" : "Edit Coverage Route")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="form" Model="model" Class="mt-2">
+            <MudSelect T="string" @bind-Value="model.CustomerOrganizationId" Label="Customer organization" Required="true" Dense="true">
+                @foreach (var organization in Organizations.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" Value="@model.ProviderOrganizationId" ValueChanged="OnProviderChanged" Label="Provider organization" Required="true" Dense="true">
+                @foreach (var organization in Organizations.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" @bind-Value="model.SupportGroupId" Label="Support group" Required="true" Dense="true">
+                @foreach (var group in FilteredSupportGroups)
+                {
+                    <MudSelectItem T="string" Value="@group.Id">@group.Name (@OrganizationName(group.OwningOrganizationId))</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="SupportCoverageRole" @bind-Value="model.Role" Label="Role" Dense="true">
+                @foreach (var role in CoverageRoles)
+                {
+                    <MudSelectItem Value="@role">@SupportNotificationLabels.CoverageRole(role)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSwitch T="bool" @bind-Value="model.IsEnabled" Label="Enabled" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public OrganizationSupportCoverageDto? Coverage { get; set; }
+    [Parameter] public string? DefaultCustomerOrganizationId { get; set; }
+    [Parameter] public List<OrganizationDto> Organizations { get; set; } = new();
+    [Parameter] public List<SupportGroupDto> SupportGroups { get; set; } = new();
+
+    private static readonly SupportCoverageRole[] CoverageRoles =
+    [
+        SupportCoverageRole.Primary,
+        SupportCoverageRole.Escalation,
+        SupportCoverageRole.Backup
+    ];
+
+    private MudForm form = default!;
+    private CoverageFormModel model = new();
+
+    private IEnumerable<SupportGroupDto> FilteredSupportGroups
+        => SupportGroups
+            .Where(x => string.IsNullOrWhiteSpace(model.ProviderOrganizationId) ||
+                        string.Equals(x.OwningOrganizationId, model.ProviderOrganizationId, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+    protected override void OnInitialized()
+    {
+        var customerId = Coverage?.CustomerOrganizationId ?? DefaultCustomerOrganizationId ?? string.Empty;
+        var customer = Organizations.FirstOrDefault(x => string.Equals(x.Id, customerId, StringComparison.OrdinalIgnoreCase));
+        var providerId = Coverage?.ProviderOrganizationId
+            ?? customer?.ItSupportOrganizationId
+            ?? customerId;
+
+        model = new CoverageFormModel
+        {
+            CustomerOrganizationId = customerId,
+            ProviderOrganizationId = providerId,
+            SupportGroupId = Coverage?.SupportGroupId ?? DefaultGroupId(providerId),
+            Role = Coverage?.Role ?? SupportCoverageRole.Primary,
+            IsEnabled = Coverage?.IsEnabled ?? true
+        };
+    }
+
+    private void OnProviderChanged(string providerOrganizationId)
+    {
+        model.ProviderOrganizationId = providerOrganizationId;
+        if (!FilteredSupportGroups.Any(x => string.Equals(x.Id, model.SupportGroupId, StringComparison.OrdinalIgnoreCase)))
+        {
+            model.SupportGroupId = DefaultGroupId(providerOrganizationId);
+        }
+    }
+
+    private string DefaultGroupId(string? providerOrganizationId)
+        => SupportGroups
+               .Where(x => string.IsNullOrWhiteSpace(providerOrganizationId) ||
+                           string.Equals(x.OwningOrganizationId, providerOrganizationId, StringComparison.OrdinalIgnoreCase))
+               .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+               .FirstOrDefault()?.Id
+           ?? SupportGroups.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault()?.Id
+           ?? string.Empty;
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        Dialog.Close(DialogResult.Ok(model));
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private string OrganizationName(string? id)
+        => Organizations.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase))?.Name
+           ?? id
+           ?? "-";
+
+    public sealed class CoverageFormModel
+    {
+        [Required] public string CustomerOrganizationId { get; set; } = string.Empty;
+        [Required] public string ProviderOrganizationId { get; set; } = string.Empty;
+        [Required] public string SupportGroupId { get; set; } = string.Empty;
+        public SupportCoverageRole Role { get; set; } = SupportCoverageRole.Primary;
+        public bool IsEnabled { get; set; } = true;
+    }
+}

@@ -1,0 +1,44 @@
+.helpdesk-bulk-toolbar {
+    border: 1px solid color-mix(in srgb, var(--mud-palette-primary) 26%, var(--mud-palette-divider));
+    background: color-mix(in srgb, var(--mud-palette-primary) 5%, var(--mud-palette-surface));
+}
+
+.helpdesk-bulk-selection-count {
+    min-width: 96px;
+    font-weight: 600;
+}
+
+.helpdesk-bulk-state-picker {
+    min-width: 150px;
+}
+
+.helpdesk-bulk-assignee-picker {
+    min-width: 240px;
+}
+
+.helpdesk-bulk-action-picker {
+    min-width: 220px;
+}
+
+::deep .ticket-row {
+    cursor: pointer;
+}
+
+::deep .mud-table-cell {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+::deep .mud-table-row {
+    height: 40px;
+}
+
+@media (max-width: 800px) {
+    .helpdesk-bulk-selection-count,
+    .helpdesk-bulk-state-picker,
+    .helpdesk-bulk-assignee-picker,
+    .helpdesk-bulk-action-picker {
+        width: 100%;
+        min-width: 0;
+    }
+}

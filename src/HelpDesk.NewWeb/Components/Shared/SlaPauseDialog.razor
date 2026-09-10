@@ -1,0 +1,41 @@
+@using Helpdesk.Shared.DTOs.Sla
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Pause SLA</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField T="string"
+                      Label="Reason"
+                      Variant="Variant.Outlined"
+                      Required="true"
+                      MaxLength="200"
+                      Lines="3"
+                      @bind-Value="Reason" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Pause</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private string Reason { get; set; } = string.Empty;
+
+    private void Submit()
+    {
+        if (string.IsNullOrWhiteSpace(Reason))
+        {
+            return;
+        }
+
+        Dialog.Close(DialogResult.Ok(new PauseSlaRequest { Reason = Reason.Trim() }));
+    }
+
+    private void Cancel()
+    {
+        Dialog.Cancel();
+    }
+}

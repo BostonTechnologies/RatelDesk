@@ -1,0 +1,688 @@
+@page "/self-service/request/{RequestFormId}"
+@attribute [Authorize]
+@using System.Net.Http.Json
+@using System.Security.Claims
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Helpdesk.Shared.DTOs.Request
+@using Helpdesk.Shared.DTOs.RequestForm
+@using Helpdesk.Shared.DTOs.Resources
+@using Microsoft.AspNetCore.Components.Authorization
+
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Request Submission</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="helpdesk-page self-service-form-page">
+    @if (loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (!string.IsNullOrWhiteSpace(loadError))
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@loadError</MudAlert>
+    }
+    else if (submitted is not null)
+    {
+        <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Request submitted</MudText>
+            <MudText Typo="Typo.body1" Class="mt-2">Tracking ID: <b>@submitted.TrackingId</b></MudText>
+            <MudText Typo="Typo.body2">Request ID: @submitted.RequestId</MudText>
+            <MudStack Row="true" Spacing="2" Class="self-service-form-actions mt-4">
+                <MudButton Variant="Variant.Outlined" OnClick="GoToCatalog">Back to catalog</MudButton>
+                @if (canOpenTechnicianView)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenSubmittedRequest">Open Request</MudButton>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+    else
+    {
+        <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">@formTitle</MudText>
+            @if (releaseStatus == Helpdesk.Shared.Models.RequestFormReleaseStatus.InTesting)
+            {
+                <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Class="mt-2 mb-2">In Testing</MudChip>
+            }
+            @if (!string.IsNullOrWhiteSpace(formDescription))
+            {
+                <MudText Typo="Typo.body2" Class="mb-3">@formDescription</MudText>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(submitError))
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">@submitError</MudAlert>
+            }
+
+            <MudForm @ref="formRef">
+                <MudGrid>
+                    @foreach (var item in fields)
+                    {
+                        <MudItem xs="12">
+                            @switch (item.Field.Type)
+                            {
+                                case "text":
+                                    @if (item.Field.DataBinding is not null)
+                                    {
+                                        <MudAutocomplete T="DatasetOptionDto"
+                                                         Value="@GetBoundOption(item.Key)"
+                                                         ValueChanged="@(v => OnBoundOptionChanged(item, v))"
+                                                         SearchFunc="@( (string text, CancellationToken ct) => SearchDatasetOptionsAsync(item, text, ct) )"
+                                                         ToStringFunc="@(option => option?.Label)"
+                                                         Dense="true"
+                                                         Label="@item.Field.Label"
+                                                         Placeholder="@GetBoundPlaceholder(item)"
+                                                         Variant="Variant.Outlined"
+                                                         Margin="Margin.Dense"
+                                                         Clearable="true"
+                                                         ResetValueOnEmptyText="true"
+                                                         Strict="!item.Field.DataBinding.AllowFreeText"
+                                                         DebounceInterval="250"
+                                                         Adornment="Adornment.End"
+                                                         AdornmentIcon="@Icons.Material.Filled.Search"
+                                                         HelperText="@GetBoundHelperText(item)"
+                                                         CoerceText="false"
+                                                         Error="@HasFieldError(item.Key)"
+                                                         ErrorText="@GetFieldError(item.Key)">
+                                            <ItemTemplate Context="option">
+                                                <MudStack Spacing="0" Class="py-1">
+                                                    <MudText Typo="Typo.body2">@option.Label</MudText>
+                                                    @if (!string.IsNullOrWhiteSpace(option.Preview))
+                                                    {
+                                                        <MudText Typo="Typo.caption" Class="self-service-option-preview">@option.Preview</MudText>
+                                                    }
+                                                </MudStack>
+                                            </ItemTemplate>
+                                            <NoItemsTemplate>
+                                                <MudText Typo="Typo.body2" Class="px-3 py-2">
+                                                    @GetBoundEmptyState(item)
+                                                </MudText>
+                                            </NoItemsTemplate>
+                                        </MudAutocomplete>
+                                    }
+                                    else
+                                    {
+                                        <MudTextField T="string"
+                                                      Value="@GetString(item.Key)"
+                                                      ValueChanged="@(v => SetString(item.Key, v))"
+                                                      Label="@item.Field.Label"
+                                                      Required="@item.Field.Required"
+                                                      Error="@HasFieldError(item.Key)"
+                                                      ErrorText="@GetFieldError(item.Key)"
+                                                      Variant="Variant.Outlined"
+                                                      Margin="Margin.Dense" />
+                                    }
+                                    break;
+                                case "textarea":
+                                    <MudTextField T="string"
+                                                  Value="@GetString(item.Key)"
+                                                  ValueChanged="@(v => SetString(item.Key, v))"
+                                                  Label="@item.Field.Label"
+                                                  Required="@item.Field.Required"
+                                                  Error="@HasFieldError(item.Key)"
+                                                  ErrorText="@GetFieldError(item.Key)"
+                                                  Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense"
+                                                  Lines="4" />
+                                    break;
+                                case "number":
+                                    <MudNumericField T="decimal?"
+                                                     Value="@GetDecimal(item.Key)"
+                                                     ValueChanged="@(v => SetDecimal(item.Key, v))"
+                                                     Label="@item.Field.Label"
+                                                     Error="@HasFieldError(item.Key)"
+                                                     ErrorText="@GetFieldError(item.Key)"
+                                                     Variant="Variant.Outlined"
+                                                     Margin="Margin.Dense" />
+                                    break;
+                                case "predefined":
+                                    <MudSelect T="string"
+                                               Value="@GetString(item.Key)"
+                                               ValueChanged="@(v => SetString(item.Key, v))"
+                                               Label="@item.Field.Label"
+                                               Required="@item.Field.Required"
+                                               Error="@HasFieldError(item.Key)"
+                                               ErrorText="@GetFieldError(item.Key)"
+                                               Variant="Variant.Outlined"
+                                               Margin="Margin.Dense"
+                                               Dense="true"
+                                               Clearable="true">
+                                        @foreach (var option in GetPredefinedOptions(item.Field))
+                                        {
+                                            <MudSelectItem T="string" Value="@option">@option</MudSelectItem>
+                                        }
+                                    </MudSelect>
+                                    break;
+                                case "boolean":
+                                    <MudSwitch T="bool"
+                                               Value="@GetBool(item.Key)"
+                                               ValueChanged="@(v => SetBool(item.Key, v))"
+                                               Color="Color.Primary"
+                                               Label="@item.Field.Label"
+                                               Class="mt-2" />
+                                    break;
+                                default:
+                                    <MudTextField T="string"
+                                                  Value="@GetString(item.Key)"
+                                                  ValueChanged="@(v => SetString(item.Key, v))"
+                                                  Label="@item.Field.Label"
+                                                  Required="@item.Field.Required"
+                                                  Error="@HasFieldError(item.Key)"
+                                                  ErrorText="@GetFieldError(item.Key)"
+                                                  Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense" />
+                                    break;
+                            }
+                        </MudItem>
+                    }
+
+                    <MudItem xs="12">
+                        <MudTextField T="string"
+                                      Value="@userNote"
+                                      ValueChanged="@(v => userNote = v)"
+                                      Label="Additional note (optional)"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Lines="3" />
+                    </MudItem>
+                </MudGrid>
+
+                <MudPaper Class="submit-on-behalf-panel mt-3 pa-3" Elevation="0" Outlined="true">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Spacing="2">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                            <MudIcon Icon="@Icons.Material.Filled.PersonSearch" Color="Color.Primary" />
+                            <MudStack Spacing="0">
+                                <MudText Typo="Typo.body2">Submit on behalf of</MudText>
+                                @if (requestedForPerson is null)
+                                {
+                                    <MudText Typo="Typo.caption" Class="self-service-option-preview">Submit this request as yourself.</MudText>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption" Class="self-service-option-preview">
+                                        @FormatRequestedFor(requestedForPerson)
+                                    </MudText>
+                                }
+                            </MudStack>
+                        </MudStack>
+
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                            @if (requestedForPerson is not null)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                               Size="Size.Small"
+                                               Color="Color.Default"
+                                               aria-label="Clear selected requester"
+                                               OnClick="ClearRequestedFor" />
+                            }
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Primary"
+                                       Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.ManageAccounts"
+                                       OnClick="OpenSubmitOnBehalfDialog">
+                                Select
+                            </MudButton>
+                        </MudStack>
+                    </MudStack>
+                </MudPaper>
+
+                <MudStack Row="true" Spacing="2" Class="self-service-form-actions mt-3">
+                    <MudButton Variant="Variant.Text" OnClick="GoToCatalog">Cancel</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@submitting" OnClick="SubmitAsync">Submit</MudButton>
+                </MudStack>
+            </MudForm>
+        </MudPaper>
+    }
+</MudContainer>
+
+
+@code {
+    [Parameter] public string RequestFormId { get; set; } = default!;
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private MudForm formRef = default!;
+    private bool loading = true;
+    private bool submitting;
+    private bool canOpenTechnicianView;
+    private string? loadError;
+    private string? submitError;
+
+    private string formTitle = "Request";
+    private string? formDescription;
+    private Helpdesk.Shared.Models.RequestFormReleaseStatus releaseStatus = Helpdesk.Shared.Models.RequestFormReleaseStatus.InTesting;
+    private string? userNote;
+
+    private readonly List<FieldRenderItem> fields = new();
+    private readonly Dictionary<string, object?> values = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> fieldErrors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DatasetOptionDto?> boundSelections = new(StringComparer.OrdinalIgnoreCase);
+
+    private SelfServiceRequestSubmittedDto? submitted;
+    private SelfServiceRequestUserDto? requestedForPerson;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFormAsync();
+        await ResolveRoleAsync();
+    }
+
+    private async Task LoadFormAsync()
+    {
+        loading = true;
+        loadError = null;
+
+        try
+        {
+            var dto = await Api.GetFromJsonAsync<RequestFormDto>($"api/v1/request-forms/{RequestFormId}");
+            if (dto is null)
+            {
+                loadError = "Request form was not found.";
+                return;
+            }
+
+            releaseStatus = dto.ReleaseStatus;
+            ParseSchema(dto.JsonSchema);
+            if (string.IsNullOrWhiteSpace(formTitle))
+            {
+                formTitle = dto.Title;
+            }
+            if (string.IsNullOrWhiteSpace(formDescription))
+            {
+                formDescription = dto.Description;
+            }
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Could not load request form: {ex.Message}";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void ParseSchema(string schema)
+    {
+        fields.Clear();
+        values.Clear();
+        boundSelections.Clear();
+
+        var root = JsonNode.Parse(schema) as JsonObject;
+        if (root is null)
+        {
+            return;
+        }
+
+        formTitle = root["title"]?.GetValue<string?>() ?? formTitle;
+        formDescription = root["description"]?.GetValue<string?>();
+
+        if (root["fields"] is not JsonArray fieldsArray)
+        {
+            return;
+        }
+
+        var parsedFields = fieldsArray.Deserialize<List<FormField>>(JsonOptions) ?? new List<FormField>();
+        for (var i = 0; i < parsedFields.Count; i++)
+        {
+            var field = parsedFields[i];
+            var key = FormFieldKeyResolver.Resolve(field, i);
+
+            if (values.ContainsKey(key))
+            {
+                key = $"{key}_{i + 1}";
+            }
+
+            fields.Add(new FieldRenderItem(field, key));
+            values[key] = field.Type switch
+            {
+                "boolean" => false,
+                _ => null
+            };
+            if (field.DataBinding is not null)
+            {
+                boundSelections[key] = null;
+            }
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        submitError = null;
+        fieldErrors.Clear();
+
+        if (!ValidateRequiredFields())
+        {
+            submitError = "Please complete required fields.";
+            return;
+        }
+
+        if (requestedForPerson is not null && !await ConfirmSubmitOnBehalfAsync())
+        {
+            return;
+        }
+
+        var payloadRoot = JsonSerializer.SerializeToNode(values, JsonOptions)?.AsObject() ?? new JsonObject();
+        var labelsNode = new JsonObject();
+        foreach (var selection in boundSelections)
+        {
+            if (selection.Value is null || string.IsNullOrWhiteSpace(selection.Value.Label))
+            {
+                continue;
+            }
+
+            labelsNode[selection.Key] = selection.Value.Label;
+        }
+
+        if (labelsNode.Count > 0)
+        {
+            payloadRoot["_boundLabels"] = labelsNode;
+        }
+
+        var payloadJson = payloadRoot.ToJsonString(JsonOptions);
+        var authUser = await ResolveAuthenticatedUserAsync();
+        var dto = new SubmitSelfServiceRequestDto
+        {
+            RequestFormId = RequestFormId,
+            Title = formTitle,
+            Description = string.IsNullOrWhiteSpace(userNote) ? formDescription : userNote,
+            PayloadJson = payloadJson,
+            RequesterEmail = authUser.Email,
+            RequesterName = authUser.Name,
+            RequestedForPersonId = requestedForPerson?.Id,
+            RequestedForPersonSource = requestedForPerson?.Source
+        };
+
+        submitting = true;
+        try
+        {
+            var response = await Api.PostAsJsonAsync("api/v1/self-service/requests", dto);
+            if (!response.IsSuccessStatusCode)
+            {
+                submitError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            submitted = await response.Content.ReadFromJsonAsync<SelfServiceRequestSubmittedDto>(JsonOptions)
+                ?? new SelfServiceRequestSubmittedDto();
+
+            Snackbar.Add("Request submitted successfully.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            submitError = $"Submission failed: {ex.Message}";
+        }
+        finally
+        {
+            submitting = false;
+        }
+    }
+
+    private async Task OpenSubmitOnBehalfDialog()
+    {
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true,
+            CloseButton = true,
+            CloseOnEscapeKey = true
+        };
+        var dialog = await DialogService.ShowAsync<SubmitOnBehalfDialog>("Submit on behalf of", options);
+        var result = await dialog.Result;
+        if (result is not null && !result.Canceled && result.Data is SelfServiceRequestUserDto person)
+        {
+            requestedForPerson = person;
+        }
+    }
+
+    private async Task<bool> ConfirmSubmitOnBehalfAsync()
+    {
+        if (requestedForPerson is null)
+        {
+            return true;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Submit on behalf of",
+            $"You are submitting the request on behalf of {requestedForPerson.Name}.",
+            yesText: "Yes",
+            cancelText: "No",
+            options: new DialogOptions { CloseOnEscapeKey = true });
+        return confirm == true;
+    }
+
+    private void ClearRequestedFor()
+    {
+        requestedForPerson = null;
+    }
+
+    private async Task<(string? Email, string? Name)> ResolveAuthenticatedUserAsync()
+    {
+        if (AuthenticationStateTask is null)
+        {
+            return (null, null);
+        }
+
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+        var email = FirstNonEmpty(
+            user.FindFirstValue(ClaimTypes.Email),
+            user.FindFirstValue("email"),
+            user.FindFirstValue("preferred_username"),
+            user.FindFirstValue("upn"),
+            user.FindFirstValue("unique_name"),
+            LooksLikeEmail(user.Identity?.Name) ? user.Identity?.Name : null);
+        var name = FirstNonEmpty(
+            user.FindFirstValue("name"),
+            user.FindFirstValue(ClaimTypes.Name),
+            LooksLikeEmail(user.Identity?.Name) ? null : user.Identity?.Name,
+            email);
+
+        return (email, name);
+    }
+
+    private static bool LooksLikeEmail(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && value.Contains('@', StringComparison.Ordinal);
+
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private bool ValidateRequiredFields()
+    {
+        var valid = true;
+
+        foreach (var item in fields)
+        {
+            if (!item.Field.Required)
+            {
+                continue;
+            }
+
+            values.TryGetValue(item.Key, out var value);
+            var missing = item.Field.Type switch
+            {
+                "text" or "textarea" or "predefined" => string.IsNullOrWhiteSpace(value as string),
+                "number" => value is null,
+                _ => false
+            };
+
+            if (!missing)
+            {
+                continue;
+            }
+
+            fieldErrors[item.Key] = "Required";
+            valid = false;
+        }
+
+        return valid;
+    }
+
+    private async Task ResolveRoleAsync()
+    {
+        if (AuthenticationStateTask is null)
+        {
+            return;
+        }
+
+        var user = (await AuthenticationStateTask).User;
+        canOpenTechnicianView = user.IsInRole("HelpdeskAdmin")
+            || user.IsInRole("Technician")
+            || user.Claims.Any(c =>
+                (c.Type == ClaimTypes.Role || c.Type == "roles")
+                && (string.Equals(c.Value, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(c.Value, "Technician", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private void GoToCatalog()
+    {
+        Navigation.NavigateTo("/self-service");
+    }
+
+    private void OpenSubmittedRequest()
+    {
+        if (submitted is null)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo($"/requests/{submitted.RequestId}");
+    }
+
+    private string? GetString(string key) => values.TryGetValue(key, out var value) ? value as string : null;
+    private decimal? GetDecimal(string key) => values.TryGetValue(key, out var value) ? value as decimal? : null;
+    private bool GetBool(string key) => values.TryGetValue(key, out var value) && value is bool b && b;
+    private DatasetOptionDto? GetBoundOption(string key) => boundSelections.TryGetValue(key, out var value) ? value : null;
+
+    private void SetString(string key, string? value)
+    {
+        values[key] = value;
+        fieldErrors.Remove(key);
+    }
+
+    private Task<IEnumerable<DatasetOptionDto>> SearchDatasetOptionsAsync(FieldRenderItem item, string searchText, CancellationToken cancellationToken)
+    {
+        if (item.Field.DataBinding is null)
+        {
+            return Task.FromResult<IEnumerable<DatasetOptionDto>>(Array.Empty<DatasetOptionDto>());
+        }
+
+        if (!string.IsNullOrWhiteSpace(searchText) && searchText.Length < Math.Max(1, item.Field.DataBinding.MinSearchLength))
+        {
+            return Task.FromResult<IEnumerable<DatasetOptionDto>>(Array.Empty<DatasetOptionDto>());
+        }
+
+        return SearchCoreAsync(item.Field.DataBinding.DatasetId, searchText, cancellationToken);
+    }
+
+    private static string GetBoundPlaceholder(FieldRenderItem item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.Field.DataBinding?.Placeholder))
+        {
+            return item.Field.DataBinding.Placeholder;
+        }
+
+        return $"Search {item.Field.Label}";
+    }
+
+    private static string GetBoundHelperText(FieldRenderItem item)
+    {
+        if (item.Field.DataBinding is null)
+        {
+            return string.Empty;
+        }
+
+        var minSearchLength = Math.Max(1, item.Field.DataBinding.MinSearchLength);
+        var guidance = minSearchLength > 1
+            ? $"Type at least {minSearchLength} characters to search."
+            : "Search and select a value from the dataset.";
+
+        return guidance;
+    }
+
+    private static string GetBoundEmptyState(FieldRenderItem item)
+    {
+        if (item.Field.DataBinding is null)
+        {
+            return "No options available.";
+        }
+
+        var minSearchLength = Math.Max(1, item.Field.DataBinding.MinSearchLength);
+        return minSearchLength > 1
+            ? $"No results yet. Type at least {minSearchLength} characters to search."
+            : "No matching values found.";
+    }
+
+    private async Task<IEnumerable<DatasetOptionDto>> SearchCoreAsync(string datasetId, string? searchText, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await Api.GetFromJsonAsync<Helpdesk.Shared.DTOs.PagedResult<DatasetOptionDto>>(
+                $"api/v1/self-service/datasets/{datasetId}/options?query={Uri.EscapeDataString(searchText ?? string.Empty)}&page=1&pageSize=20",
+                cancellationToken);
+            return result?.Items ?? Enumerable.Empty<DatasetOptionDto>();
+        }
+        catch (HttpRequestException)
+        {
+            return Enumerable.Empty<DatasetOptionDto>();
+        }
+    }
+
+    private void OnBoundOptionChanged(FieldRenderItem item, DatasetOptionDto? option)
+    {
+        values[item.Key] = option?.Key;
+        boundSelections[item.Key] = option;
+        fieldErrors.Remove(item.Key);
+    }
+
+    private void SetDecimal(string key, decimal? value)
+    {
+        values[key] = value;
+        fieldErrors.Remove(key);
+    }
+
+    private void SetBool(string key, bool value)
+    {
+        values[key] = value;
+        fieldErrors.Remove(key);
+    }
+
+    private bool HasFieldError(string key) => fieldErrors.ContainsKey(key);
+    private string? GetFieldError(string key) => fieldErrors.TryGetValue(key, out var error) ? error : null;
+
+    private sealed record FieldRenderItem(FormField Field, string Key);
+
+    private static string FormatRequestedFor(SelfServiceRequestUserDto person)
+    {
+        var label = string.IsNullOrWhiteSpace(person.Email) ? person.Name : $"{person.Name} ({person.Email})";
+        return string.IsNullOrWhiteSpace(person.OrganizationName) ? label : $"{label} - {person.OrganizationName}";
+    }
+
+    private static IReadOnlyList<string> GetPredefinedOptions(FormField field)
+        => field.PredefinedOptions
+            .Where(option => !string.IsNullOrWhiteSpace(option))
+            .Select(option => option.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+}

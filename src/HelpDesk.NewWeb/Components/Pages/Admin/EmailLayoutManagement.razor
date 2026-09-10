@@ -1,0 +1,96 @@
+@page "/admin/layouts"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@using Helpdesk.Shared.Models
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4">
+        <MudText Typo="Typo.h5">Email Layout Management</MudText>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add" OnClick="CreateLayout">New Layout</MudButton>
+    </MudStack>
+
+    <MudTable Items="_layouts" Hover="true">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Scope</MudTh>
+            <MudTh>Version</MudTh>
+            <MudTh Style="text-align: right">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">@context.Name</MudTd>
+            <MudTd DataLabel="Scope">@(context.IsSystem ? "System" : "Tenant")</MudTd>
+            <MudTd DataLabel="Version">@context.Version</MudTd>
+            <MudTd Style="text-align: right">
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" OnClick="@(() => OpenEditDialog(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Preview" OnClick="@(() => OpenPreviewDialog(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Disabled="context.IsSystem" OnClick="@(() => DeleteLayout(context))" />
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private List<EmailLayout> _layouts = new();
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadLayouts();
+    }
+
+    private async Task LoadLayouts()
+    {
+        _layouts = await HelpdeskApi.GetFromJsonAsync<List<EmailLayout>>("api/v1/email-layouts") ?? new();
+    }
+
+    private async Task CreateLayout()
+    {
+        var parameters = new DialogParameters<EmailLayoutDialog> { { x => x.Model, new EmailLayout() } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+
+        var dialog = await DialogService.ShowAsync<EmailLayoutDialog>("Create Layout", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+            await LoadLayouts();
+    }
+
+    private async Task OpenEditDialog(EmailLayout layout)
+    {
+        var parameters = new DialogParameters<EmailLayoutDialog> { { x => x.Model, layout } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+
+        var dialog = await DialogService.ShowAsync<EmailLayoutDialog>("Edit Layout", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+            await LoadLayouts();
+    }
+
+    private async Task OpenPreviewDialog(EmailLayout layout)
+    {
+        var parameters = new DialogParameters<EmailTemplatePreviewDialog>
+        {
+            { x => x.RenderedHtml, layout.HtmlContent ?? string.Empty }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+        await DialogService.ShowAsync<EmailTemplatePreviewDialog>("Layout Html", parameters, options);
+    }
+
+    private async Task DeleteLayout(EmailLayout layout)
+    {
+        var response = await HelpdeskApi.DeleteAsync($"api/v1/email-layouts/{layout.Id}");
+        if (response.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Layout deleted.", Severity.Success);
+            await LoadLayouts();
+        }
+        else
+        {
+            Snackbar.Add("Failed to delete layout.", Severity.Error);
+        }
+    }
+}

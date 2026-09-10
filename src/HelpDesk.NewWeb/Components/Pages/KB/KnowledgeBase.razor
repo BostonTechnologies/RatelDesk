@@ -1,0 +1,132 @@
+@page "/kb"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+
+@using Helpdesk.Shared.DTOs
+@using Helpdesk.Shared.DTOs.Article
+@using Helpdesk.Shared.Models
+
+<PageTitle>Knowledge Base</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudGrid Class="mb-2">
+        <MudItem xs="12" md="6">
+            <MudTextField @bind-Value="search" @bind-Value:after="Reload" Placeholder="Search" Adornment="Adornment.Start" Icon="@Icons.Material.Filled.Search" Immediate="true" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudSelect T="KnowledgeBaseArticleState?" Label="State" @bind-Value="state" @bind-Value:after="Reload" Clearable="true">
+                <MudSelectItem T="KnowledgeBaseArticleState?" Value="@(null)">All</MudSelectItem>
+                @foreach (var s in Enum.GetValues<KnowledgeBaseArticleState>())
+                {
+                    <MudSelectItem T="KnowledgeBaseArticleState?" Value="@(s)">@s</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+
+    <MudTable @ref="table" ServerData="LoadArticles" Hover="true" Dense="true" T="ArticleDto">
+        <HeaderContent>
+            <MudTh>Title</MudTh>
+            <MudTh>State</MudTh>
+            <MudTh>Linked Ticket</MudTh>
+            <MudTh>Created</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Title"><MudLink Href="@($"/kb/{context.Id}")">@context.Title</MudLink></MudTd>
+            <MudTd DataLabel="State">@context.State</MudTd>
+            <MudTd DataLabel="Linked Ticket">@context.LinkedTicketId</MudTd>
+            <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("g")</MudTd>
+            <MudTd>
+                <MudMenu>
+                    <ActivatorContent>
+                        <MudIconButton Icon="@Icons.Material.Filled.MoreVert" />
+                    </ActivatorContent>
+                    <ChildContent>
+                        <MudMenuItem OnClick="@(() => View(context.Id))">View</MudMenuItem>
+                        <MudMenuItem OnClick="@(() => Approve(context.Id))">Approve</MudMenuItem>
+                        <MudMenuItem OnClick="@(() => Archive(context.Id))">Archive</MudMenuItem>
+                        <MudMenuItem OnClick="@(() => Regenerate(context.Id))">Regenerate</MudMenuItem>
+                        <MudMenuItem OnClick="@(() => Delete(context.Id))">Delete</MudMenuItem>
+                    </ChildContent>
+                </MudMenu>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private MudTable<ArticleDto>? table;
+    private string? search;
+    private KnowledgeBaseArticleState? state;
+
+    protected override async Task OnInitializedAsync()
+    {
+        state = KnowledgeBaseArticleState.Draft;
+        await Reload();
+    }
+
+    private async Task<TableData<ArticleDto>> LoadArticles(TableState tableState, CancellationToken token)
+    {
+        var page = tableState.Page + 1;
+        var pageSize = tableState.PageSize;
+        var url = $"api/v1/kb?page={page}&pageSize={pageSize}";
+        if (state.HasValue) url += $"&state={state}";
+        if (!string.IsNullOrWhiteSpace(search)) url += $"&search={Uri.EscapeDataString(search)}";
+
+        var resp = await HelpdeskApi.GetFromJsonAsync<PagedResponse<ArticleDto>>(url) ?? new PagedResponse<ArticleDto>();
+        return new TableData<ArticleDto> { Items = resp.Items, TotalItems = resp.TotalCount };
+    }
+
+    private Task Reload() => table?.ReloadServerData() ?? Task.CompletedTask;
+
+    private void View(string id) => NavigationManager.NavigateTo($"/kb/{id}");
+
+    private async Task Approve(string id)
+    {
+        var dto = new UpdateKbStateDto { State = KnowledgeBaseArticleState.Published };
+        var resp = await HelpdeskApi.PutAsJsonAsync($"api/v1/kb/{id}/state", dto);
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Article approved", Severity.Success);
+            await table!.ReloadServerData();
+        }
+        else Snackbar.Add("Approve failed", Severity.Error);
+    }
+
+    private async Task Archive(string id)
+    {
+        var dto = new UpdateKbStateDto { State = KnowledgeBaseArticleState.Draft };
+        var resp = await HelpdeskApi.PutAsJsonAsync($"api/v1/kb/{id}/state", dto);
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Article archived", Severity.Success);
+            await table!.ReloadServerData();
+        }
+        else Snackbar.Add("Archive failed", Severity.Error);
+    }
+
+    private async Task Delete(string id)
+    {
+        var resp = await HelpdeskApi.DeleteAsync($"api/v1/kb/{id}");
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Article deleted", Severity.Success);
+            await table!.ReloadServerData();
+        }
+        else Snackbar.Add("Delete failed", Severity.Error);
+    }
+
+    private async Task Regenerate(string id)
+    {
+        var resp = await HelpdeskApi.PostAsJsonAsync($"api/v1/kb/{id}/regenerate", new { });
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Article regenerated", Severity.Success);
+        }
+        else Snackbar.Add("Regenerate failed", Severity.Error);
+    }
+}

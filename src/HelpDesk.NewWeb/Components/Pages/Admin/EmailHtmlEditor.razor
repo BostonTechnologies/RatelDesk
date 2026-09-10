@@ -1,0 +1,294 @@
+@using System.Threading
+@using BlazorMonaco.Editor
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JSRuntime
+@inject ISnackbar Snackbar
+
+<div class="email-html-editor">
+    <div class="email-html-editor__toolbar">
+        <div class="email-html-editor__placeholders">
+            @foreach (var placeholder in Placeholders)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">@placeholder</MudChip>
+            }
+        </div>
+        @if (ShowTenantSelector)
+        {
+            <MudSelect T="string" Label="Preview as tenant" Dense="true" Margin="Margin.Dense" Class="email-html-editor__tenant" Value="@selectedTenantId" ValueChanged="OnTenantChanged">
+                <MudSelectItem T="string" Value="@string.Empty">System Defaults</MudSelectItem>
+                @foreach (var tenant in tenants)
+                {
+                    <MudSelectItem T="string" Value="@tenant.Id">@tenant.Name</MudSelectItem>
+                }
+            </MudSelect>
+        }
+    </div>
+
+    <div class="email-html-editor__surface">
+        <div class="email-html-editor__code">
+            @if (monacoAssetsReady && !usePlainTextFallback)
+            {
+                <StandaloneCodeEditor @ref="editor"
+                                      Id="@editorId"
+                                      CssClass="email-html-editor__monaco"
+                                      ConstructionOptions="BuildEditorOptions"
+                                      OnDidChangeModelContent="OnEditorChanged" />
+            }
+            else if (usePlainTextFallback)
+            {
+                <MudTextField T="string"
+                              Value="@currentValue"
+                              ValueChanged="OnFallbackEditorChanged"
+                              Lines="24"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Class="email-html-editor__fallback"
+                              Placeholder="Edit template HTML" />
+            }
+            else
+            {
+                <div class="email-html-editor__loading">
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                    <MudText Typo="Typo.body2">Loading editor...</MudText>
+                </div>
+            }
+        </div>
+        <div class="email-html-editor__preview">
+            <div class="email-html-editor__preview-header">
+                <MudText Typo="Typo.caption">@PreviewTitle</MudText>
+                @if (isPreviewLoading)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(previewSubject))
+            {
+                <div class="email-html-editor__subject">@previewSubject</div>
+            }
+            <iframe class="email-html-editor__iframe"
+                    sandbox=""
+                    srcdoc="@previewHtml"
+                    title="@PreviewTitle"></iframe>
+        </div>
+    </div>
+</div>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string? DraftSubject { get; set; }
+    [Parameter] public int? TemplateId { get; set; }
+    [Parameter] public string? TemplateName { get; set; }
+    [Parameter] public int? DraftLayoutId { get; set; }
+    [Parameter] public string? DraftLayoutHtml { get; set; }
+    [Parameter] public bool IsLayoutEditor { get; set; }
+    [Parameter] public IReadOnlyCollection<string> Placeholders { get; set; } = Array.Empty<string>();
+    [Parameter] public string PreviewTitle { get; set; } = "Preview";
+    [Parameter] public bool ShowTenantSelector { get; set; } = true;
+
+    private readonly string editorId = $"email-html-editor-{Guid.NewGuid():N}";
+    private readonly List<TenantLookupDto> tenants = new();
+    private StandaloneCodeEditor? editor;
+    private string currentValue = string.Empty;
+    private string selectedTenantId = string.Empty;
+    private string previewSubject = string.Empty;
+    private string previewHtml = string.Empty;
+    private bool isPreviewLoading;
+    private bool hasLoadedTenants;
+    private bool monacoAssetsReady;
+    private bool usePlainTextFallback;
+    private CancellationTokenSource? previewDebounce;
+    private IJSObjectReference? monacoLoaderModule;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentValue = Value ?? string.Empty;
+        if (ShowTenantSelector)
+        {
+            var loadedTenants = await HelpdeskApi.GetFromJsonAsync<List<TenantLookupDto>>("api/v1/admin/tenants/lookup") ?? new();
+            tenants.AddRange(loadedTenants);
+            hasLoadedTenants = true;
+        }
+
+        await RefreshPreviewAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var newValue = Value ?? string.Empty;
+        if (newValue == currentValue)
+            return;
+
+        currentValue = newValue;
+        if (editor is not null)
+            await editor.SetValue(currentValue);
+
+        await QueuePreviewAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        try
+        {
+            monacoLoaderModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                "import",
+                "./js/helpdesk-monaco-loader.js");
+            await monacoLoaderModule.InvokeVoidAsync("ensureBlazorMonaco");
+            monacoAssetsReady = true;
+        }
+        catch (Exception ex)
+        {
+            usePlainTextFallback = true;
+            Snackbar.Add("Code editor failed to load. Using the plain HTML editor instead.", Severity.Warning);
+            Console.Error.WriteLine($"Email template editor failed to load Monaco assets: {ex.Message}");
+        }
+
+        StateHasChanged();
+    }
+
+    private StandaloneEditorConstructionOptions BuildEditorOptions(StandaloneCodeEditor _) =>
+        new()
+        {
+            AutomaticLayout = true,
+            Language = "html",
+            Value = currentValue
+        };
+
+    private async Task OnEditorChanged(ModelContentChangedEvent _)
+    {
+        if (editor is null)
+            return;
+
+        currentValue = await editor.GetValue();
+        await ValueChanged.InvokeAsync(currentValue);
+        await QueuePreviewAsync();
+    }
+
+    private async Task OnFallbackEditorChanged(string? value)
+    {
+        currentValue = value ?? string.Empty;
+        await ValueChanged.InvokeAsync(currentValue);
+        await QueuePreviewAsync();
+    }
+
+    private async Task OnTenantChanged(string tenantId)
+    {
+        selectedTenantId = tenantId ?? string.Empty;
+        await RefreshPreviewAsync();
+    }
+
+    private Task QueuePreviewAsync()
+    {
+        previewDebounce?.Cancel();
+        previewDebounce?.Dispose();
+        previewDebounce = new CancellationTokenSource();
+        var token = previewDebounce.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(350, token);
+                await InvokeAsync(RefreshPreviewAsync);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, token);
+
+        return Task.CompletedTask;
+    }
+
+    private async Task RefreshPreviewAsync()
+    {
+        if (ShowTenantSelector && !hasLoadedTenants)
+            return;
+
+        isPreviewLoading = true;
+        StateHasChanged();
+
+        var payload = new TemplatePreviewRequest
+        {
+            TemplateId = IsLayoutEditor ? null : TemplateId,
+            TemplateName = IsLayoutEditor ? null : TemplateName,
+            TenantId = string.IsNullOrWhiteSpace(selectedTenantId) ? null : selectedTenantId,
+            DraftSubject = IsLayoutEditor ? "Layout Preview" : DraftSubject,
+            DraftHtmlContent = IsLayoutEditor ? SampleBodyHtml : currentValue,
+            DraftLayoutHtml = IsLayoutEditor ? currentValue : DraftLayoutHtml,
+            DraftLayoutId = IsLayoutEditor ? null : DraftLayoutId,
+            SampleContext = new PreviewSampleContext()
+        };
+
+        var response = await HelpdeskApi.PostAsJsonAsync("api/v1/email-templates/preview", payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            previewSubject = string.Empty;
+            previewHtml = "<p style=\"font-family:Arial,sans-serif;color:#991b1b;\">Unable to render preview.</p>";
+        }
+        else
+        {
+            var preview = await response.Content.ReadFromJsonAsync<TemplatePreviewResponse>();
+            previewSubject = IsLayoutEditor ? string.Empty : preview?.Subject ?? string.Empty;
+            previewHtml = preview?.Html ?? string.Empty;
+        }
+
+        isPreviewLoading = false;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        previewDebounce?.Cancel();
+        previewDebounce?.Dispose();
+        if (editor is not null)
+            editor.Dispose();
+        if (monacoLoaderModule is not null)
+            await monacoLoaderModule.DisposeAsync();
+    }
+
+    private const string SampleBodyHtml =
+        "<p style=\"margin:0 0 16px 0;\">Hello John Doe,</p>" +
+        "<p style=\"margin:0 0 16px 0;\">This is sample helpdesk content rendered inside the draft layout.</p>" +
+        "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">" +
+        "<tr><td style=\"background:#0ea5e9; border-radius:6px;\">" +
+        "<a href=\"https://example.helpdesk.local/view-ticket/INC-12345\" style=\"display:inline-block; padding:12px 18px; color:#ffffff; text-decoration:none; font-weight:700;\">View Ticket</a>" +
+        "</td></tr></table>";
+
+    private sealed class PreviewSampleContext
+    {
+        public string UserName { get; set; } = "John Doe";
+        public string TicketRef { get; set; } = "INC-WBH-9QI-HZO";
+        public string TicketLink { get; set; } = "https://example.helpdesk.local/view-ticket/INC-WBH-9QI-HZO";
+        public string UpdateMessageHtml { get; set; } = "<p style=\"margin:0 0 12px 0;\">We have received your update and assigned it to a support technician.</p><p style=\"margin:0;\">Current status: In progress.</p>";
+        public string UpdateMessageText { get; set; } = "We have received your update and assigned it to a support technician.";
+    }
+
+    private sealed class TemplatePreviewRequest
+    {
+        public int? TemplateId { get; set; }
+        public string? TemplateName { get; set; }
+        public string? TenantId { get; set; }
+        public string? DraftSubject { get; set; }
+        public string? DraftHtmlContent { get; set; }
+        public string? DraftLayoutHtml { get; set; }
+        public int? DraftLayoutId { get; set; }
+        public PreviewSampleContext? SampleContext { get; set; }
+    }
+
+    private sealed class TemplatePreviewResponse
+    {
+        public string Subject { get; set; } = string.Empty;
+        public string Html { get; set; } = string.Empty;
+    }
+
+    private sealed class TenantLookupDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+    }
+}

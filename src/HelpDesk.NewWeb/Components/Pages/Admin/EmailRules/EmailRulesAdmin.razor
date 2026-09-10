@@ -1,0 +1,471 @@
+@page "/admin/email-rules"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@using Helpdesk.Shared.DTOs.EmailRules
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Enums
+@inject IInboundEmailRuleAdminClient RulesClient
+@inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Email Rules</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+        <div>
+            <MudText Typo="Typo.h5">Email Rules</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Enabled rules can affect live inbound email processing.
+            </MudText>
+        </div>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Disabled="@loading"
+                   OnClick="RefreshAsync">
+            Refresh
+        </MudButton>
+    </MudStack>
+
+    @if (!string.IsNullOrWhiteSpace(loadError))
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+            @loadError
+        </MudAlert>
+    }
+
+    @if (loading)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="mb-3" />
+    }
+
+    <MudTabs Rounded="true" Border="true" PanelClass="pt-3">
+        <MudTabPanel Text="Rules" Icon="@Icons.Material.Filled.Rule">
+            @if (!loading && rules.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">No inbound email rules found.</MudAlert>
+            }
+            else
+            {
+                <div class="email-rules-table-wrap">
+                    <MudTable Items="OrderedRules" Dense="true" Hover="true" Breakpoint="Breakpoint.None" Class="email-rules-table">
+                        <HeaderContent>
+                            <MudTh>Name</MudTh>
+                            <MudTh>Scope</MudTh>
+                            <MudTh>Tenant</MudTh>
+                            <MudTh>Mailbox</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Priority</MudTh>
+                            <MudTh>Stop</MudTh>
+                            <MudTh>Updated</MudTh>
+                            <MudTh Class="email-rules-actions"></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Name">
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.body2">@context.Name</MudText>
+                                    @if (!string.IsNullOrWhiteSpace(context.Description))
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Description</MudText>
+                                    }
+                                </MudStack>
+                            </MudTd>
+                            <MudTd DataLabel="Scope">@InboundEmailRuleLabels.Scope(context.ScopeType)</MudTd>
+                            <MudTd DataLabel="Tenant">@TenantDisplay(context.TenantId)</MudTd>
+                            <MudTd DataLabel="Mailbox">@(context.MailboxId?.ToString() ?? "-")</MudTd>
+                            <MudTd DataLabel="Status">
+                                <MudChip T="string" Size="Size.Small" Color="@(context.Enabled ? Color.Success : Color.Default)" Variant="Variant.Filled">
+                                    @(context.Enabled ? "Enabled" : "Disabled")
+                                </MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Priority">@context.Priority</MudTd>
+                            <MudTd DataLabel="Stop">@(context.StopProcessing ? "Yes" : "No")</MudTd>
+                            <MudTd DataLabel="Updated">@context.UpdatedAtUtc.ToLocalTime().ToString("g")</MudTd>
+                            <MudTd Class="email-rules-actions">
+                                <MudTooltip Text="Move up">
+                                    <MudIconButton Icon="@Icons.Material.Filled.KeyboardArrowUp"
+                                                   Size="Size.Small"
+                                                   Disabled="@(!CanMove(context, -1) || loading)"
+                                                   OnClick="() => MoveRuleAsync(context, -1)" />
+                                </MudTooltip>
+                                <MudTooltip Text="Move down">
+                                    <MudIconButton Icon="@Icons.Material.Filled.KeyboardArrowDown"
+                                                   Size="Size.Small"
+                                                   Disabled="@(!CanMove(context, 1) || loading)"
+                                                   OnClick="() => MoveRuleAsync(context, 1)" />
+                                </MudTooltip>
+                                <MudTooltip Text="View details">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Visibility"
+                                                   Size="Size.Small"
+                                                   Color="Color.Primary"
+                                                   OnClick="() => OpenDetailsAsync(context)" />
+                                </MudTooltip>
+                                @if (context.Enabled)
+                                {
+                                    <MudTooltip Text="Disable rule">
+                                        <MudIconButton Icon="@Icons.Material.Filled.ToggleOff"
+                                                       Size="Size.Small"
+                                                       Color="Color.Warning"
+                                                       Disabled="@loading"
+                                                       OnClick="() => DisableRuleAsync(context)" />
+                                    </MudTooltip>
+                                }
+                                else
+                                {
+                                    <MudTooltip Text="Enable rule">
+                                        <MudIconButton Icon="@Icons.Material.Filled.ToggleOn"
+                                                       Size="Size.Small"
+                                                       Color="Color.Success"
+                                                       Disabled="@loading"
+                                                       OnClick="() => EnableRuleAsync(context)" />
+                                    </MudTooltip>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </div>
+            }
+        </MudTabPanel>
+        <MudTabPanel Text="Audit" Icon="@Icons.Material.Filled.ManageSearch">
+            <MudGrid Spacing="2" Class="mb-3" AlignItems="Center">
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField @bind-Value="auditMessageId"
+                                  Label="Message ID"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Mail" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField @bind-Value="auditTicketId"
+                                  Label="Ticket ID"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.ConfirmationNumber" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField @bind-Value="auditTenantId"
+                                  Label="Tenant ID"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Apartment" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudSelect T="string"
+                               @bind-Value="auditStatus"
+                               Label="Status"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense">
+                        <MudSelectItem T="string" Value="@AllStatusesValue">All</MudSelectItem>
+                        @foreach (var status in Enum.GetValues<InboundEmailProcessingStatus>())
+                        {
+                            <MudSelectItem T="string" Value="@status.ToString()">@InboundEmailRuleLabels.Status(status)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="1">
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               FullWidth="true"
+                               Disabled="@auditLoading"
+                               OnClick="LoadAuditAsync">
+                        Apply
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+
+            @if (auditLoading)
+            {
+                <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="mb-3" />
+            }
+
+            @if (!auditLoading && FilteredAudit.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">No inbound email rule audit rows found.</MudAlert>
+            }
+            else
+            {
+                <div class="email-rules-table-wrap">
+                    <MudTable Items="FilteredAudit" Dense="true" Hover="true" Breakpoint="Breakpoint.None" Class="email-rules-table">
+                        <HeaderContent>
+                            <MudTh>Timestamp</MudTh>
+                            <MudTh>Rule</MudTh>
+                            <MudTh>Message ID</MudTh>
+                            <MudTh>Action</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Tenant</MudTh>
+                            <MudTh>Ticket</MudTh>
+                            <MudTh>Error</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Timestamp">@context.CreatedAtUtc.ToLocalTime().ToString("g")</MudTd>
+                            <MudTd DataLabel="Rule">@RuleDisplay(context.RuleId)</MudTd>
+                            <MudTd DataLabel="Message ID">@context.MessageId</MudTd>
+                            <MudTd DataLabel="Action">@ActionDisplay(context.ActionKey)</MudTd>
+                            <MudTd DataLabel="Status">
+                                <MudChip T="string" Size="Size.Small" Color="@InboundEmailRuleLabels.StatusColor(context.Status)" Variant="Variant.Filled">
+                                    @InboundEmailRuleLabels.Status(context.Status)
+                                </MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Tenant">@TenantDisplay(context.TenantId)</MudTd>
+                            <MudTd DataLabel="Ticket">
+                                @if (!string.IsNullOrWhiteSpace(context.TicketId))
+                                {
+                                    <MudLink Href="@($"/incidents/{context.TicketId}")">@context.TicketId</MudLink>
+                                }
+                                else
+                                {
+                                    <span>-</span>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="Error">@(!string.IsNullOrWhiteSpace(context.Error) ? context.Error : "-")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </div>
+            }
+        </MudTabPanel>
+    </MudTabs>
+</MudPaper>
+
+<style>
+    .email-rules-table-wrap {
+        overflow-x: auto;
+    }
+
+    .email-rules-table th,
+    .email-rules-table td {
+        white-space: nowrap;
+        padding: 4px 8px;
+    }
+
+    .email-rules-actions {
+        width: 190px;
+        text-align: right;
+    }
+</style>
+
+@code {
+    private const string AllStatusesValue = "";
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private readonly List<InboundEmailRuleDto> rules = new();
+    private readonly List<InboundEmailRuleAuditDto> auditRows = new();
+    private readonly Dictionary<string, string> tenantNames = new(StringComparer.OrdinalIgnoreCase);
+    private bool loading;
+    private bool auditLoading;
+    private string? loadError;
+    private string? auditMessageId;
+    private string? auditTicketId;
+    private string? auditTenantId;
+    private string auditStatus = AllStatusesValue;
+
+    private List<InboundEmailRuleDto> OrderedRules => rules
+        .OrderByDescending(x => x.ScopeType == InboundEmailRuleScopeType.Tenant)
+        .ThenBy(x => x.TenantId)
+        .ThenBy(x => x.MailboxId)
+        .ThenBy(x => x.Priority)
+        .ThenBy(x => x.Name)
+        .ToList();
+
+    private List<InboundEmailRuleAuditDto> FilteredAudit => auditRows
+        .Where(x => string.IsNullOrWhiteSpace(auditStatus) ||
+                    string.Equals(x.Status.ToString(), auditStatus, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        loading = true;
+        loadError = null;
+        try
+        {
+            await LoadTenantsAsync();
+            rules.Clear();
+            rules.AddRange(await RulesClient.GetRulesAsync());
+            await LoadAuditAsync();
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+            Snackbar.Add($"Could not load inbound email rules: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadTenantsAsync()
+    {
+        try
+        {
+            var tenants = await HelpdeskApi.GetFromJsonAsync<List<TenantLookupDto>>("api/v1/admin/tenants/lookup") ?? [];
+            tenantNames.Clear();
+            foreach (var tenant in tenants)
+            {
+                tenantNames[tenant.Id] = tenant.Name;
+            }
+        }
+        catch
+        {
+            tenantNames.Clear();
+        }
+    }
+
+    private async Task LoadAuditAsync()
+    {
+        auditLoading = true;
+        try
+        {
+            auditRows.Clear();
+            auditRows.AddRange(await RulesClient.GetAuditAsync(auditMessageId, auditTicketId, auditTenantId));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load inbound email rule audit: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            auditLoading = false;
+        }
+    }
+
+    private async Task EnableRuleAsync(InboundEmailRuleDto rule)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Enable Email Rule",
+            $"Enable '{rule.Name}'? Enabled rules can affect live inbound email processing.",
+            yesText: "Enable",
+            cancelText: "Cancel");
+        if (confirm != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await RulesClient.EnableAsync(rule.Id);
+            Snackbar.Add("Email rule enabled.", Severity.Success);
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Enable failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task DisableRuleAsync(InboundEmailRuleDto rule)
+    {
+        try
+        {
+            await RulesClient.DisableAsync(rule.Id);
+            Snackbar.Add("Email rule disabled.", Severity.Success);
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Disable failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task MoveRuleAsync(InboundEmailRuleDto rule, int direction)
+    {
+        var group = ReorderGroup(rule);
+        var index = group.FindIndex(x => x.Id == rule.Id);
+        var targetIndex = index + direction;
+        if (index < 0 || targetIndex < 0 || targetIndex >= group.Count)
+        {
+            return;
+        }
+
+        var currentPriority = group[index].Priority;
+        var targetPriority = group[targetIndex].Priority;
+        var payload = group
+            .Select(x => new InboundEmailRulePriorityDto(
+                x.Id,
+                x.Id == group[index].Id
+                    ? targetPriority
+                    : x.Id == group[targetIndex].Id
+                        ? currentPriority
+                        : x.Priority))
+            .ToList();
+
+        try
+        {
+            await RulesClient.ReorderAsync(payload);
+            Snackbar.Add("Email rule order updated.", Severity.Success);
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Reorder failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private bool CanMove(InboundEmailRuleDto rule, int direction)
+    {
+        var group = ReorderGroup(rule);
+        var index = group.FindIndex(x => x.Id == rule.Id);
+        var targetIndex = index + direction;
+        return index >= 0 && targetIndex >= 0 && targetIndex < group.Count;
+    }
+
+    private List<InboundEmailRuleDto> ReorderGroup(InboundEmailRuleDto rule) => rules
+        .Where(x => x.ScopeType == rule.ScopeType &&
+                    string.Equals(x.TenantId, rule.TenantId, StringComparison.OrdinalIgnoreCase) &&
+                    x.MailboxId == rule.MailboxId)
+        .OrderBy(x => x.Priority)
+        .ThenBy(x => x.Name)
+        .ToList();
+
+    private async Task OpenDetailsAsync(InboundEmailRuleDto rule)
+    {
+        var latest = await RulesClient.GetRuleAsync(rule.Id) ?? rule;
+        var parameters = new DialogParameters<InboundEmailRuleDetailsDialog>
+        {
+            { x => x.Rule, latest },
+            { x => x.TenantDisplay, TenantDisplay(latest.TenantId) }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+        await DialogService.ShowAsync<InboundEmailRuleDetailsDialog>("Email Rule Details", parameters, options);
+    }
+
+    private string TenantDisplay(string? tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return "-";
+        }
+
+        return tenantNames.TryGetValue(tenantId, out var name) && !string.IsNullOrWhiteSpace(name)
+            ? $"{name} ({tenantId})"
+            : tenantId;
+    }
+
+    private string RuleDisplay(string? ruleId)
+    {
+        if (string.IsNullOrWhiteSpace(ruleId))
+        {
+            return "-";
+        }
+
+        var rule = rules.FirstOrDefault(x => string.Equals(x.Id, ruleId, StringComparison.OrdinalIgnoreCase));
+        return rule is null ? ruleId : rule.Name;
+    }
+
+    private static string ActionDisplay(string actionKey)
+    {
+        if (Enum.TryParse<InboundEmailRuleActionType>(actionKey, ignoreCase: true, out var parsed))
+        {
+            return InboundEmailRuleLabels.Action(new InboundEmailRuleActionConfig(parsed, actionKey));
+        }
+
+        return actionKey;
+    }
+}

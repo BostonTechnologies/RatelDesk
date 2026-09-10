@@ -1,0 +1,64 @@
+@using System.ComponentModel.DataAnnotations
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IErrorLoggingService ErrorLogger
+@using HelpDesk.NewWeb.Services
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.AddCircle" Class="mr-2 mb-n1" />
+            Create New Asset
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm Model="model" @ref="form" OnValidSubmit="Submit" Class="mt-2">
+            <MudTextField @bind-Value="model.Name" Label="Name" Variant="Variant.Outlined" For="@(() => model.Name)" Required="true" />
+            <MudTextField @bind-Value="model.Type" Label="Type" Variant="Variant.Outlined" />
+            <MudTextField @bind-Value="model.Manufacturer" Label="Manufacturer" Variant="Variant.Outlined" />
+            <MudTextField @bind-Value="model.Model" Label="Model" Variant="Variant.Outlined" />
+            <MudTextField @bind-Value="model.SerialNumber" Label="Serial Number" Variant="Variant.Outlined" />
+            <MudTextField @bind-Value="model.Notes" Label="Notes" Variant="Variant.Outlined" Lines="3" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" OnClick="Submit">Create</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private MudForm form = default!;
+    private Asset model = new();
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            try
+            {
+                var response = await HelpdeskApi.PostAsJsonAsync("api/v1/assets", model);
+                if (response.IsSuccessStatusCode)
+                {
+                    Dialog.Close(DialogResult.Ok(true));
+                }
+                else
+                {
+                    var error = await response.Content.ReadAsStringAsync();
+                    Snackbar.Add($"Error creating asset: {error}", Severity.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add("Unexpected error", Severity.Error);
+                await ErrorLogger.LogAsync(ex, nameof(CreateAssetDialog));
+            }
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

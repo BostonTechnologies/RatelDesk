@@ -1,0 +1,124 @@
+@using Helpdesk.Shared.DTOs.Change
+@using Helpdesk.Shared.Models
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<div @onclick:stopPropagation="true">
+    <MudMenu Dense="true"
+             AnchorOrigin="Origin.CenterCenter"
+             TransformOrigin="Origin.CenterCenter">
+        <ActivatorContent>
+            <MudTooltip Text="Update change status">
+                <MudChip T="string"
+                         Class="cursor-pointer"
+                         Size="Size.Small"
+                         Variant="Variant.Filled"
+                         Color="@GetLifecycleColor(LifecycleState)">
+                    @GetLifecycleLabel(LifecycleState)
+                </MudChip>
+            </MudTooltip>
+        </ActivatorContent>
+        <ChildContent>
+            @if (AvailableTransitions.Count == 0)
+            {
+                <MudMenuItem Disabled="true">No table actions</MudMenuItem>
+            }
+            else
+            {
+                @foreach (var state in AvailableTransitions)
+                {
+                    <MudMenuItem OnClick="@(async () => await UpdateLifecycle(state))">
+                        @GetLifecycleActionLabel(LifecycleState, state)
+                    </MudMenuItem>
+                }
+            }
+        </ChildContent>
+    </MudMenu>
+</div>
+
+@code {
+    [Parameter] public string ChangeId { get; set; } = string.Empty;
+    [Parameter] public ChangeLifecycleState LifecycleState { get; set; }
+    [Parameter] public EventCallback<ChangeDto> ChangeUpdated { get; set; }
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private IReadOnlyList<ChangeLifecycleState> AvailableTransitions => LifecycleState switch
+    {
+        ChangeLifecycleState.Draft => [ChangeLifecycleState.Submitted],
+        ChangeLifecycleState.PendingApproval => [ChangeLifecycleState.Draft],
+        ChangeLifecycleState.ApprovedForImplementation =>
+        [
+            ChangeLifecycleState.ImplementationInProgress,
+            ChangeLifecycleState.ImplementedSuccess,
+            ChangeLifecycleState.ImplementedBackedOut
+        ],
+        ChangeLifecycleState.ImplementationInProgress =>
+        [
+            ChangeLifecycleState.ImplementedSuccess,
+            ChangeLifecycleState.ImplementedBackedOut
+        ],
+        _ => []
+    };
+
+    private async Task UpdateLifecycle(ChangeLifecycleState newState)
+    {
+        if (string.IsNullOrWhiteSpace(ChangeId))
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await Api.PostAsJsonAsync(
+                $"api/v1/changes/{ChangeId}/lifecycle",
+                new { LifecycleState = newState });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Change status update failed: {await response.Content.ReadAsStringAsync()}", Severity.Error);
+                return;
+            }
+
+            var updated = await response.Content.ReadFromJsonAsync<ChangeDto>();
+            if (updated is not null)
+            {
+                LifecycleState = updated.LifecycleState;
+                await ChangeUpdated.InvokeAsync(updated);
+                Snackbar.Add($"Change status updated to {GetLifecycleLabel(updated.LifecycleState)}", Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Change status update failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private static string GetLifecycleActionLabel(ChangeLifecycleState currentState, ChangeLifecycleState targetState) =>
+        currentState == ChangeLifecycleState.Draft && targetState == ChangeLifecycleState.Submitted
+            ? "Submit"
+            : GetLifecycleLabel(targetState);
+
+    private static string GetLifecycleLabel(ChangeLifecycleState state) => state switch
+    {
+        ChangeLifecycleState.Draft => "Draft",
+        ChangeLifecycleState.Submitted => "Submitted",
+        ChangeLifecycleState.PendingApproval => "Pending Approval",
+        ChangeLifecycleState.ApprovedForImplementation => "Approved For Implementation",
+        ChangeLifecycleState.ImplementationInProgress => "Implementation In Progress",
+        ChangeLifecycleState.ImplementedSuccess => "Implemented - Success",
+        ChangeLifecycleState.ImplementedBackedOut => "Implemented - Backed Out",
+        _ => state.ToString()
+    };
+
+    private static Color GetLifecycleColor(ChangeLifecycleState state) => state switch
+    {
+        ChangeLifecycleState.Submitted => Color.Info,
+        ChangeLifecycleState.PendingApproval => Color.Warning,
+        ChangeLifecycleState.ApprovedForImplementation => Color.Primary,
+        ChangeLifecycleState.ImplementationInProgress => Color.Secondary,
+        ChangeLifecycleState.ImplementedSuccess => Color.Success,
+        ChangeLifecycleState.ImplementedBackedOut => Color.Warning,
+        _ => Color.Default
+    };
+}

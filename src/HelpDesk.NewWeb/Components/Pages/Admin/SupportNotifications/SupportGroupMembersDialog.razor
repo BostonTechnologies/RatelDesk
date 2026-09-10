@@ -1,0 +1,256 @@
+@using HelpDesk.NewWeb.Services
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.SupportNotifications
+@using Helpdesk.Shared.DTOs.User
+@using Helpdesk.Shared.Enums
+@inject ISupportNotificationAdminClient Client
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Groups" Class="mr-2 mb-n1" />
+            Manage Members
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudPaper Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.overline">Support group</MudText>
+                <MudText Typo="Typo.subtitle1">@Group.Name</MudText>
+                <MudText Typo="Typo.body2" Class="text-secondary">@OrganizationName(Group.OwningOrganizationId)</MudText>
+            </MudPaper>
+
+            <MudPaper Outlined="true" Class="pa-3">
+                <MudGrid Spacing="2" AlignItems="End">
+                    <MudItem xs="12" md="7">
+                        <MudSelect T="string" @bind-Value="newMemberUserId" Label="User" Dense="true" Required="true">
+                            @foreach (var user in AvailableUsers)
+                            {
+                                <MudSelectItem T="string" Value="@user.Id">@DisplayUser(user)</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudSelect T="SupportGroupMemberRole" @bind-Value="newMemberRole" Label="Role" Dense="true">
+                            @foreach (var role in MemberRoles)
+                            {
+                                <MudSelectItem Value="@role">@SupportNotificationLabels.MemberRole(role)</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="2" Class="d-flex justify-end">
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.PersonAdd"
+                                   Disabled="@string.IsNullOrWhiteSpace(newMemberUserId)"
+                                   OnClick="AddMemberAsync">
+                            Add
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+
+            @if (loading)
+            {
+                <MudProgressLinear Indeterminate="true" />
+            }
+            else
+            {
+                <MudTable Items="members" Dense="true" Hover="true" T="SupportGroupMemberDto">
+                    <HeaderContent>
+                        <MudTh>User</MudTh>
+                        <MudTh>Email</MudTh>
+                        <MudTh>Role</MudTh>
+                        <MudTh>Source</MudTh>
+                        <MudTh>Enabled</MudTh>
+                        <MudTh class="text-end">Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="User">@MemberName(context)</MudTd>
+                        <MudTd DataLabel="Email">@MemberEmail(context)</MudTd>
+                        <MudTd DataLabel="Role">@SupportNotificationLabels.MemberRole(context.Role)</MudTd>
+                        <MudTd DataLabel="Source">@SupportNotificationLabels.MemberSource(context.Source)</MudTd>
+                        <MudTd DataLabel="Enabled">
+                            <MudChip T="string" Color="@(context.IsEnabled ? Color.Success : Color.Default)" Variant="Variant.Outlined" Dense="true">
+                                @(context.IsEnabled ? "Enabled" : "Disabled")
+                            </MudChip>
+                        </MudTd>
+                        <MudTd Class="text-end">
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Outlined"
+                                       Color="@(context.IsEnabled ? Color.Warning : Color.Success)"
+                                       OnClick="() => ToggleMemberAsync(context)">
+                                @(context.IsEnabled ? "Disable" : "Enable")
+                            </MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="() => DeleteMemberAsync(context)">Remove</MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Typo="Typo.body2" Class="text-secondary">No members are configured for this group.</MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public SupportGroupDto Group { get; set; } = default!;
+    [Parameter] public List<OrganizationDto> Organizations { get; set; } = new();
+    [Parameter] public List<UserDto> Users { get; set; } = new();
+    [Parameter] public Func<Task>? OnChanged { get; set; }
+
+    private static readonly SupportGroupMemberRole[] MemberRoles =
+    [
+        SupportGroupMemberRole.Member,
+        SupportGroupMemberRole.Lead,
+        SupportGroupMemberRole.Manager
+    ];
+
+    private List<SupportGroupMemberDto> members = new();
+    private bool loading;
+    private bool changed;
+    private string newMemberUserId = string.Empty;
+    private SupportGroupMemberRole newMemberRole = SupportGroupMemberRole.Member;
+
+    private IEnumerable<UserDto> AvailableUsers
+        => Users
+            .Where(user => !members.Any(member => string.Equals(member.UserId, user.Id, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMembersAsync();
+    }
+
+    private async Task LoadMembersAsync()
+    {
+        loading = true;
+        newMemberUserId = string.Empty;
+        try
+        {
+            members = (await Client.GetGroupMembersAsync(Group.Id)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task AddMemberAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newMemberUserId))
+        {
+            return;
+        }
+
+        if (members.Any(x => string.Equals(x.UserId, newMemberUserId, StringComparison.OrdinalIgnoreCase)))
+        {
+            Snackbar.Add("That user is already a member of this group.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            await Client.CreateGroupMemberAsync(Group.Id, new CreateSupportGroupMemberDto
+            {
+                UserId = newMemberUserId,
+                Role = newMemberRole,
+                Source = SupportGroupMemberSource.Manual,
+                IsEnabled = true
+            });
+            Snackbar.Add("Member added.", Severity.Success);
+            await LoadMembersAsync();
+            await NotifyChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task ToggleMemberAsync(SupportGroupMemberDto member)
+    {
+        try
+        {
+            await Client.UpdateGroupMemberAsync(member.SupportGroupId, member.Id, new UpdateSupportGroupMemberDto
+            {
+                Role = member.Role,
+                Source = member.Source,
+                IsEnabled = !member.IsEnabled
+            });
+            await LoadMembersAsync();
+            await NotifyChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task DeleteMemberAsync(SupportGroupMemberDto member)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Remove Member",
+            $"Remove {MemberName(member)} from {Group.Name}?",
+            yesText: "Remove",
+            cancelText: "Cancel");
+        if (confirm != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await Client.DeleteGroupMemberAsync(member.SupportGroupId, member.Id);
+            Snackbar.Add("Member removed.", Severity.Success);
+            await LoadMembersAsync();
+            await NotifyChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task NotifyChangedAsync()
+    {
+        changed = true;
+        if (OnChanged is not null)
+        {
+            await OnChanged.Invoke();
+        }
+    }
+
+    private void Close() => Dialog.Close(DialogResult.Ok(changed));
+
+    private string MemberName(SupportGroupMemberDto member)
+        => !string.IsNullOrWhiteSpace(member.UserName)
+            ? member.UserName
+            : Users.FirstOrDefault(x => string.Equals(x.Id, member.UserId, StringComparison.OrdinalIgnoreCase))?.Name
+              ?? member.UserId;
+
+    private string MemberEmail(SupportGroupMemberDto member)
+        => !string.IsNullOrWhiteSpace(member.UserEmail)
+            ? member.UserEmail
+            : Users.FirstOrDefault(x => string.Equals(x.Id, member.UserId, StringComparison.OrdinalIgnoreCase))?.Email
+              ?? "-";
+
+    private static string DisplayUser(UserDto user)
+        => string.IsNullOrWhiteSpace(user.Name) ? user.Email : $"{user.Name} ({user.Email})";
+
+    private string OrganizationName(string? id)
+        => Organizations.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase))?.Name
+           ?? id
+           ?? "-";
+}

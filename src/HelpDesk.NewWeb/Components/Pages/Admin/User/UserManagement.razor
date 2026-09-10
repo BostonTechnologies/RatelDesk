@@ -1,0 +1,154 @@
+@page "/admin/users"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.User
+
+<PageTitle>Team</PageTitle>
+
+<div class="helpdesk-page">
+<MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="helpdesk-page-header">
+        <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Team</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+    <MudTextField T="string"
+                  @bind-Value="searchText"
+                  Label="Search team"
+                  Variant="Variant.Outlined"
+                  Margin="Margin.Dense"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Class="helpdesk-list-search mb-3"
+                  Immediate="true" />
+    <MudTable Items="filteredUsers" Hover="true" Dense="true" T="UserDto" Breakpoint="Breakpoint.Sm" Class="helpdesk-table">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Email</MudTh>
+            <MudTh>Role</MudTh>
+            <MudTh>Organization</MudTh>
+            <MudTh class="text-center">Cohort</MudTh>
+            <MudTh class="text-end"></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">@context.Name</MudTd>
+            <MudTd DataLabel="Email">@context.Email</MudTd>
+            <MudTd DataLabel="Role">@context.Role</MudTd>
+            <MudTd DataLabel="Organization">@GetOrganizationName(context.OrganizationId)</MudTd>
+            <MudTd DataLabel="Cohort" Class="text-center">
+                <MudTooltip Text="@(context.IsTestUser ? "Self-service test user" : "Self-service production user")">
+                    <MudIconButton Icon="@(context.IsTestUser ? Icons.Material.Filled.Science : Icons.Material.Filled.CheckCircle)"
+                                   Color="@(context.IsTestUser ? Color.Warning : Color.Success)"
+                                   Size="Size.Small"
+                                   aria-label="@(context.IsTestUser ? "Self-service test user" : "Self-service production user")" />
+                </MudTooltip>
+            </MudTd>
+            <MudTd Class="text-end">
+                <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                               Color="Color.Primary"
+                               Size="Size.Small"
+                               aria-label="Edit user"
+                               OnClick="() => OpenEditDialog(context)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               Color="Color.Error"
+                               Size="Size.Small"
+                               aria-label="Delete user"
+                               OnClick="() => OpenDeleteDialog(context)" />
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? QuerySearch { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<UserDto> users = new();
+    private List<OrganizationDto> organizations = new();
+    private string searchText = string.Empty;
+    private string? appliedQuerySearch;
+
+    private IEnumerable<UserDto> filteredUsers => string.IsNullOrWhiteSpace(searchText)
+        ? users
+        : users.Where(user =>
+            Contains(user.Name, searchText) ||
+            Contains(user.Email, searchText) ||
+            Contains(user.Role, searchText) ||
+            Contains(GetOrganizationName(user.OrganizationId), searchText));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUsers();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!string.Equals(appliedQuerySearch, QuerySearch, StringComparison.Ordinal))
+        {
+            appliedQuerySearch = QuerySearch;
+            searchText = QuerySearch ?? string.Empty;
+        }
+    }
+
+    private async Task LoadUsers()
+    {
+        var usersTask = HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users");
+        var organizationsTask = HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations");
+
+        users = await usersTask ?? new();
+        organizations = await organizationsTask ?? new();
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateUserDialog>("Create User", options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadUsers();
+        }
+    }
+
+    private async Task OpenEditDialog(UserDto user)
+    {
+        var parameters = new DialogParameters { ["User"] = user };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<EditUserDialog>("Edit User", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadUsers();
+        }
+    }
+
+    private async Task OpenDeleteDialog(UserDto user)
+    {
+        var parameters = new DialogParameters { ["User"] = user };
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraSmall };
+        var dialog = await DialogService.ShowAsync<DeleteUserDialog>("Delete User", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadUsers();
+        }
+    }
+
+    private static bool Contains(string? value, string search) =>
+        !string.IsNullOrWhiteSpace(value) && value.Contains(search, StringComparison.OrdinalIgnoreCase);
+
+    private string GetOrganizationName(string? organizationId)
+    {
+        if (string.IsNullOrWhiteSpace(organizationId))
+        {
+            return "-";
+        }
+
+        return organizations.FirstOrDefault(x => x.Id == organizationId)?.Name ?? organizationId;
+    }
+
+}

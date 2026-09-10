@@ -1,0 +1,150 @@
+﻿@using System.Security.Claims
+@using Helpdesk.Shared.DTOs.Worklog
+@attribute [Authorize(Roles = "Incident.User,Incident.Manager,HelpdeskAdmin")]
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<MudPaper Class="pa-4 mt-4">
+    <MudText Typo="Typo.h6" Class="mb-3">Worklogs & Notes</MudText>
+    @if (loading)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-4"/>
+    }
+    else if (worklogs is not null && worklogs.Any())
+    {
+        <div class="d-flex flex-column gap-3">
+            @* --- No changes in this loop, just uses the new property names below --- *@
+            @foreach (var log in worklogs.OrderBy(w => w.LoggedAt))
+            {
+                <MudChat Dense="true" Elevation="2" Square="true"
+                         Color="@(log.TechnicianId == currentUserId ? Color.Primary : Color.Default)"
+                         Variant="@(log.TechnicianId == currentUserId ? Variant.Filled : Variant.Outlined)"
+                         ChatPosition="@(log.TechnicianId == currentUserId ? ChatBubblePosition.End : ChatBubblePosition.Start)">
+                    <MudChatHeader Name="@log.TechnicianName" Time="@log.LoggedAt.ToString("g")"/>
+                    <MudAvatar Color="Color.Primary" Size="Size.Small" Variant="Variant.Outlined">@GetInitials(log.TechnicianName)</MudAvatar>
+                    <MudChatBubble>
+                        @((MarkupString)(log.Notes ?? "").Replace("\n", "<br/>"))
+                    </MudChatBubble>
+                    <MudChatFooter>
+                        @if (log.Hours > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Text" Icon="@Icons.Material.Filled.Timer">@log.Hours.ToString("F1")h</MudChip>
+                        }
+                    </MudChatFooter>
+                </MudChat>
+            }
+        </div>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2">No worklogs have been added yet.</MudText>
+    }
+
+    <MudPaper Elevation="25" Class="d-flex pa-2 mt-4" Outlined="true">
+        <MudNumericField @bind-Value="newWorklog.Hours" Label="Hours" Variant="Variant.Outlined" Min="0" Max="24" Step="0.1" HideSpinButtons="true" Style="width: 100px;" Class="mr-2"/>
+        <MudTextField @bind-Value="newWorklog.Notes" Label="Add a note or worklog..." Variant="Variant.Outlined" Class="flex-grow-1" Lines="1" OnKeyUp="OnEnter"/>
+        <MudButton Icon="@Icons.Material.Filled.Send" Color="Color.Primary" OnClick="HandleAddWorklog" Class="ml-2 align-self-center"/>
+    </MudPaper>
+</MudPaper>
+
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [Parameter, EditorRequired] public string IncidentId { get; set; } = default!;
+
+    private List<WorkLogDto>? worklogs;
+    private CreateWorkLogDto newWorklog = new();
+    private bool loading = true;
+    private string? currentUserId;
+    private string? currentUserName; // Store the current user's name
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        currentUserName = user.Identity?.Name; // Get the user's name for display
+        
+        await LoadWorklogsAsync();
+    }
+    
+    private async Task LoadWorklogsAsync()
+    {
+        loading = true;
+        try
+        {
+            var loadedLogs = await HelpdeskApi.GetFromJsonAsync<List<WorkLogDto>>($"api/v1/incidents/{IncidentId}/worklogs");
+            if (loadedLogs is not null)
+            {
+                // Ensure all logs have a name to display
+                foreach (var log in loadedLogs)
+                {
+                    if (string.IsNullOrWhiteSpace(log.TechnicianName))
+                    {
+                        log.TechnicianName = log.TechnicianId == currentUserId ? currentUserName : "Another Technician";
+                    }
+                }
+                worklogs = loadedLogs;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load worklogs: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+    
+    private async Task HandleAddWorklog()
+    {
+        if (string.IsNullOrWhiteSpace(newWorklog.Notes))
+        {
+            return;
+        }
+        try
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync($"api/v1/incidents/{IncidentId}/worklogs", newWorklog);
+            if (response.IsSuccessStatusCode)
+            {
+                newWorklog = new();
+                Snackbar.Add("Worklog added.", Severity.Success);
+                await LoadWorklogsAsync();
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Error: {error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"A client error occurred: {ex.Message}", Severity.Error);
+        }
+        StateHasChanged();
+    }
+    
+    private async Task OnEnter(KeyboardEventArgs e)
+    {
+        if (e.Code == "Enter" || e.Code == "NumpadEnter")
+        {
+            await HandleAddWorklog();
+        }
+    }
+    
+    private string GetInitials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "?";
+
+        var parts = name.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > 1)
+        {
+            return $"{parts[0][0]}{parts[^1][0]}".ToUpper();
+        }
+        return name.Length > 1 ? name.Substring(0, 2).ToUpper() : name.ToUpper();
+    }
+}

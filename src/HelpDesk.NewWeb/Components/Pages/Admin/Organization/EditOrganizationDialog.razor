@@ -1,0 +1,674 @@
+@using System.ComponentModel.DataAnnotations
+@using Helpdesk.Shared.Models
+@using Helpdesk.Shared.DTOs.AI
+@using Helpdesk.Shared.DTOs.Orchestration
+@using Helpdesk.Shared.DTOs.Organization
+@using HelpDesk.NewWeb.Models
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Edit" class="mr-2 mb-n1" />
+            Edit Organization
+        </MudText>
+    </TitleContent>
+
+    <DialogContent>
+        <MudForm @ref="form" Model="model" OnValidSubmit="Submit" Class="mt-2" @key="model">
+
+            <MudTabs>
+                <MudTabPanel Text="General">
+                    <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+                    <MudTextField @bind-Value="model.DnsName" Label="DNS Name" />
+                    <MudTextField @bind-Value="model.ContactInfo" Label="Contact Info" />
+                    <MudSelect T="string"
+                               @bind-Value="model.ItSupportOrganizationId"
+                               Label="ITIL/MSP manager organization"
+                               Clearable="true"
+                               Dense="true"
+                               Margin="Margin.Dense">
+                        @foreach (var organization in ManagerOrganizationOptions)
+                        {
+                            <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <MudSwitch T="bool"
+                               @bind-Value="model.Enabled"
+                               For="@(() => model.Enabled)"
+                               Label="Enable organization" />
+                </MudTabPanel>
+
+                <MudTabPanel Text="External orchestration Tenant">
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        Link this Helpdesk organization to an External orchestration tenant for tenant-scoped automation request definitions and executions.
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(orchestrationTenantsError))
+                    {
+                        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+                            @orchestrationTenantsError
+                        </MudAlert>
+                    }
+                    <MudSelect T="int?"
+                               @bind-Value="model.OrchestrationTenantId"
+                               Label="External orchestration Tenant"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Clearable="true"
+                               Disabled="orchestrationTenantsLoading">
+                        @foreach (var tenant in orchestrationTenants)
+                        {
+                            <MudSelectItem T="int?" Value="@tenant.TenantId">@tenant.Name (@tenant.TenantId)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    @if (model.OrchestrationTenantLinkedAtUtc.HasValue)
+                    {
+                        <MudText Typo="Typo.caption">
+                            Linked: @model.OrchestrationTenantLinkedAtUtc.Value.ToLocalTime().ToString("yyyy/MM/dd HH:mm")
+                        </MudText>
+                    }
+                </MudTabPanel>
+
+                <MudTabPanel Text="AI / KB Settings">
+                    <MudStack Spacing="2">
+                        @if (!string.IsNullOrWhiteSpace(aiSettingsError))
+                        {
+                            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">
+                                @aiSettingsError
+                            </MudAlert>
+                        }
+
+                        <MudSwitch T="bool"
+                                   @bind-Value="aiSettings.EnableAiSearch"
+                                   For="@(() => aiSettings.EnableAiSearch)"
+                                   Color="Color.Primary"
+                                   Label="Enable embeddings search / suggestions" />
+                        <MudText Typo="Typo.caption" Class="mb-2 text-secondary">
+                            If disabled, incident pages won't perform embeddings lookup and suggestions won't be generated.
+                        </MudText>
+
+                        <MudSwitch T="bool"
+                                   @bind-Value="aiSettings.EnableAiAnswers"
+                                   For="@(() => aiSettings.EnableAiAnswers)"
+                                   Label="Enable KB" />
+
+                        @if (readiness is not null)
+                        {
+                            <MudAlert Severity="@(readiness.ProductionReady ? Severity.Success : Severity.Warning)"
+                                      Variant="Variant.Outlined"
+                                      Dense="true">
+                                @(readiness.ProductionReady
+                                    ? "AI rollout gates are currently met for this organization."
+                                    : "AI rollout gates are not yet met for this organization.")
+                            </MudAlert>
+                            @if (readiness.BlockingReasons.Count > 0)
+                            {
+                                <MudList T="string" Dense="true">
+                                    @foreach (var reason in readiness.BlockingReasons)
+                                    {
+                                        <MudListItem T="string">@reason</MudListItem>
+                                    }
+                                </MudList>
+                            }
+                        }
+
+                        @if (runtimeStatus is not null)
+                        {
+                            <MudAlert Severity="@GetRuntimeSeverity(runtimeStatus.Status)"
+                                      Variant="Variant.Outlined"
+                                      Dense="true">
+                                @($"AI runtime is currently {runtimeStatus.Status.ToLowerInvariant()} for this organization.")
+                            </MudAlert>
+
+                            @if (runtimeStatus.Reasons.Count > 0)
+                            {
+                                <MudList T="string" Dense="true">
+                                    @foreach (var reason in runtimeStatus.Reasons.Take(4))
+                                    {
+                                        <MudListItem T="string">@reason</MudListItem>
+                                    }
+                                </MudList>
+                            }
+
+                            @if (runtimeStatus.Providers.Count > 0)
+                            {
+                                <MudTable Items="runtimeStatus.Providers" Dense="true" Hover="true" T="OrganizationAiRuntimeProviderStatusDto">
+                                    <HeaderContent>
+                                        <MudTh>Channel</MudTh>
+                                        <MudTh>Provider</MudTh>
+                                        <MudTh>Model</MudTh>
+                                        <MudTh>Status</MudTh>
+                                    </HeaderContent>
+                                    <RowTemplate Context="provider">
+                                        <MudTd DataLabel="Channel">@provider.Channel</MudTd>
+                                        <MudTd DataLabel="Provider">@(string.IsNullOrWhiteSpace(provider.ProviderName) ? "Unconfigured" : provider.ProviderName)</MudTd>
+                                        <MudTd DataLabel="Model">@(string.IsNullOrWhiteSpace(provider.ModelId) ? "-" : provider.ModelId)</MudTd>
+                                        <MudTd DataLabel="Status">
+                                            <MudChip T="string"
+                                                     Color="@GetRuntimeColor(provider.Status)"
+                                                     Variant="Variant.Outlined"
+                                                     Dense="true">
+                                                @provider.Status
+                                            </MudChip>
+                                        </MudTd>
+                                    </RowTemplate>
+                                </MudTable>
+                            }
+
+                            @if (runtimeStatus.RecentEvidence.Count > 0)
+                            {
+                                <MudText Typo="Typo.subtitle2" Class="mt-2">Recent Runtime Evidence</MudText>
+                                <MudList T="string" Dense="true">
+                                    @foreach (var evidence in runtimeStatus.RecentEvidence.Take(5))
+                                    {
+                                        <MudListItem T="string">@evidence</MudListItem>
+                                    }
+                                </MudList>
+                            }
+                        }
+
+                        <MudDivider Class="my-2" />
+
+                        <!-- Knowledge Provider/Model -->
+                        <MudText Typo="Typo.subtitle2">Knowledge Model</MudText>
+                        <MudSelect @bind-Value="SelectedKnowledgeProviderId"
+                                   Label="Knowledge Provider"
+                                   Required="@aiSettings.EnableAiAnswers"
+                                   Dense="true"
+                                   Disabled="@(isLoadingProviders || !aiSettings.EnableAiAnswers)">
+                            @if (isLoadingProviders)
+                            {
+                                <MudSelectItem T="string" Value="@null"><em>Loading providers</em></MudSelectItem>
+                            }
+                            else if (providers.Count == 0)
+                            {
+                                <MudSelectItem T="string" Value="@null"><em>No providers found</em></MudSelectItem>
+                            }
+                            else
+                            {
+                                @foreach (var p in providers)
+                                {
+                                    <MudSelectItem Value="@p.Id">@p.Name</MudSelectItem>
+                                }
+                            }
+                        </MudSelect>
+
+                        <MudSelect @bind-Value="SelectedKnowledgeModelName"
+                                   Label="Knowledge Model"
+                                   Required="@aiSettings.EnableAiAnswers"
+                                   Dense="true"
+                                   Disabled="@(!aiSettings.EnableAiAnswers || !knowledgeModels.Any())">
+                            @if (isLoadingKnowledgeModels)
+                            {
+                                <MudSelectItem T="string" Value="@null"><em>Loading models</em></MudSelectItem>
+                            }
+                            else if (!knowledgeModels.Any())
+                            {
+                                <MudSelectItem T="string" Value="@null"><em>Select a provider first</em></MudSelectItem>
+                            }
+                            else
+                            {
+                                @foreach (var m in knowledgeModels.Where(m => m.IsEnabled))
+                                {
+                                    <MudSelectItem Value="@m.Name">@m.Name</MudSelectItem>
+                                }
+                            }
+                        </MudSelect>
+
+                        <MudDivider Class="my-4" />
+
+                        <!-- Embedding Provider/Model -->
+                        <MudText Typo="Typo.subtitle2">Embedding Model</MudText>
+                        <MudSelect @bind-Value="SelectedEmbeddingProviderId"
+                                   Label="Embedding Provider"
+                                   Required="@aiSettings.EnableAiSearch"
+                                   Dense="true"
+                                   Disabled="@(isLoadingProviders || !aiSettings.EnableAiSearch)">
+                            @if (isLoadingProviders)
+                            {
+                                <MudSelectItem T="string" Value="@null"><em>Loading providers</em></MudSelectItem>
+                            }
+                            else if (providers.Count == 0)
+                            {
+                                <MudSelectItem T="string" Value="@null"><em>No providers found</em></MudSelectItem>
+                            }
+                            else
+                            {
+                                @foreach (var p in providers)
+                                {
+                                    <MudSelectItem Value="@p.Id">@p.Name</MudSelectItem>
+                                }
+                            }
+                        </MudSelect>
+
+                        <MudSelect @bind-Value="SelectedEmbeddingModelName"
+                                   Label="Embedding Model"
+                                   Required="@aiSettings.EnableAiSearch"
+                                   Dense="true"
+                                   Disabled="@(!aiSettings.EnableAiSearch || !embeddingModels.Any())">
+                            @if (isLoadingEmbeddingModels)
+                            {
+                                <MudSelectItem T="string" Value="@null"><em>Loading models</em></MudSelectItem>
+                            }
+                            else if (!embeddingModels.Any())
+                            {
+                                <MudSelectItem T="string" Value="@null"><em>Select a provider first</em></MudSelectItem>
+                            }
+                            else
+                            {
+                                @foreach (var m in embeddingModels.Where(m => m.IsEnabled))
+                                {
+                                    <MudSelectItem Value="@m.Name">@m.Name</MudSelectItem>
+                                }
+                            }
+                        </MudSelect>
+
+                        <MudNumericField @bind-Value="aiSettings.EmbeddingDimensions"
+                                         Label="Embedding Dimensions"
+                                         HelperText="Must match the pgvector column dimension."
+                                         Dense="true" />
+
+                        <MudDivider Class="my-4" />
+                        <MudText Typo="Typo.subtitle2">Runtime Hardening</MudText>
+                        <MudSwitch T="bool"
+                                   @bind-Value="aiSettings.EnableProviderFallback"
+                                   For="@(() => aiSettings.EnableProviderFallback)"
+                                   Color="Color.Primary"
+                                   Label="Enable provider fallback" />
+                        <MudNumericField T="int"
+                                         @bind-Value="aiSettings.MaxProviderAttempts"
+                                         Label="Max provider attempts"
+                                         Min="1"
+                                         Max="5"
+                                         Dense="true" />
+
+                        <MudDivider Class="my-4" />
+                        <MudText Typo="Typo.subtitle2">Rollout Gates</MudText>
+                        <MudNumericField T="int"
+                                         @bind-Value="aiSettings.MinimumSuggestionFeedbackCount"
+                                         Label="Min suggestion feedback count"
+                                         Min="0"
+                                         Dense="true" />
+                        <MudNumericField T="double"
+                                         @bind-Value="aiSettings.MinimumSuggestionHelpfulRate"
+                                         Label="Min suggestion helpful rate"
+                                         Min="0"
+                                         Max="1"
+                                         Step="0.05"
+                                         Dense="true" />
+                        <MudNumericField T="int"
+                                         @bind-Value="aiSettings.MinimumAutomationFeedbackCount"
+                                         Label="Min automation feedback count"
+                                         Min="0"
+                                         Dense="true" />
+                        <MudNumericField T="double"
+                                         @bind-Value="aiSettings.MinimumAutomationResolvedRate"
+                                         Label="Min automation resolved rate"
+                                         Min="0"
+                                         Max="1"
+                                         Step="0.05"
+                                         Dense="true" />
+                    </MudStack>
+                </MudTabPanel>
+            </MudTabs>
+        </MudForm>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public OrganizationDto Organization { get; set; } = default!;
+    [Parameter] public List<OrganizationDto> Organizations { get; set; } = new();
+
+    private MudForm form = default!;
+    private EditOrganizationModel model = new();
+    private OrganizationAiKbSettingsDto aiSettings = CreateDefaultAiSettings();
+
+    private List<AiProviderSummaryDto> providers = new();
+
+    // Provider/model lists for Knowledge
+    private List<AiModelDto> knowledgeModels = new();
+    private bool isLoadingKnowledgeModels;
+    private string? _selectedKnowledgeProviderId;
+    private string? SelectedKnowledgeProviderId
+    {
+        get => _selectedKnowledgeProviderId;
+        set
+        {
+            if (_selectedKnowledgeProviderId == value) return;
+            _selectedKnowledgeProviderId = value;
+            aiSettings.KnowledgeProviderId = value;
+            _ = OnKnowledgeProviderChanged(value);
+        }
+    }
+    private string? _selectedKnowledgeModelName;
+    private string? SelectedKnowledgeModelName
+    {
+        get => _selectedKnowledgeModelName;
+        set
+        {
+            if (_selectedKnowledgeModelName == value) return;
+            _selectedKnowledgeModelName = value;
+            aiSettings.KnowledgeModelName = value;
+        }
+    }
+
+    // Provider/model lists for Embedding
+    private List<AiModelDto> embeddingModels = new();
+    private bool isLoadingEmbeddingModels;
+    private string? _selectedEmbeddingProviderId;
+    private string? SelectedEmbeddingProviderId
+    {
+        get => _selectedEmbeddingProviderId;
+        set
+        {
+            if (_selectedEmbeddingProviderId == value) return;
+            _selectedEmbeddingProviderId = value;
+            aiSettings.EmbeddingProviderId = value;
+            _ = OnEmbeddingProviderChanged(value);
+        }
+    }
+    private string? _selectedEmbeddingModelName;
+    private string? SelectedEmbeddingModelName
+    {
+        get => _selectedEmbeddingModelName;
+        set
+        {
+            if (_selectedEmbeddingModelName == value) return;
+            _selectedEmbeddingModelName = value;
+            aiSettings.EmbeddingModel = value;
+        }
+    }
+
+    private bool isLoadingProviders;
+    private List<OrchestrationCatalogTenantDto> orchestrationTenants = new();
+    private bool orchestrationTenantsLoading;
+    private string? orchestrationTenantsError;
+    private string? aiSettingsError;
+    private OrganizationAiReadinessDto? readiness;
+    private OrganizationAiRuntimeStatusDto? runtimeStatus;
+    private IEnumerable<OrganizationDto> ManagerOrganizationOptions => Organizations
+        .Where(x => x.IsEnabled && !string.Equals(x.Id, Organization?.Id, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        model = new EditOrganizationModel
+        {
+            Name = Organization?.Name ?? string.Empty,
+            DnsName = Organization?.DnsName,
+            ContactInfo = Organization?.ContactInfo,
+            ItSupportOrganizationId = Organization?.ItSupportOrganizationId,
+            OrchestrationTenantId = Organization?.OrchestrationTenantId,
+            OrchestrationTenantName = Organization?.OrchestrationTenantName,
+            OrchestrationTenantLinkedAtUtc = Organization?.OrchestrationTenantLinkedAtUtc,
+            State = Organization?.State ?? EntityState.Enabled,
+            Enabled = (Organization?.State ?? EntityState.Enabled) == EntityState.Enabled
+        };
+        aiSettings = CreateDefaultAiSettings();
+        aiSettingsError = null;
+        readiness = null;
+        runtimeStatus = null;
+
+        await LoadProvidersAsync();
+        await LoadOrchestrationTenantsAsync();
+
+        try
+        {
+            var dto = await HelpdeskApi
+                .GetFromJsonAsync<OrganizationAiKbSettingsDto>($"api/v1/organizations/{Organization.Id}/ai-kb-settings");
+
+            if (dto is not null)
+            {
+                aiSettings.EnableAiSearch = dto.EnableAiSearch;
+                aiSettings.EnableAiAnswers = dto.EnableAiAnswers;
+                aiSettings.KnowledgeProviderId = dto.KnowledgeProviderId;
+                aiSettings.KnowledgeModelName = dto.KnowledgeModelName;
+                aiSettings.EmbeddingProviderId = dto.EmbeddingProviderId;
+                aiSettings.EmbeddingModel = dto.EmbeddingModel;
+                aiSettings.EmbeddingDimensions = dto.EmbeddingDimensions;
+                aiSettings.EnableProviderFallback = dto.EnableProviderFallback;
+                aiSettings.MaxProviderAttempts = dto.MaxProviderAttempts;
+                aiSettings.MinimumSuggestionFeedbackCount = dto.MinimumSuggestionFeedbackCount;
+                aiSettings.MinimumSuggestionHelpfulRate = dto.MinimumSuggestionHelpfulRate;
+                aiSettings.MinimumAutomationFeedbackCount = dto.MinimumAutomationFeedbackCount;
+                aiSettings.MinimumAutomationResolvedRate = dto.MinimumAutomationResolvedRate;
+
+                await PreloadProviderSelectionsAsync();
+            }
+
+            readiness = await HelpdeskApi
+                .GetFromJsonAsync<OrganizationAiReadinessDto>($"api/v1/organizations/{Organization.Id}/ai-kb-settings/readiness");
+            runtimeStatus = await HelpdeskApi
+                .GetFromJsonAsync<OrganizationAiRuntimeStatusDto>($"api/v1/organizations/{Organization.Id}/ai-kb-settings/runtime-status");
+        }
+        catch { }
+    }
+
+    private static Severity GetRuntimeSeverity(string? status)
+        => status?.ToLowerInvariant() switch
+        {
+            "ready" => Severity.Success,
+            "degraded" => Severity.Warning,
+            "unavailable" => Severity.Error,
+            _ => Severity.Info
+        };
+
+    private static Color GetRuntimeColor(string? status)
+        => status?.ToLowerInvariant() switch
+        {
+            "ready" => Color.Success,
+            "degraded" => Color.Warning,
+            "unavailable" => Color.Error,
+            _ => Color.Default
+        };
+
+    private async Task LoadProvidersAsync()
+    {
+        isLoadingProviders = true;
+        try
+        {
+            var resp = await HelpdeskApi.GetFromJsonAsync<PagedResult<AiProviderSummaryDto>>(
+                "api/v1/ai/providers?page=1&pageSize=100");
+
+            providers = resp?.Items?.Where(p => p.IsEnabled).ToList() ?? new();
+        }
+        finally { isLoadingProviders = false; }
+    }
+
+    private async Task PreloadProviderSelectionsAsync()
+    {
+        _selectedKnowledgeProviderId = aiSettings.KnowledgeProviderId;
+        _selectedKnowledgeModelName = aiSettings.KnowledgeModelName;
+        _selectedEmbeddingProviderId = aiSettings.EmbeddingProviderId;
+        _selectedEmbeddingModelName = aiSettings.EmbeddingModel;
+
+        if (!string.IsNullOrWhiteSpace(_selectedKnowledgeProviderId))
+        {
+            await LoadKnowledgeModelsAsync(_selectedKnowledgeProviderId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_selectedEmbeddingProviderId))
+        {
+            await LoadEmbeddingModelsAsync(_selectedEmbeddingProviderId);
+        }
+    }
+
+    private async Task OnKnowledgeProviderChanged(string? providerId)
+    {
+        SelectedKnowledgeModelName = null;
+        knowledgeModels.Clear();
+        if (!string.IsNullOrWhiteSpace(providerId))
+            await LoadKnowledgeModelsAsync(providerId);
+    }
+
+    private async Task LoadKnowledgeModelsAsync(string providerId)
+    {
+        isLoadingKnowledgeModels = true;
+        try
+        {
+            var list = await HelpdeskApi.GetFromJsonAsync<List<AiModelDto>>(
+                $"api/v1/ai/providers/{providerId}/models");
+
+            knowledgeModels = list?.Where(m => m.IsEnabled).OrderBy(m => m.Name).ToList() ?? new();
+            StateHasChanged();
+        }
+        finally
+        {
+            isLoadingKnowledgeModels = false;
+        }
+    }
+
+    private async Task OnEmbeddingProviderChanged(string? providerId)
+    {
+        SelectedEmbeddingModelName = null;
+        embeddingModels.Clear();
+        if (!string.IsNullOrWhiteSpace(providerId))
+            await LoadEmbeddingModelsAsync(providerId);
+    }
+
+    private async Task LoadEmbeddingModelsAsync(string providerId)
+    {
+        isLoadingEmbeddingModels = true;
+        try
+        {
+            var list = await HelpdeskApi.GetFromJsonAsync<List<AiModelDto>>(
+                $"api/v1/ai/providers/{providerId}/models");
+            embeddingModels = list?.Where(m => m.IsEnabled).OrderBy(m => m.Name).ToList() ?? new();
+            StateHasChanged();
+
+        }
+        finally { isLoadingEmbeddingModels = false; }
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!form.IsValid) return;
+        aiSettingsError = null;
+
+        model.State = model.Enabled ? EntityState.Enabled : EntityState.Blocked;
+
+        var updateResp = await HelpdeskApi.PutAsJsonAsync(
+            $"api/v1/organizations/{Organization.Id}",
+            new
+            {
+                model.Name,
+                model.DnsName,
+                model.ContactInfo,
+                ItSupportOrganizationId = string.IsNullOrWhiteSpace(model.ItSupportOrganizationId) ? null : model.ItSupportOrganizationId,
+                model.State,
+                OrchestrationTenantId = model.OrchestrationTenantId,
+                OrchestrationTenantName = SelectedOrchestrationTenantName,
+                OrchestrationTenantLinkedAtUtc = model.OrchestrationTenantId.HasValue ? (DateTimeOffset?)(model.OrchestrationTenantLinkedAtUtc ?? DateTimeOffset.UtcNow) : null
+            });
+
+        if (!updateResp.IsSuccessStatusCode)
+        {
+            aiSettingsError = await ExtractResponseMessageAsync(updateResp, "Organization settings could not be saved.");
+            Snackbar.Add(aiSettingsError, Severity.Error);
+            return;
+        }
+
+        var aiSettingsResp = await HelpdeskApi.PutAsJsonAsync(
+            $"api/v1/organizations/{Organization.Id}/ai-kb-settings",
+            aiSettings);
+
+        if (!aiSettingsResp.IsSuccessStatusCode)
+        {
+            aiSettingsError = await ExtractResponseMessageAsync(aiSettingsResp, "AI / KB settings could not be saved.");
+            Snackbar.Add(aiSettingsError, Severity.Error);
+            return;
+        }
+
+        Dialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private string? SelectedOrchestrationTenantName => orchestrationTenants
+        .FirstOrDefault(x => x.TenantId == model.OrchestrationTenantId)?.Name;
+
+    private async Task LoadOrchestrationTenantsAsync()
+    {
+        orchestrationTenantsLoading = true;
+        orchestrationTenantsError = null;
+        try
+        {
+            orchestrationTenants = await HelpdeskApi.GetFromJsonAsync<List<OrchestrationCatalogTenantDto>>(
+                "api/v1/admin/orchestration/orchestration/catalog/tenants") ?? new();
+        }
+        catch (Exception ex)
+        {
+            orchestrationTenantsError = $"External orchestration tenant catalog could not be loaded: {ex.Message}";
+            orchestrationTenants = new();
+        }
+        finally
+        {
+            orchestrationTenantsLoading = false;
+        }
+    }
+
+    public class EditOrganizationModel
+    {
+        [Required] public string Name { get; set; } = string.Empty;
+        public string? DnsName { get; set; }
+        public string? ContactInfo { get; set; }
+        public string? ItSupportOrganizationId { get; set; }
+        public int? OrchestrationTenantId { get; set; }
+        public string? OrchestrationTenantName { get; set; }
+        public DateTimeOffset? OrchestrationTenantLinkedAtUtc { get; set; }
+        public EntityState State { get; set; } = EntityState.Enabled;
+        public bool Enabled { get; set; }
+    }
+
+    private static OrganizationAiKbSettingsDto CreateDefaultAiSettings()
+    {
+        return new OrganizationAiKbSettingsDto
+        {
+            EmbeddingModel = "embeddinggemma",
+            EmbeddingDimensions = 768,
+            EnableProviderFallback = true,
+            MaxProviderAttempts = 2,
+            MinimumSuggestionFeedbackCount = 5,
+            MinimumSuggestionHelpfulRate = 0.6,
+            MinimumAutomationFeedbackCount = 3,
+            MinimumAutomationResolvedRate = 0.5
+        };
+    }
+
+    private static async Task<string> ExtractResponseMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                return $"{fallback} HTTP {(int)response.StatusCode}: {body}";
+            }
+        }
+        catch
+        {
+            // Fall through to status-only message below.
+        }
+
+        return $"{fallback} HTTP {(int)response.StatusCode}.";
+    }
+
+    private sealed class PagedResult<TItem>
+    {
+        public int Page { get; set; }
+        public int PageSize { get; set; }
+        public int TotalCount { get; set; }
+        public List<TItem> Items { get; set; } = new();
+    }
+}

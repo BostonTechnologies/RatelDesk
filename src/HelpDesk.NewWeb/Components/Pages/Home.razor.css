@@ -1,0 +1,59 @@
+.dashboard-kpi-grid
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+    gap: 10px;
+    align-items: start;
+}
+
+::deep .dashboard-kpi-card
+{
+    min-height: 88px;
+    padding: 12px;
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+::deep .dashboard-kpi-card-content
+{
+    height: 100%;
+    justify-content: space-between;
+}
+
+::deep .dashboard-kpi-card .mud-typography-caption
+{
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+}
+
+::deep .dashboard-kpi-card .mud-typography-h5
+{
+    line-height: 1;
+}
+
+::deep .dashboard-kpi-card:hover
+{
+    border-color: var(--mud-palette-primary);
+    background: color-mix(in srgb, var(--mud-palette-primary) 6%, var(--mud-palette-surface));
+}
+
+::deep .dashboard-recent-panel .mud-table-root
+{
+    margin-inline: -4px;
+}
+
+.dashboard-empty-state
+{
+    display: block;
+    padding: 14px 4px 6px;
+}
+
+@media (max-width: 600px)
+{
+    .dashboard-kpi-grid
+    {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

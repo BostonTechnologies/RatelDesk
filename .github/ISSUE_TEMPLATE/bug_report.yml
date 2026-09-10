@@ -1,0 +1,28 @@
+name: Bug report
+description: Report a reproducible RatelDesk defect.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include credentials, tenant data, customer data, or private URLs. Use SECURITY.md for vulnerabilities."
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide minimal, sanitized steps using example data.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: RatelDesk version or commit
+    validations:
+      required: true

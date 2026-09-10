@@ -1,0 +1,524 @@
+@using Helpdesk.Shared.DTOs.Change
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Models
+@using System.ComponentModel.DataAnnotations
+@attribute [Authorize(Roles = "Change.User,Change.Manager,HelpdeskAdmin")]
+
+@inject ISnackbar Snackbar
+@inject IHttpClientFactory HttpClientFactory
+@inject IErrorLoggingService ErrorLogger
+@inject ILogger<CreateChangeDialog> Logger
+@using HelpDesk.NewWeb.Services
+
+<MudDialog Class="change-create-dialog">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.AddCircle" Class="mr-2 mb-n1" />
+            Create New Change
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <div class="change-create-dialog-content">
+            <MudForm Model="model" @ref="form" OnValidSubmit="Submit" Class="mt-4">
+                <MudGrid Spacing="2" Class="change-create-grid">
+                    <MudItem xs="12">
+                        <MudPaper Class="pa-4 change-create-section" Outlined="true">
+                            <MudText Typo="Typo.subtitle1" Class="mb-3">Details</MudText>
+                            <MudGrid Spacing="2">
+                                <MudItem xs="12" md="6">
+                                    <ChangeFieldHelp Label="Title"
+                                                     TooltipText="Use a short, specific summary of what will change."
+                                                     ExampleText="Example: 'Deploy updated firewall policy to branch office edge routers'" />
+                                    <MudTextField @bind-Value="model.Title"
+                                                  Label="Title"
+                                                  Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense"
+                                                  For="@(() => model.Title)"
+                                                  Required="true"
+                                                  Immediate="true" />
+
+                                    <ChangeFieldHelp Label="Description"
+                                                     TooltipText="Describe the change in plain language so reviewers understand what is being changed and why."
+                                                     ExampleText="Example: 'Apply the approved hardening baseline to all domain controllers to reduce exposure and standardize security posture.'" />
+                                    <MudTextField @bind-Value="model.Description"
+                                                  Label="Description"
+                                                  Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense"
+                                                  Lines="8"
+                                                  For="@(() => model.Description)"
+                                                  Required="true" />
+                                </MudItem>
+
+                                <MudItem xs="12" md="6">
+                                    <MudGrid Spacing="2">
+                                        <MudItem xs="12" sm="6">
+                                            <ChangeFieldHelp Label="Priority"
+                                                             TooltipText="Set the operational urgency of the change."
+                                                             ExampleText="Low = planned routine work, High = business-sensitive work, Critical = urgent/high-risk work." />
+                                            <MudSelect T="TicketPriority"
+                                                       @bind-Value="model.Priority"
+                                                       Label="Priority"
+                                                       Dense="true"
+                                                       Margin="Margin.Dense"
+                                                       Variant="Variant.Outlined"
+                                                       For="@(() => model.Priority)"
+                                                       Required="true">
+                                                @foreach (TicketPriority priority in Enum.GetValues(typeof(TicketPriority)))
+                                                {
+                                                    <MudSelectItem Value="priority">@priority.ToString()</MudSelectItem>
+                                                }
+                                            </MudSelect>
+                                        </MudItem>
+
+                                        <MudItem xs="12" sm="6">
+                                            <ChangeFieldHelp Label="Organization"
+                                                             TooltipText="Select the organization this change is being performed for."
+                                                             ExampleText="Example: 'Acme Manufacturing' or 'Internal IT Shared Services'" />
+                                            <MudSelect T="string"
+                                                       Label="Organization"
+                                                       Dense="true"
+                                                       Margin="Margin.Dense"
+                                                       Variant="Variant.Outlined"
+                                                       Value="@model.OrganizationId"
+                                                       ValueChanged="OnOrganizationChanged"
+                                                       Required="true">
+                                                @foreach (var organization in organizations)
+                                                {
+                                                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                                                }
+                                            </MudSelect>
+                                        </MudItem>
+
+                                        <MudItem xs="12" sm="6">
+                                            <ChangeFieldHelp Label="Change Type"
+                                                             TooltipText="Choose the ITIL change type that best matches the work."
+                                                             ExampleText="Standard = pre-approved repeatable work, Normal = planned assessed work, Emergency = urgent work to restore/reduce impact." />
+                                            <MudSelect T="string"
+                                                       Label="Change Type"
+                                                       Dense="true"
+                                                       Margin="Margin.Dense"
+                                                       Variant="Variant.Outlined"
+                                                       Value="@model.ChangeType"
+                                                       ValueChanged="OnChangeTypeChanged"
+                                                       Required="true">
+                                                <MudSelectItem T="string" Value='@("Standard")'>Standard</MudSelectItem>
+                                                <MudSelectItem T="string" Value='@("Normal")'>Normal</MudSelectItem>
+                                                <MudSelectItem T="string" Value='@("Emergency")'>Emergency</MudSelectItem>
+                                            </MudSelect>
+                                        </MudItem>
+
+                                        <MudItem xs="12" sm="6">
+                                            <ChangeFieldHelp Label="Requested for"
+                                                             TooltipText="The person who requested the change"
+                                                             ExampleText="Select one user from the organization this change is for." />
+                                            <MudSelect T="string"
+                                                       Label="Requested for"
+                                                       Dense="true"
+                                                       Margin="Margin.Dense"
+                                                       Variant="Variant.Outlined"
+                                                       @bind-Value="model.RequestedForUserId"
+                                                       Required="true"
+                                                       Disabled="@participantsLoading">
+                                                @foreach (var user in requestedForUsers)
+                                                {
+                                                    <MudSelectItem T="string" Value="@user.Id">@FormatUser(user)</MudSelectItem>
+                                                }
+                                            </MudSelect>
+                                        </MudItem>
+
+                                        <MudItem xs="12" sm="6">
+                                            <ChangeFieldHelp Label="Implementor"
+                                                             TooltipText="The person implementing the change"
+                                                             ExampleText="Select one user from the organization that manages IT for this organization." />
+                                            <MudSelect T="string"
+                                                       Label="Implementor"
+                                                       Dense="true"
+                                                       Margin="Margin.Dense"
+                                                       Variant="Variant.Outlined"
+                                                       @bind-Value="model.ImplementorUserId"
+                                                       Required="true"
+                                                       Disabled="@participantsLoading">
+                                                @foreach (var user in implementorUsers)
+                                                {
+                                                    <MudSelectItem T="string" Value="@user.Id">@FormatUser(user)</MudSelectItem>
+                                                }
+                                            </MudSelect>
+                                        </MudItem>
+
+                                        <MudItem xs="12" sm="6">
+                                            <ChangeFieldHelp Label="Approvers"
+                                                             TooltipText="Who needs to approve this change"
+                                                             ExampleText="Optional. Select one or more approvers from the organization this change is for." />
+                                            <MudSelect T="string"
+                                                       Label="Approvers"
+                                                       Dense="true"
+                                                       Margin="Margin.Dense"
+                                                       Variant="Variant.Outlined"
+                                                       MultiSelection="true"
+                                                       MultiSelectionTextFunc="GetApproverMultiSelectionText"
+                                                       SelectedValues="@selectedApproverIds"
+                                                       SelectedValuesChanged="OnApproversChanged"
+                                                       Disabled="@participantsLoading">
+                                                @foreach (var user in approverUsers)
+                                                {
+                                                    <MudSelectItem T="string" Value="@user.Id">@FormatUser(user)</MudSelectItem>
+                                                }
+                                            </MudSelect>
+                                        </MudItem>
+                                    </MudGrid>
+                                </MudItem>
+                            </MudGrid>
+                        </MudPaper>
+                    </MudItem>
+
+                    <MudItem xs="12">
+                        <MudPaper Class="pa-4 change-create-section" Outlined="true">
+                            <MudText Typo="Typo.subtitle1" Class="mb-3">Implementation Window</MudText>
+                            <MudGrid Spacing="2">
+                                <MudItem xs="12" md="6">
+                                    <MudGrid Spacing="2">
+                                        <MudItem xs="12">
+                                            <ChangeFieldHelp Label="Implementation Start"
+                                                             TooltipText="When should implementation begin?"
+                                                             ExampleText="Example: '2026-04-12 22:00' for an after-hours maintenance window." />
+                                            <MudGrid Spacing="1" Class="change-inline-date-group">
+                                                <MudItem xs="12" sm="6">
+                                                    <MudDatePicker Label="Start Date"
+                                                                   Date="@implementationStartDate"
+                                                                   DateChanged="OnImplementationStartDateChanged"
+                                                                   Margin="Margin.Dense"
+                                                                   Variant="Variant.Outlined" />
+                                                </MudItem>
+                                                <MudItem xs="12" sm="6">
+                                                    <MudTimePicker Label="Start Time"
+                                                                   Time="@implementationStartTime"
+                                                                   TimeChanged="OnImplementationStartTimeChanged"
+                                                                   Margin="Margin.Dense"
+                                                                   AmPm="false" />
+                                                </MudItem>
+                                            </MudGrid>
+                                        </MudItem>
+
+                                        <MudItem xs="12">
+                                            <ChangeFieldHelp Label="Implementation End"
+                                                             TooltipText="When should the planned implementation window finish?"
+                                                             ExampleText="Example: '2026-04-13 00:30' at the end of the approved maintenance window." />
+                                            <MudGrid Spacing="1" Class="change-inline-date-group">
+                                                <MudItem xs="12" sm="6">
+                                                    <MudDatePicker Label="End Date"
+                                                                   Date="@implementationEndDate"
+                                                                   DateChanged="OnImplementationEndDateChanged"
+                                                                   Margin="Margin.Dense"
+                                                                   Variant="Variant.Outlined" />
+                                                </MudItem>
+                                                <MudItem xs="12" sm="6">
+                                                    <MudTimePicker Label="End Time"
+                                                                   Time="@implementationEndTime"
+                                                                   TimeChanged="OnImplementationEndTimeChanged"
+                                                                   Margin="Margin.Dense"
+                                                                   AmPm="false" />
+                                                </MudItem>
+                                            </MudGrid>
+                                        </MudItem>
+                                    </MudGrid>
+                                </MudItem>
+
+                                <MudItem xs="12" md="6" Class="implementation-window-spacer" />
+                            </MudGrid>
+                        </MudPaper>
+                    </MudItem>
+
+                    @if (!string.IsNullOrWhiteSpace(model.ChangeType))
+                    {
+                        <MudItem xs="12">
+                            <ChangeTemplateEditor ChangeType="@model.ChangeType"
+                                                  Model="@model.ChangeTemplate"
+                                                  OnChanged="HandleTemplateChanged"
+                                                  ValidationErrors="@templateErrors" />
+                        </MudItem>
+                    }
+                </MudGrid>
+            </MudForm>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Class="px-4">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit"
+                   Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="Submit"
+                   Class="px-8">Create</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [CascadingParameter]
+    private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private MudForm form = default!;
+    private CreateChangeDto model = new()
+    {
+        ChangeType = "Standard"
+    };
+    private List<OrganizationDto> organizations = new();
+    private List<ChangeParticipantUserDto> requestedForUsers = new();
+    private List<ChangeParticipantUserDto> implementorUsers = new();
+    private List<ChangeParticipantUserDto> approverUsers = new();
+    private HashSet<string> selectedApproverIds = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> templateErrors = new();
+    private DateTime? implementationStartDate;
+    private TimeSpan? implementationStartTime;
+    private DateTime? implementationEndDate;
+    private TimeSpan? implementationEndTime;
+    private bool participantsLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            organizations = (await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations") ?? new())
+                .Where(x => x.IsEnabled)
+                .OrderBy(x => x.Name)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            await ErrorLogger.LogAsync(ex, nameof(CreateChangeDialog));
+            Snackbar.Add("Unable to load organizations right now.", Severity.Warning);
+        }
+    }
+
+    private Task OnChangeTypeChanged(string value)
+    {
+        model.ChangeType = value;
+        templateErrors.Clear();
+        return Task.CompletedTask;
+    }
+
+    private async Task OnOrganizationChanged(string? value)
+    {
+        model.OrganizationId = string.IsNullOrWhiteSpace(value) ? null : value;
+        model.RequestedForUserId = null;
+        model.ImplementorUserId = null;
+        model.ApproverUserIds = new List<string>();
+        selectedApproverIds.Clear();
+        requestedForUsers.Clear();
+        implementorUsers.Clear();
+        approverUsers.Clear();
+
+        if (!string.IsNullOrWhiteSpace(model.OrganizationId))
+        {
+            await LoadParticipantsAsync(model.OrganizationId);
+        }
+    }
+
+    private async Task LoadParticipantsAsync(string organizationId)
+    {
+        participantsLoading = true;
+        try
+        {
+            var participants = await HelpdeskApi.GetFromJsonAsync<ChangeParticipantsDto>(
+                $"api/v1/organizations/{Uri.EscapeDataString(organizationId)}/change-participants");
+            requestedForUsers = participants?.RequestedForUsers ?? new();
+            implementorUsers = participants?.ImplementorUsers ?? new();
+            approverUsers = participants?.ApproverUsers ?? new();
+        }
+        catch (Exception ex)
+        {
+            await ErrorLogger.LogAsync(ex, nameof(CreateChangeDialog));
+            Snackbar.Add("Unable to load change participant users right now.", Severity.Warning);
+        }
+        finally
+        {
+            participantsLoading = false;
+        }
+    }
+
+    private Task OnApproversChanged(IEnumerable<string>? values)
+    {
+        selectedApproverIds = values?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);
+        model.ApproverUserIds = selectedApproverIds.ToList();
+        return Task.CompletedTask;
+    }
+
+    private Task OnImplementationStartDateChanged(DateTime? value)
+    {
+        implementationStartDate = value;
+        return Task.CompletedTask;
+    }
+
+    private Task OnImplementationStartTimeChanged(TimeSpan? value)
+    {
+        implementationStartTime = value;
+        return Task.CompletedTask;
+    }
+
+    private Task OnImplementationEndDateChanged(DateTime? value)
+    {
+        implementationEndDate = value;
+        return Task.CompletedTask;
+    }
+
+    private Task OnImplementationEndTimeChanged(TimeSpan? value)
+    {
+        implementationEndTime = value;
+        return Task.CompletedTask;
+    }
+
+    private Task HandleTemplateChanged()
+    {
+        templateErrors.Clear();
+        return Task.CompletedTask;
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(model.ChangeType))
+        {
+            Snackbar.Add("Change type is required.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(model.OrganizationId))
+        {
+            Snackbar.Add("Organization is required.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(model.RequestedForUserId))
+        {
+            Snackbar.Add("Requested for is required.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(model.ImplementorUserId))
+        {
+            Snackbar.Add("Implementor is required.", Severity.Warning);
+            return;
+        }
+
+        model.ApproverUserIds = selectedApproverIds.ToList();
+
+        model.ImplementationStartAt = CombineDateTime(implementationStartDate, implementationStartTime);
+        model.ImplementationEndAt = CombineDateTime(implementationEndDate, implementationEndTime);
+        if (!model.ImplementationStartAt.HasValue || !model.ImplementationEndAt.HasValue)
+        {
+            Snackbar.Add("Implementation start and end date/time are required.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync("api/v1/changes", model);
+            if (response.IsSuccessStatusCode)
+            {
+                var created = await response.Content.ReadFromJsonAsync<ChangeDto>();
+                Logger.LogInformation(
+                    "Change create dialog received successful create response. ChangeId={ChangeId} TrackingId={TrackingId} OrganizationId={OrganizationId} RequestedForUserId={RequestedForUserId} ImplementorUserId={ImplementorUserId}",
+                    created?.Id,
+                    created?.TrackingId,
+                    created?.OrganizationId,
+                    created?.RequestedForUserId,
+                    created?.ImplementorUserId);
+                if (created is not null && !created.IsTemplateComplete)
+                {
+                    Snackbar.Add("Change logged. Finish the missing template fields on the change detail page before review or resolution.", Severity.Warning);
+                }
+
+                Dialog.Close(DialogResult.Ok<object?>(created is not null ? created : true));
+                return;
+            }
+
+            templateErrors = await ReadErrorsAsync(response);
+            var error = await response.Content.ReadAsStringAsync();
+            Snackbar.Add(
+                templateErrors.Count > 0 ? "Complete the required change template fields before creating the change." : $"Error creating change: {error}",
+                Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Unexpected error", Severity.Error);
+            await ErrorLogger.LogAsync(ex, nameof(CreateChangeDialog));
+        }
+    }
+
+    private static async Task<List<string>> ReadErrorsAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var payload = await response.Content.ReadFromJsonAsync<TemplateErrorResponseDto>();
+            return payload?.Errors ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private static DateTime? CombineDateTime(DateTime? date, TimeSpan? time)
+    {
+        if (!date.HasValue || !time.HasValue)
+        {
+            return null;
+        }
+
+        return date.Value.Date.Add(time.Value);
+    }
+
+    private static string FormatUser(ChangeParticipantUserDto user) =>
+        string.IsNullOrWhiteSpace(user.Email) ? user.Name : $"{user.Name} ({user.Email})";
+
+    private string GetApproverMultiSelectionText(List<string> selectedValues)
+    {
+        var selected = selectedValues ?? new List<string>();
+        if (selected.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var labels = selected
+            .Select(id => approverUsers.FirstOrDefault(user => string.Equals(user.Id, id, StringComparison.OrdinalIgnoreCase)))
+            .Where(user => user is not null)
+            .Select(user => FormatUser(user!))
+            .ToList();
+
+        return labels.Count == 0
+            ? $"{selected.Count} selected"
+            : string.Join(", ", labels);
+    }
+
+    private sealed class TemplateErrorResponseDto
+    {
+        public string? Message { get; set; }
+        public List<string> Errors { get; set; } = new();
+    }
+}
+
+<style>
+    .change-create-dialog {
+        width: min(96vw, 1600px);
+    }
+
+    .change-create-dialog-content {
+        max-height: 85vh;
+        overflow-y: auto;
+    }
+
+    .change-create-grid {
+        align-items: start;
+    }
+
+    .change-inline-date-group {
+        margin-top: -4px;
+    }
+</style>

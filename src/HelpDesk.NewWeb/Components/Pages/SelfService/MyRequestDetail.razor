@@ -1,0 +1,239 @@
+@page "/self-service/my-requests/{Id}"
+
+@attribute [Authorize]
+
+@using System.Net.Http.Json
+@using System.Text.Json
+@using Helpdesk.Shared.DTOs.Request
+
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>My Request</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="helpdesk-page self-service-records-page">
+    @if (loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (!string.IsNullOrWhiteSpace(loadError))
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@loadError</MudAlert>
+    }
+    else if (request is null)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">Request not found.</MudAlert>
+    }
+    else
+    {
+        <MudStack Spacing="3">
+            <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="self-service-detail-heading">
+                    <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">@request.Title</MudText>
+                    <MudSpacer />
+                    @if (request.ReleaseStatus.HasValue)
+                    {
+                        <MudChip T="string"
+                                 Color="@(request.ReleaseStatus == Helpdesk.Shared.Models.RequestFormReleaseStatus.Production ? Color.Success : Color.Warning)"
+                                 Variant="Variant.Outlined">
+                            @(request.ReleaseStatus == Helpdesk.Shared.Models.RequestFormReleaseStatus.Production ? "Production" : "In Testing")
+                        </MudChip>
+                    }
+                    <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">@request.State</MudChip>
+                </MudStack>
+                <MudText Typo="Typo.body2" Class="mt-2"><b>Tracking ID:</b> @request.TrackingId</MudText>
+                <MudText Typo="Typo.body2"><b>Created:</b> @request.CreatedAt.LocalDateTime.ToString("g")</MudText>
+                <MudText Typo="Typo.body2"><b>Updated:</b> @((request.UpdatedAt ?? request.CreatedAt).LocalDateTime.ToString("g"))</MudText>
+                @if (!string.IsNullOrWhiteSpace(request.Description))
+                {
+                    <MudDivider Class="my-3" />
+                    <MudText Typo="Typo.subtitle2">Description</MudText>
+                    <MudText Typo="Typo.body2">@request.Description</MudText>
+                }
+            </MudPaper>
+
+            <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+                <MudText Typo="Typo.h6" Class="mb-2">Submitted Info</MudText>
+                @if (payloadRows.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No submitted fields.</MudText>
+                }
+                else
+                {
+                    <MudTable T="PayloadRow" Dense="true" Hover="true" Items="payloadRows" Breakpoint="Breakpoint.Sm" Class="helpdesk-table">
+                        <HeaderContent>
+                            <MudTh>Field</MudTh>
+                            <MudTh>Value</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Field">@context.Key</MudTd>
+                            <MudTd DataLabel="Value">@context.Value</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+
+            @if (PendingApprovals.Count > 0)
+            {
+                <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">Pending Approvals</MudText>
+                    <MudTable T="MyRequestPendingApprovalDto" Dense="true" Hover="true" Items="PendingApprovals" Breakpoint="Breakpoint.Sm" Class="helpdesk-table">
+                        <HeaderContent>
+                            <MudTh>Step</MudTh>
+                            <MudTh>Approver</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Due</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Step">@context.TaskName</MudTd>
+                            <MudTd DataLabel="Approver">@context.ApproverName (@context.ApproverEmail)</MudTd>
+                            <MudTd DataLabel="Status">@context.Status</MudTd>
+                            <MudTd DataLabel="Due">@context.DueAt?.LocalDateTime.ToString("g")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudPaper>
+            }
+
+            <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+                <MudText Typo="Typo.h6" Class="mb-2">Tasks</MudText>
+                @if (tasks.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No tasks.</MudText>
+                }
+                else
+                {
+                    <MudTable T="MyRequestTaskDto" Dense="true" Hover="true" Items="tasks" Breakpoint="Breakpoint.Sm" Class="helpdesk-table">
+                        <HeaderContent>
+                            <MudTh>Order</MudTh>
+                            <MudTh>Name</MudTh>
+                            <MudTh>Type</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Completed</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Order">@context.Order</MudTd>
+                            <MudTd DataLabel="Name">@context.Name</MudTd>
+                            <MudTd DataLabel="Type">@context.Type</MudTd>
+                            <MudTd DataLabel="Status">@context.Status</MudTd>
+                            <MudTd DataLabel="Completed">@context.CompletedAt?.LocalDateTime.ToString("g")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+
+            <MudButton Variant="Variant.Text" OnClick="GoBack">Back to My Requests</MudButton>
+        </MudStack>
+    }
+</MudContainer>
+
+<style>
+    .self-service-detail-heading {
+        flex-wrap: wrap;
+    }
+</style>
+
+@code {
+    [Parameter] public string Id { get; set; } = string.Empty;
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    private bool loading = true;
+    private string? loadError;
+    private MyRequestDetailDto? request;
+    private List<MyRequestTaskDto> tasks = new();
+    private readonly List<PayloadRow> payloadRows = new();
+    private List<MyRequestPendingApprovalDto> PendingApprovals =>
+        tasks.SelectMany(x => x.PendingApprovals).ToList();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        loadError = null;
+        request = null;
+        tasks.Clear();
+        payloadRows.Clear();
+
+        try
+        {
+            request = await Api.GetFromJsonAsync<MyRequestDetailDto>($"api/v1/self-service/requests/{Id}");
+            if (request is null)
+            {
+                loadError = "Request not found.";
+                return;
+            }
+
+            tasks = await Api.GetFromJsonAsync<List<MyRequestTaskDto>>($"api/v1/self-service/requests/{Id}/tasks")
+                ?? new List<MyRequestTaskDto>();
+
+            payloadRows.AddRange(ParsePayloadRows(request.PayloadJson));
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Failed to load request: {ex.Message}";
+            Snackbar.Add(loadError, Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo("/self-service/my-requests");
+    }
+
+    private static IReadOnlyList<PayloadRow> ParsePayloadRows(string? payloadJson)
+    {
+        var rows = new List<PayloadRow>();
+
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return rows;
+        }
+
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(payloadJson);
+        }
+        catch
+        {
+            rows.Add(new PayloadRow("payload", payloadJson));
+            return rows;
+        }
+
+        using (doc)
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                rows.Add(new PayloadRow("payload", doc.RootElement.ToString()));
+                return rows;
+            }
+
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                var value = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.Null => string.Empty,
+                    JsonValueKind.String => prop.Value.GetString(),
+                    JsonValueKind.Number => prop.Value.ToString(),
+                    JsonValueKind.True => "true",
+                    JsonValueKind.False => "false",
+                    _ => prop.Value.GetRawText()
+                };
+
+                rows.Add(new PayloadRow(prop.Name, value));
+            }
+        }
+
+        return rows;
+    }
+
+    private sealed record PayloadRow(string Key, string? Value);
+}

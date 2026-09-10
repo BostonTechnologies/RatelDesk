@@ -1,0 +1,207 @@
+name: Pull request validation
+
+on:
+  pull_request:
+    branches: [dev, main]
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - converted_to_draft
+      - ready_for_review
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pull-request-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-disclosure:
+    name: Public disclosure gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Reject private references and secret-bearing files
+        run: tools/ci/check-public-disclosure.sh
+
+      - name: Scan for secrets
+        run: >-
+          docker run --rm
+          --volume "${{ github.workspace }}:/repo:ro"
+          zricethezav/gitleaks:v8.30.1
+          detect --no-git --source /repo --redact 100 --no-banner
+
+  dotnet:
+    name: .NET validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore NuGet packages cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('global.json', '**/*.csproj', '**/*.props', '**/*.targets') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore solution
+        run: dotnet restore Helpdesk.sln
+
+      - name: Build solution
+        run: dotnet build Helpdesk.sln --configuration Release --no-restore
+
+      - name: Run .NET tests
+        run: >-
+          dotnet test Helpdesk.sln --configuration Release --no-build
+          --logger "trx;LogFileName=helpdesk-tests.trx"
+          --results-directory TestResults
+
+      - name: Upload .NET test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dotnet-test-results
+          path: TestResults
+          if-no-files-found: warn
+          retention-days: 14
+
+  ux:
+    name: Playwright UX validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore NuGet packages cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('global.json', '**/*.csproj', '**/*.props', '**/*.targets') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Restore and build local applications
+        run: |
+          dotnet restore Helpdesk.sln
+          dotnet build Helpdesk.sln --configuration Release --no-restore
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Run local-only Playwright validation
+        env:
+          HELPDESK_E2E_AUTH_MODE: development
+        run: tools/ci/run-ux-local.sh
+
+      - name: Upload Playwright reports and failure artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report
+            test-results
+            artifacts/e2e
+          if-no-files-found: warn
+          retention-days: 14
+
+  docker:
+    name: Docker build (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: docker/api/Dockerfile
+            image: helpdesk-api:pr-validation
+          - name: web
+            dockerfile: docker/web/Dockerfile
+            image: helpdesk-web:pr-validation
+          - name: mcp-http
+            dockerfile: docker/mcp-http/Dockerfile
+            image: helpdesk-mcp-http:pr-validation
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Build image without pushing
+        run: docker build --file "${{ matrix.dockerfile }}" --tag "${{ matrix.image }}" .
+
+      - name: Smoke-test published Blazor bootstrap asset
+        if: matrix.name == 'web'
+        run: tools/ci/smoke-web-static-assets.sh "${{ matrix.image }}"
+
+  compose:
+    name: Compose startup validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate and start the documented local stack
+        run: |
+          docker compose -f docker/docker-compose.yml config --quiet
+          docker compose -f docker/docker-compose.yml up --build --detach --wait
+          curl --fail --show-error --silent http://127.0.0.1:8111/ > /dev/null
+
+      - name: Collect Compose logs
+        if: always()
+        run: docker compose -f docker/docker-compose.yml logs --no-color
+
+      - name: Stop the local stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down --volumes --remove-orphans
+
+  layout:
+    name: Layout and reference validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Validate repository layout and active path references
+        run: tools/ci/validate-layout.sh

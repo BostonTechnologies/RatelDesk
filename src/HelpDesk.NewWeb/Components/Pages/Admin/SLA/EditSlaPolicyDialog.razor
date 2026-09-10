@@ -1,0 +1,309 @@
+@using Dodo.Primitives
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.SlaPolicy
+@using Helpdesk.Shared.Enums
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Edit" Class="mr-2 mb-n1" />
+            Edit SLA Policy
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="form" Model="model" OnValidSubmit="Submit" Class="mt-2">
+            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+            <MudTextField @bind-Value="model.Description" Label="Description" />
+            @if (HasFixedTenant)
+            {
+                <MudTextField T="string" Label="Tenant" Value="@ResolveTenantName(model.TenantId)" Disabled="true" Dense="true" />
+            }
+            else
+            {
+                <MudSelect T="SlaScopeType" @bind-Value="model.ScopeType" Label="Scope" Dense="true">
+                    <MudSelectItem Value="SlaScopeType.SystemDefault">System Default</MudSelectItem>
+                    <MudSelectItem Value="SlaScopeType.Tenant">Tenant</MudSelectItem>
+                </MudSelect>
+                <MudSelect T="string" Label="Tenant" @bind-Value="model.TenantId" Required="@(model.ScopeType == SlaScopeType.Tenant)" Disabled="model.ScopeType == SlaScopeType.SystemDefault" Dense="true">
+                    @foreach (var tenant in tenants)
+                    {
+                        <MudSelectItem T="string" Value="@tenant.Id">@tenant.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+            <MudSelect T="TicketType" @bind-Value="model.AppliesTo" Label="Applies To" Dense="true">
+                <MudSelectItem Value="TicketType.Incident">Incident</MudSelectItem>
+                <MudSelectItem Value="TicketType.Request">Request</MudSelectItem>
+                <MudSelectItem Value="TicketType.Change">Change</MudSelectItem>
+            </MudSelect>
+            <MudTextField @bind-Value="model.ServiceId" Label="Service Id (optional)" Dense="true" />
+            <MudNumericField T="int?" @bind-Value="model.Priority" Label="Priority (optional)" Dense="true" />
+            <MudNumericField T="int" @bind-Value="model.MatchRank" Label="Match Rank" Dense="true" />
+            <MudNumericField T="int" @bind-Value="model.ResponseTimeHours" Label="Response Time (hours)" Required="true" />
+            <MudNumericField T="int" @bind-Value="model.ResolutionTimeHours" Label="Resolution Time (hours)" Required="true" />
+            @if (model.ScopeType == SlaScopeType.Tenant)
+            {
+                <MudNumericField T="int?" @bind-Value="model.AutoResumeAfterHours" Label="Auto Resume After (hours)" />
+            }
+            <MudCheckBox @bind-Value="model.IsActive" Label="Active" />
+
+            <MudDivider Class="my-4" />
+            <MudText Typo="Typo.subtitle1" Class="mb-2">Escalations</MudText>
+
+            @foreach (var rule in model.Escalations)
+            {
+                <MudPaper Outlined="true" Class="pa-3 mb-2">
+                    <MudGrid>
+                        <MudItem xs="12" sm="3">
+                            <MudSelect T="SlaMetricType" @bind-Value="rule.Metric" Label="Metric" Dense="true">
+                                <MudSelectItem Value="SlaMetricType.Response">Response</MudSelectItem>
+                                <MudSelectItem Value="SlaMetricType.Resolution">Resolution</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudNumericField T="int" @bind-Value="rule.TriggerPercent" Label="Trigger %" Dense="true" Min="1" Max="99" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField T="string" Value="@GetRecipientsInput(rule)" ValueChanged="@(value => SetRecipients(rule, value))" Label="Recipients (comma separated)" Dense="true" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField T="string" Value="@GetTargetsInput(rule, RecipientTargetType.Role)" ValueChanged="@(value => SetTargets(rule, RecipientTargetType.Role, value))" Label="Roles (comma separated)" Dense="true" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField T="string" Value="@GetTargetsInput(rule, RecipientTargetType.Group)" ValueChanged="@(value => SetTargets(rule, RecipientTargetType.Group, value))" Label="Groups (comma separated)" Dense="true" />
+                        </MudItem>
+                        <MudItem xs="8" sm="1">
+                            <MudCheckBox @bind-Value="rule.IsActive" Label="Active" Dense="true" />
+                        </MudItem>
+                        <MudItem xs="4" sm="1" Class="d-flex align-center justify-end">
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="() => RemoveEscalation(rule)" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="rule.Note" Label="Note (optional)" Dense="true" />
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+
+            <MudButton Variant="Variant.Outlined" OnClick="AddEscalation">Add Rule</MudButton>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public SlaPolicyDto Policy { get; set; } = default!;
+    [Parameter] public string? TenantId { get; set; }
+    [Parameter] public List<TenantLookupDto> Tenants { get; set; } = new();
+
+    private MudForm form = default!;
+    private List<TenantLookupDto> tenants = new();
+    private SlaPolicyDto model = new();
+    private bool HasFixedTenant => !string.IsNullOrWhiteSpace(TenantId);
+
+    protected override async Task OnInitializedAsync()
+    {
+        tenants = Tenants.Count > 0
+            ? Tenants
+            : await HelpdeskApi.GetFromJsonAsync<List<TenantLookupDto>>("api/v1/admin/tenants/lookup") ?? new();
+        model = ClonePolicy(Policy);
+        if (HasFixedTenant)
+        {
+            model.ScopeType = SlaScopeType.Tenant;
+            model.TenantId = TenantId;
+        }
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        if (!ValidateModel())
+        {
+            return;
+        }
+
+        NormalizeModel();
+        var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/slas/{Policy.Id}", model);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            Snackbar.Add($"Failed to save: {error}", Severity.Error);
+            return;
+        }
+
+        Dialog.Close(DialogResult.Ok(true));
+    }
+
+    private void AddEscalation()
+    {
+        model.Escalations.Add(new SlaEscalationRuleDto
+        {
+            Id = Uuid.CreateVersion7().ToString(),
+            Metric = SlaMetricType.Response,
+            TriggerPercent = 50,
+            IsActive = true
+        });
+    }
+
+    private void RemoveEscalation(SlaEscalationRuleDto rule)
+    {
+        model.Escalations.Remove(rule);
+    }
+
+    private static string GetRecipientsInput(SlaEscalationRuleDto rule)
+    {
+        return string.Join(", ", rule.Recipients);
+    }
+
+    private static void SetRecipients(SlaEscalationRuleDto rule, string? value)
+    {
+        rule.Recipients = ParseRecipients(value);
+        var existing = rule.Targets
+            .Where(x => x.Type != RecipientTargetType.Email)
+            .ToList();
+        existing.AddRange(rule.Recipients.Select(x => new RecipientTargetDto
+        {
+            Type = RecipientTargetType.Email,
+            Value = x
+        }));
+        rule.Targets = existing;
+    }
+
+    private static string GetTargetsInput(SlaEscalationRuleDto rule, RecipientTargetType type)
+    {
+        return string.Join(", ", rule.Targets.Where(x => x.Type == type).Select(x => x.Value));
+    }
+
+    private static void SetTargets(SlaEscalationRuleDto rule, RecipientTargetType type, string? value)
+    {
+        var keep = rule.Targets.Where(x => x.Type != type).ToList();
+        keep.AddRange(ParseRecipients(value).Select(x => new RecipientTargetDto
+        {
+            Type = type,
+            Value = x
+        }));
+        rule.Targets = keep;
+    }
+
+    private void NormalizeModel()
+    {
+        if (HasFixedTenant)
+        {
+            model.ScopeType = SlaScopeType.Tenant;
+            model.TenantId = TenantId;
+        }
+
+        if (model.ScopeType == SlaScopeType.SystemDefault)
+        {
+            model.TenantId = null;
+            model.AutoResumeAfterHours = null;
+        }
+
+        foreach (var rule in model.Escalations)
+        {
+            rule.Recipients = ParseRecipients(string.Join(",", rule.Recipients));
+            var targets = rule.Targets
+                .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+                .Select(x => new RecipientTargetDto { Type = x.Type, Value = x.Value.Trim() })
+                .ToList();
+            if (targets.Count == 0)
+            {
+                targets = rule.Recipients.Select(x => new RecipientTargetDto
+                {
+                    Type = RecipientTargetType.Email,
+                    Value = x
+                }).ToList();
+            }
+
+            rule.Targets = targets;
+            rule.Note = string.IsNullOrWhiteSpace(rule.Note) ? null : rule.Note.Trim();
+        }
+    }
+
+    private static List<string> ParseRecipients(string? raw)
+    {
+        return (raw ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private bool ValidateModel()
+    {
+        if (model.ScopeType == SlaScopeType.Tenant && string.IsNullOrWhiteSpace(model.TenantId))
+        {
+            Snackbar.Add("Tenant is required for tenant-scoped policies.", Severity.Error);
+            return false;
+        }
+
+        if (model.ResponseTimeHours <= 0 || model.ResolutionTimeHours <= 0)
+        {
+            Snackbar.Add("Response and resolution hours must be greater than zero.", Severity.Error);
+            return false;
+        }
+
+        return true;
+    }
+
+    private string ResolveTenantName(string? tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return "-";
+        }
+
+        return tenants.FirstOrDefault(x => string.Equals(x.Id, tenantId, StringComparison.OrdinalIgnoreCase))?.Name ?? tenantId;
+    }
+
+    private static SlaPolicyDto ClonePolicy(SlaPolicyDto source)
+    {
+        return new SlaPolicyDto
+        {
+            Id = source.Id,
+            Name = source.Name,
+            Description = source.Description,
+            ScopeType = source.ScopeType,
+            TenantId = source.TenantId,
+            AppliesTo = source.AppliesTo,
+            Priority = source.Priority,
+            ServiceId = source.ServiceId,
+            MatchRank = source.MatchRank,
+            ResponseTimeHours = source.ResponseTimeHours,
+            ResolutionTimeHours = source.ResolutionTimeHours,
+            AutoResumeAfterHours = source.AutoResumeAfterHours,
+            IsActive = source.IsActive,
+            Escalations = source.Escalations
+                .Select(x => new SlaEscalationRuleDto
+                {
+                    Id = x.Id,
+                    Metric = x.Metric,
+                    TriggerPercent = x.TriggerPercent,
+                    Recipients = x.Recipients.ToList(),
+                    Targets = x.Targets.Select(y => new RecipientTargetDto
+                    {
+                        Type = y.Type,
+                        Value = y.Value
+                    }).ToList(),
+                    IsActive = x.IsActive,
+                    Note = x.Note
+                })
+                .ToList()
+        };
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

@@ -1,0 +1,137 @@
+@page "/self-service/my-requests"
+
+@attribute [Authorize]
+
+@using System.Net.Http.Json
+@using Helpdesk.Shared.DTOs
+@using Helpdesk.Shared.DTOs.Request
+
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>My Requests</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="helpdesk-page self-service-records-page">
+    <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="helpdesk-page-header">
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">My Requests</MudText>
+            <MudSpacer />
+            <MudTextField @bind-Value="searchText"
+                          Placeholder="Search tracking ID or title"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="true"
+                          OnKeyUp="@(async _ => await DebouncedReloadAsync())"
+                          Margin="Margin.Dense"
+                          Variant="Variant.Outlined"
+                          Class="self-service-records-search" />
+        </MudStack>
+
+        <MudTable T="MyRequestListItemDto"
+                  @ref="table"
+                  Hover="true"
+                  Dense="true"
+                  ServerData="LoadData"
+                  OnRowClick="OnRowClick"
+                  Breakpoint="Breakpoint.Sm"
+                  Class="helpdesk-table">
+            <HeaderContent>
+                <MudTh>Tracking ID</MudTh>
+                <MudTh>Title</MudTh>
+                <MudTh>Release</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Created</MudTh>
+                <MudTh>Updated</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Tracking ID">@context.TrackingId</MudTd>
+                <MudTd DataLabel="Title">@context.Title</MudTd>
+                <MudTd DataLabel="Release">
+                    @if (context.ReleaseStatus.HasValue)
+                    {
+                        <MudChip T="string"
+                                 Size="Size.Small"
+                                 Variant="Variant.Outlined"
+                                 Color="@(context.ReleaseStatus == Helpdesk.Shared.Models.RequestFormReleaseStatus.Production ? Color.Success : Color.Warning)">
+                            @(context.ReleaseStatus == Helpdesk.Shared.Models.RequestFormReleaseStatus.Production ? "Production" : "In Testing")
+                        </MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Status">@context.State</MudTd>
+                <MudTd DataLabel="Created">@context.CreatedAt.LocalDateTime.ToString("g")</MudTd>
+                <MudTd DataLabel="Updated">@((context.UpdatedAt ?? context.CreatedAt).LocalDateTime.ToString("g"))</MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2">No requests found.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudPaper>
+</MudContainer>
+
+<style>
+    .self-service-records-search {
+        width: min(100%, 360px);
+    }
+
+    @@media (max-width: 600px) {
+        .self-service-records-search {
+            width: 100%;
+        }
+    }
+</style>
+
+@code {
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    private MudTable<MyRequestListItemDto>? table;
+    private string? searchText;
+    private CancellationTokenSource? debounceCts;
+
+    private async Task<TableData<MyRequestListItemDto>> LoadData(TableState state, CancellationToken token)
+    {
+        var page = state.Page + 1;
+        var pageSize = state.PageSize <= 0 ? 10 : state.PageSize;
+
+        var url = $"api/v1/self-service/requests?page={page}&pageSize={pageSize}";
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            url += $"&q={Uri.EscapeDataString(searchText.Trim())}";
+        }
+
+        var response = await Api.GetFromJsonAsync<PagedResponse<MyRequestListItemDto>>(url, token)
+            ?? new PagedResponse<MyRequestListItemDto>();
+
+        return new TableData<MyRequestListItemDto>
+        {
+            Items = response.Items ?? new List<MyRequestListItemDto>(),
+            TotalItems = response.TotalCount
+        };
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<MyRequestListItemDto> args)
+    {
+        if (args.Item is null)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo($"/self-service/my-requests/{args.Item.Id}");
+    }
+
+    private async Task DebouncedReloadAsync()
+    {
+        debounceCts?.Cancel();
+        debounceCts = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Delay(300, debounceCts.Token);
+            if (table is not null)
+            {
+                await table.ReloadServerData();
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+}

@@ -1,0 +1,60 @@
+@page "/assets"
+@attribute [Authorize(Roles = "Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager NavigationManager
+@inject IDialogService DialogService
+
+<PageTitle>Assets</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h5">Assets</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+    </MudStack>
+    <MudTable Items="assets" Hover="true" Dense="true" T="Asset">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Type</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">@context.Name</MudTd>
+            <MudTd DataLabel="Type">@context.Type</MudTd>
+            <MudTd>
+                <MudButton Variant="Variant.Text" OnClick="() => NavigateToDetail(context.Id)">View</MudButton>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<Asset> assets = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAssets();
+    }
+
+    private async Task LoadAssets()
+    {
+        assets = await HelpdeskApi.GetFromJsonAsync<List<Asset>>("api/v1/assets") ?? new();
+    }
+
+    private void NavigateToDetail(string id)
+    {
+        NavigationManager.NavigateTo($"/assets/{id}");
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateAssetDialog>("Create Asset", options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await LoadAssets();
+        }
+    }
+}

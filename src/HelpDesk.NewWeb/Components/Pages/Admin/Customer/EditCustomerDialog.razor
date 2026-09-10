@@ -1,0 +1,232 @@
+@using System.ComponentModel.DataAnnotations
+@using Helpdesk.Shared.DTOs.Customer
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Models
+@using System.Text.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Edit" Class="mr-2 mb-n1" />
+            Edit Customer
+        </MudText>
+    </TitleContent>
+
+    <DialogContent>
+        <MudForm @ref="form" Model="model" OnValidSubmit="Submit" Class="mt-2">
+            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+            <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
+
+            <MudSelect T="string" @bind-Value="model.OrganizationId" Label="Organization" Required="true">
+                @foreach (var org in Organizations)
+                {
+                    <MudSelectItem T="string" Value="@org.Id">@org.Name</MudSelectItem>
+                }
+            </MudSelect>
+
+            <!-- Correct MudSwitch binding -->
+            <MudSwitch T="bool"
+                       @bind-Value="model.Enabled"
+                       For="@(() => model.Enabled)"
+                       Label="Enabled" />
+
+            <MudDivider Class="my-4" />
+
+            <MudText Typo="Typo.subtitle2">Authentication / Helpdesk Access</MudText>
+            <MudStack Spacing="1" Class="mt-2">
+                <MudChip T="string" Dense="true" Color="@GetAuthStatusColor(authStatus?.InviteStatus)" Variant="Variant.Outlined">
+                    @(authStatus?.StatusText ?? "Not invited")
+                </MudChip>
+                @if (authStatus is not null)
+                {
+                    <MudText Typo="Typo.caption">Authentik user: @(authStatus.AuthentikUserId ?? "Not linked")</MudText>
+                    <MudText Typo="Typo.caption">Last invite: @FormatDate(authStatus.InviteSentAtUtc)</MudText>
+                    <MudText Typo="Typo.caption">Last login: @FormatDate(authStatus.LastLoginAtUtc)</MudText>
+                    @if (!string.IsNullOrWhiteSpace(authStatus.LastAuthError))
+                    {
+                        <MudAlert Severity="Severity.Error" Dense="true">@authStatus.LastAuthError</MudAlert>
+                    }
+                }
+                <MudStack Row="true" Spacing="1">
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Primary"
+                               Disabled="@IsInviteDisabled"
+                               StartIcon="@Icons.Material.Filled.PersonAdd"
+                               OnClick="SendInvite">
+                        @InviteButtonText
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Error"
+                               Disabled="@(authStatus?.CanDisableLogin != true)"
+                               StartIcon="@Icons.Material.Filled.Block"
+                               OnClick="DisableLogin">
+                        Disable access
+                    </MudButton>
+                </MudStack>
+            </MudStack>
+        </MudForm>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public CustomerDto Customer { get; set; } = default!;
+    [Parameter] public List<OrganizationDto> Organizations { get; set; } = new();
+
+    private MudForm form = default!;
+    private EditCustomerModel model = new();
+    private CustomerAuthStatusDto? authStatus;
+
+    protected override void OnParametersSet()
+    {
+        // Re-init every time the dialog opens so UI shows the correct state
+        model = new EditCustomerModel
+        {
+            Name = Customer.Name,
+            Email = Customer.Email,
+            OrganizationId = Customer.OrganizationId,
+            State = Customer.State,
+            // enum -> bool (adjust if your enum uses Active/Inactive)
+            Enabled = Customer.State == EntityState.Enabled
+        };
+        authStatus = Customer.AuthStatus;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAuthStatus();
+    }
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (!form.IsValid) return;
+
+        // bool -> enum for API
+        model.State = model.Enabled ? EntityState.Enabled : EntityState.Blocked;
+
+        var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/customers/{Customer.Id}", model);
+        if (response.IsSuccessStatusCode)
+            Dialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    private async Task LoadAuthStatus()
+    {
+        if (string.IsNullOrWhiteSpace(Customer?.Id))
+        {
+            return;
+        }
+
+        try
+        {
+            authStatus = await HelpdeskApi.GetFromJsonAsync<CustomerAuthStatusDto>($"api/v1/customers/{Customer.Id}/auth/status");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load auth status: {ex.Message}", Severity.Warning);
+        }
+    }
+
+    private async Task SendInvite()
+    {
+        var status = authStatus?.InviteStatus ?? CustomerInviteStatus.NotInvited;
+        var route = status is CustomerInviteStatus.Pending or CustomerInviteStatus.Failed or CustomerInviteStatus.Expired
+            ? "resend-invite"
+            : "invite";
+
+        await RunAuthAction(route, route == "invite" ? "Invite sent." : "Invite resent.");
+    }
+
+    private Task DisableLogin() => RunAuthAction("disable-login", "Login access disabled.");
+
+    private async Task RunAuthAction(string route, string successMessage)
+    {
+        try
+        {
+            var response = await HelpdeskApi.PostAsync($"api/v1/customers/{Customer.Id}/auth/{route}", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                await LoadAuthStatus();
+                Snackbar.Add(await ReadProblemMessageAsync(response), Severity.Error);
+                return;
+            }
+
+            authStatus = await response.Content.ReadFromJsonAsync<CustomerAuthStatusDto>();
+            Customer.AuthStatus = authStatus;
+            Snackbar.Add(successMessage, Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Action failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private bool IsInviteDisabled => !model.Enabled || authStatus?.InviteStatus is CustomerInviteStatus.Active or CustomerInviteStatus.Disabled;
+
+    private static async Task<string> ReadProblemMessageAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return $"Action failed ({(int)response.StatusCode}).";
+        }
+
+        try
+        {
+            var problem = JsonSerializer.Deserialize<ProblemResponse>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            return problem?.Detail ?? problem?.Title ?? body;
+        }
+        catch (JsonException)
+        {
+            return body;
+        }
+    }
+
+    private sealed record ProblemResponse(string? Title, string? Detail);
+
+    private string InviteButtonText => authStatus?.InviteStatus switch
+    {
+        CustomerInviteStatus.Pending => "Resend invite",
+        CustomerInviteStatus.Failed => "Retry invite",
+        CustomerInviteStatus.Expired => "Resend invite",
+        CustomerInviteStatus.Active => "Login active",
+        CustomerInviteStatus.Disabled => "Disabled",
+        _ => "Invite"
+    };
+
+    private static string FormatDate(DateTimeOffset? value) => value?.ToString("yyyy-MM-dd HH:mm 'UTC'") ?? "Never";
+
+    private static Color GetAuthStatusColor(CustomerInviteStatus? status) => status switch
+    {
+        CustomerInviteStatus.Pending => Color.Info,
+        CustomerInviteStatus.Active => Color.Success,
+        CustomerInviteStatus.Disabled => Color.Error,
+        CustomerInviteStatus.Failed => Color.Error,
+        CustomerInviteStatus.Expired => Color.Warning,
+        _ => Color.Default
+    };
+
+    public class EditCustomerModel
+    {
+        [Required] public string Name { get; set; } = string.Empty;
+        [Required, EmailAddress] public string Email { get; set; } = string.Empty;
+        [Required] public string OrganizationId { get; set; } = string.Empty;
+
+        // persisted enum sent to API
+        public EntityState State { get; set; } = EntityState.Enabled;
+
+        // UI-only switch binding
+        public bool Enabled { get; set; }
+    }
+}

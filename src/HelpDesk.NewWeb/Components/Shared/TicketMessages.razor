@@ -1,0 +1,76 @@
+@inject IHttpClientFactory HttpClientFactory
+
+<MudPaper Class="pa-3 ticket-message-container">
+    @if (!_peekLoaded)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudProgressCircular Indeterminate="true" />
+            <MudText>Loading email…</MudText>
+        </MudStack>
+    }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(_peekFrom) || !string.IsNullOrWhiteSpace(_peekReceived))
+        {
+            <MudText Typo="Typo.caption" Class="mb-2">From: @(_peekFrom ?? "—") · @_peekReceived</MudText>
+        }
+
+        <div class="ticket-message-body">
+            @if (!string.IsNullOrWhiteSpace(_peekHtml))
+            {
+                @((MarkupString)_peekHtml)
+            }
+            else if (!string.IsNullOrWhiteSpace(_peekText))
+            {
+                <pre style="white-space: pre-wrap">@_peekText</pre>
+            }
+            else
+            {
+                <MudText>No content available.</MudText>
+            }
+        </div>
+    }
+</MudPaper>
+
+@code {
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+
+    private bool _peekLoaded;
+    private string? _peekHtml;
+    private string? _peekText;
+    private string? _peekFrom;
+    private string? _peekReceived;
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var peek = await HelpdeskApi.GetFromJsonAsync<IncidentPeekDto>($"api/v1/incidents/{TicketId}/peek");
+            if (peek is not null)
+            {
+                _peekHtml = peek.Html ?? string.Empty;
+                _peekText = peek.SnippetText;
+                _peekFrom = peek.From;
+                _peekReceived = peek.ReceivedUtc?.ToLocalTime().ToString("g");
+            }
+        }
+        catch
+        {
+            // Keep empty state on preview errors.
+        }
+        finally
+        {
+            _peekLoaded = true;
+        }
+    }
+
+    private sealed class IncidentPeekDto
+    {
+        public string? Html { get; set; }
+        public string? From { get; set; }
+        public DateTimeOffset? ReceivedUtc { get; set; }
+        public string? SnippetText { get; set; }
+    }
+}

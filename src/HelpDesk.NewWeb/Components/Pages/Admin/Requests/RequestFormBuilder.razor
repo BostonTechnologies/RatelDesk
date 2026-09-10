@@ -1,0 +1,2854 @@
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Helpdesk.Shared.DTOs.Orchestration
+@using Helpdesk.Shared.DTOs.RequestForm
+@using Helpdesk.Shared.DTOs.Resources
+@using Helpdesk.Shared.DTOs.User
+@using Helpdesk.Shared.Models
+@using HelpDesk.NewWeb.Services
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<MudDialog Class="request-form-builder-dialog">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="request-form-builder-title">
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.h5">@(_isNew ? "New Request Form" : "Edit Request Form")</MudText>
+                <MudText Typo="Typo.body2" Class="request-form-builder-subtitle">
+                    Shape intake fields, workflow tasks, and External orchestration automation bindings in one pass.
+                </MudText>
+            </MudStack>
+            <MudChip T="string" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                @($"{FormFields.Count} field{(FormFields.Count == 1 ? string.Empty : "s")} · {Tasks.Count} task{(Tasks.Count == 1 ? string.Empty : "s")}")
+            </MudChip>
+        </MudStack>
+    </TitleContent>
+
+    <DialogContent>
+        <MudForm @ref="form" Class="request-form-builder-form">
+            <MudGrid Spacing="3" Class="request-form-builder-grid">
+                <MudItem xs="12" lg="4">
+                    <MudPaper Outlined="true" Class="pa-4 request-form-side-panel">
+                        <MudStack Spacing="2">
+                            <MudText Typo="Typo.subtitle1">Form Setup</MudText>
+
+                            <MudTextField @bind-Value="model.Title"
+                                          Label="Form Title"
+                                          Required="true"
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense" />
+
+                            <MudTextField @bind-Value="model.Description"
+                                          Label="Description"
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense"
+                                          Lines="3" />
+
+                            <MudSelect T="RequestFormReleaseStatus"
+                                       @bind-Value="model.ReleaseStatus"
+                                       Label="Self-Service Release Status"
+                                       Variant="Variant.Outlined"
+                                       Margin="Margin.Dense">
+                                <MudSelectItem T="RequestFormReleaseStatus" Value="@RequestFormReleaseStatus.InTesting">In Testing</MudSelectItem>
+                                <MudSelectItem T="RequestFormReleaseStatus" Value="@RequestFormReleaseStatus.Production">Production</MudSelectItem>
+                            </MudSelect>
+
+                            <MudSelect T="string"
+                                       Value="model.OrganizationId"
+                                       ValueChanged="OnOrganizationChanged"
+                                       Label="Primary Organization"
+                                       Variant="Variant.Outlined"
+                                       Margin="Margin.Dense"
+                                       Clearable="true"
+                                       HelperText="Tenant-scoped External orchestration automation requires a single organization linked to an External orchestration tenant.">
+                                @foreach (var organization in organizations.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+                                {
+                                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                                }
+                            </MudSelect>
+
+                            @if (SelectedOrganization is not null)
+                            {
+                                <MudAlert Severity="@(SelectedOrganization.OrchestrationTenantId.HasValue ? Severity.Success : Severity.Warning)"
+                                          Variant="Variant.Outlined"
+                                          Dense="true">
+                                    @if (SelectedOrganization.OrchestrationTenantId.HasValue)
+                                    {
+                                        <span>Organization linked to External orchestration tenant @SelectedOrganization.OrchestrationTenantName.</span>
+                                    }
+                                    else
+                                    {
+                                        <span>This organization is not linked to an External orchestration tenant yet. Existing External orchestration bindings can be reviewed, but creating a new External orchestration target is blocked until the organization is linked.</span>
+                                    }
+                                </MudAlert>
+                            }
+
+                            <MudDivider />
+
+                            <MudStack Row="true" Spacing="1" Class="request-form-stat-row">
+                                <MudPaper Outlined="true" Class="pa-3 request-form-stat-card">
+                                    <MudText Typo="Typo.caption">Fields</MudText>
+                                    <MudText Typo="Typo.h6">@FormFields.Count</MudText>
+                                </MudPaper>
+                                <MudPaper Outlined="true" Class="pa-3 request-form-stat-card">
+                                    <MudText Typo="Typo.caption">Tasks</MudText>
+                                    <MudText Typo="Typo.h6">@Tasks.Count</MudText>
+                                </MudPaper>
+                                <MudPaper Outlined="true" Class="pa-3 request-form-stat-card">
+                                    <MudText Typo="Typo.caption">Automation</MudText>
+                                    <MudText Typo="Typo.h6">@Tasks.Count(x => string.Equals(x.Type, "automation", StringComparison.OrdinalIgnoreCase))</MudText>
+                                </MudPaper>
+                            </MudStack>
+
+                        </MudStack>
+                    </MudPaper>
+                </MudItem>
+
+                <MudItem xs="12" lg="8">
+                    <MudPaper Outlined="true" Class="pa-4 request-form-fields-panel">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                            <MudStack Spacing="0">
+                                <MudText Typo="Typo.subtitle1">Fields</MudText>
+                                <MudText Typo="Typo.body2" Class="request-form-builder-subtitle">
+                                    Define the request payload captured from the form.
+                                </MudText>
+                            </MudStack>
+                            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddField">Add Field</MudButton>
+                        </MudStack>
+
+                        @if (!FormFields.Any())
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+                                No fields yet. Click <b>Add Field</b> to start.
+                            </MudAlert>
+                        }
+
+                        <MudTable Items="FormFields" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm">
+                            <HeaderContent>
+                                <MudTh>Label</MudTh>
+                                <MudTh>Type</MudTh>
+                                <MudTh>Required</MudTh>
+                                <MudTh>Data Binding</MudTh>
+                                <MudTh>Predefined</MudTh>
+                                <MudTh Style="width: 1%;"></MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd>
+                                    <MudTextField @bind-Value="context.Label" Margin="Margin.Dense" Immediate="true" />
+                                </MudTd>
+                                <MudTd>
+                                    <MudSelect T="string" Value="context.Type" ValueChanged="@((string value) => OnFieldTypeChanged(context, value))" Margin="Margin.Dense" Dense="true">
+                                        @foreach (var t in FieldTypes)
+                                        {
+                                            <MudSelectItem Value="@t.Value">@t.Label</MudSelectItem>
+                                        }
+                                    </MudSelect>
+                                </MudTd>
+                                <MudTd>
+                                    <MudSwitch @bind-Value="context.Required" Color="Color.Primary" />
+                                </MudTd>
+                                <MudTd>
+                                    <MudStack Spacing="1">
+                                        <MudSelect T="string"
+                                                   Value="context.DataBinding?.DatasetId"
+                                                   ValueChanged="@((string? value) => OnFieldDatasetChanged(context, value))"
+                                                   Margin="Margin.Dense"
+                                                   Dense="true"
+                                                   Clearable="true"
+                                                   Disabled="@(!IsHelpdeskDataField(context))">
+                                            @foreach (var dataset in availableDatasets)
+                                            {
+                                                <MudSelectItem T="string" Value="@dataset.Id">@dataset.Name</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                        @if (context.DataBinding is not null && IsHelpdeskDataField(context))
+                                        {
+                                            <MudTextField T="string"
+                                                          Value="context.DataBinding.Placeholder"
+                                                          ValueChanged="@((string? value) => OnFieldBindingPlaceholderChanged(context, value))"
+                                                          Margin="Margin.Dense"
+                                                          Dense="true"
+                                                          Placeholder="Search placeholder" />
+                                        }
+                                    </MudStack>
+                                </MudTd>
+                                <MudTd>
+                                    <MudTooltip Text="@GetPredefinedOptionsTooltip(context)">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                                       Color="@(IsPredefinedField(context) ? Color.Primary : Color.Default)"
+                                                       Disabled="@(!IsPredefinedField(context))"
+                                                       OnClick="@(() => OpenPredefinedOptionsDialogAsync(context))" />
+                                    </MudTooltip>
+                                </MudTd>
+                                <MudTd>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => RemoveField(context))" />
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    </MudPaper>
+                </MudItem>
+
+                <MudItem xs="12">
+                    <MudPaper Outlined="true" Class="pa-4 request-form-main-panel">
+                        @if (selectedTask is null)
+                        {
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2 request-form-section-header">
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.subtitle1">Task Editor</MudText>
+                                    <MudText Typo="Typo.body2" Class="request-form-builder-subtitle">
+                                        Configure workflow tasks, details, and automation mapping.
+                                    </MudText>
+                                </MudStack>
+                                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddTask">Add Task</MudButton>
+                            </MudStack>
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                                Add a task to start configuring workflow behavior.
+                            </MudAlert>
+                        }
+                        else
+                        {
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2 request-form-section-header">
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.subtitle1">Task Editor</MudText>
+                                    <MudText Typo="Typo.body2" Class="request-form-builder-subtitle">
+                                        Configure execution, routing, and payload mapping for the selected step.
+                                    </MudText>
+                                </MudStack>
+                                <MudChip T="string"
+                                         Variant="Variant.Filled"
+                                         Color="@GetTaskTypeColor(selectedTask.Type)">
+                                    @selectedTask.Type
+                                </MudChip>
+                            </MudStack>
+
+                            <div class="request-form-task-editor-grid">
+                                <div class="request-form-task-list-panel">
+                                    <MudStack Spacing="1" Class="request-form-editor-column">
+                                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                            <MudText Typo="Typo.subtitle2">Tasks</MudText>
+                                            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddTask">Add Task</MudButton>
+                                        </MudStack>
+
+                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="request-form-task-actions">
+                                            <MudButton Variant="Variant.Text"
+                                                       Size="Size.Small"
+                                                       StartIcon="@Icons.Material.Filled.Visibility"
+                                                       OnClick="@ToggleWorkflowPreview"
+                                                       Disabled="@(!Tasks.Any())">
+                                                @(_showWorkflowPreview ? "Hide Preview" : "Preview")
+                                            </MudButton>
+                                            <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.ContentCopy" OnClick="DuplicateSelectedTask">Duplicate</MudButton>
+                                            <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.ArrowUpward" OnClick="MoveTaskUp" Disabled="@(!CanMoveSelectedTaskUp)">Up</MudButton>
+                                            <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.ArrowDownward" OnClick="MoveTaskDown" Disabled="@(!CanMoveSelectedTaskDown)">Down</MudButton>
+                                            <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="DeleteSelectedTask">Delete</MudButton>
+                                        </MudStack>
+
+                                        <MudPaper Outlined="true" Class="request-form-task-list">
+                                            <MudDropContainer T="RequestTaskTemplateModel"
+                                                              @key="taskDropRenderVersion"
+                                                              @ref="taskDropContainer"
+                                                              Items="@Tasks"
+                                                              ItemsSelector="@((task, zone) => zone == TaskDropZoneId)"
+                                                              ItemDropped="OnTaskDropped"
+                                                              ApplyDropClassesOnDragStarted="true"
+                                                              Class="request-form-task-list-inner">
+                                                <ChildContent>
+                                                    <MudDropZone T="RequestTaskTemplateModel"
+                                                                 Identifier="@TaskDropZoneId"
+                                                                 AllowReorder="true"
+                                                                 Class="request-form-task-drop-zone" />
+                                                </ChildContent>
+                                                <ItemRenderer Context="task">
+                                                    @{
+                                                        var active = selectedTask?.Id == task.Id;
+                                                    }
+                                                    <div class="@(active ? "request-form-task-item request-form-task-item-active" : "request-form-task-item")"
+                                                         @key="task.Id"
+                                                         @onclick="@(() => SelectTask(task.Id))">
+                                                        <MudStack Spacing="1">
+                                                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                                                    <MudTooltip Text="Drag to reorder">
+                                                                        <MudIcon Icon="@Icons.Material.Filled.DragIndicator"
+                                                                                 Size="Size.Small"
+                                                                                 Class="request-form-task-drag-handle" />
+                                                                    </MudTooltip>
+                                                                    <MudText Typo="Typo.body2"><b>@task.Order.</b> @task.Name</MudText>
+                                                                </MudStack>
+                                                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                                                    <MudChip T="string"
+                                                                             Size="Size.Small"
+                                                                             Color="@GetTaskTypeColor(task.Type)">
+                                                                        @task.Type
+                                                                    </MudChip>
+                                                                    <span @onclick:stopPropagation="true">
+                                                                        <MudTooltip Text="Toggle automation configuration">
+                                                                            <MudIconButton Icon="@(IsTaskAutomationExpanded(task.Id) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                                                                           Size="Size.Small"
+                                                                                           Variant="Variant.Outlined"
+                                                                                           OnClick="@(() => ToggleTaskAutomationConfiguration(task.Id))" />
+                                                                        </MudTooltip>
+                                                                    </span>
+                                                                </MudStack>
+                                                            </MudStack>
+                                                            @if (!string.IsNullOrWhiteSpace(task.Description))
+                                                            {
+                                                                <MudText Typo="Typo.caption">@task.Description</MudText>
+                                                            }
+                                                        </MudStack>
+                                                    </div>
+                                                </ItemRenderer>
+                                            </MudDropContainer>
+                                            @if (selectedTask is not null && IsTaskAutomationExpanded(selectedTask.Id))
+                                            {
+                                                <div class="request-form-step-automation-panel" @onclick:stopPropagation="true">
+                                                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="request-form-section-header">
+                                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                                            <MudText Typo="Typo.subtitle2">Automation Configuration</MudText>
+                                                            <MudTooltip Text="Automation runs through an enabled External orchestration binding. If tenant metadata is unavailable, all External orchestration targets are shown; verify folder and job before saving.">
+                                                                <MudIconButton Icon="@Icons.Material.Filled.Info"
+                                                                               Size="Size.Small"
+                                                                               Color="Color.Info"
+                                                                               Class="request-form-info-icon" />
+                                                            </MudTooltip>
+                                                        </MudStack>
+
+                                                        @if (selectedTask.Type == "automation")
+                                                        {
+                                                            <MudButton Variant="Variant.Outlined"
+                                                                       Size="Size.Small"
+                                                                       StartIcon="@Icons.Material.Filled.Add"
+                                                                       Disabled="@(!CanCreateOrchestrationRequestDefinition)"
+                                                                       OnClick="OpenCreateOrchestrationTargetDialogAsync">
+                                                                Create External orchestration Target
+                                                            </MudButton>
+                                                        }
+                                                    </MudStack>
+
+                                                    @if (selectedTask.Type != "automation")
+                                                    {
+                                                        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                                                            Switch this task to Automation to configure an External orchestration binding.
+                                                        </MudAlert>
+                                                    }
+                                                    else
+                                                    {
+                                                        @if (!CanCreateTenantScopedOrchestrationTarget)
+                                                        {
+                                                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                                                @OrchestrationTargetCreationReadinessMessage
+                                                            </MudAlert>
+                                                        }
+
+                                                        @if (SelectedBinding is not null && !string.IsNullOrWhiteSpace(SelectedBinding.BindingId))
+                                                        {
+                                                            <MudStack Row="true" Spacing="1" Class="request-form-chip-row">
+                                                                <MudChip T="string" Size="Size.Small" Color="@GetBindingStateColor(SelectedBinding.SyncState)">
+                                                                    @SelectedBinding.SyncState
+                                                                </MudChip>
+                                                                <MudChip T="string"
+                                                                         Size="Size.Small"
+                                                                         Color="@(SelectedBinding.Enabled ? Color.Success : Color.Default)">
+                                                                    @(SelectedBinding.Enabled ? "Binding Enabled" : "Binding Disabled")
+                                                                </MudChip>
+                                                            </MudStack>
+                                                        }
+
+                                                        @if (orchestrationCatalogLoading)
+                                                        {
+                                                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                                                Loading External orchestration automation catalog...
+                                                            </MudAlert>
+                                                        }
+                                                        else if (!string.IsNullOrWhiteSpace(orchestrationCatalogError))
+                                                        {
+                                                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                                                External orchestration catalog could not be loaded. Existing bindings can still be reviewed, but new bindings will need valid External orchestration connectivity first.
+                                                                <div>@orchestrationCatalogError</div>
+                                                            </MudAlert>
+                                                        }
+                                                        else if (!FilteredOrchestrationRequestDefinitions.Any())
+                                                        {
+                                                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                                                No External orchestration automation targets are available for the selected External orchestration tenant.
+                                                            </MudAlert>
+                                                        }
+
+                                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="request-form-script-picker">
+                                                            <MudTextField T="string"
+                                                                          Value="@SelectedOrchestrationTargetLabel"
+                                                                          Label="External orchestration Automation Target"
+                                                                          Variant="Variant.Outlined"
+                                                                          Margin="Margin.Dense"
+                                                                          Dense="true"
+                                                                          ReadOnly="true"
+                                                                          HelperText="Select a live External orchestration automation target from the script library." />
+                                                            <MudButton Variant="Variant.Outlined"
+                                                                       Size="Size.Small"
+                                                                       StartIcon="@Icons.Material.Filled.LibraryBooks"
+                                                                       Disabled="@(orchestrationCatalogLoading || !CanCreateTenantScopedOrchestrationTarget || !FilteredOrchestrationRequestDefinitions.Any())"
+                                                                       OnClick="OpenOrchestrationScriptLibraryDialogAsync">
+                                                                Browse Library
+                                                            </MudButton>
+                                                            <MudTooltip Text="Clear selected External orchestration target">
+                                                                <MudIconButton Icon="@Icons.Material.Filled.Clear"
+                                                                               Size="Size.Small"
+                                                                               Color="Color.Warning"
+                                                                               Variant="Variant.Outlined"
+                                                                               Disabled="@(SelectedBinding is null || string.IsNullOrWhiteSpace(SelectedBinding.OrchestrationRequestDefinitionId))"
+                                                                               OnClick="@(() => OnSelectedCatalogRequestDefinitionChanged(null))" />
+                                                            </MudTooltip>
+                                                        </MudStack>
+
+                                                        @if (SelectedBinding is not null
+                                                            && !string.IsNullOrWhiteSpace(SelectedBinding.OrchestrationRequestDefinitionId)
+                                                            && !SelectedBindingTargetIsVisible)
+                                                        {
+                                                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                                                The stored External orchestration binding target is not present for the selected External orchestration tenant. Review the binding before saving.
+                                                            </MudAlert>
+                                                        }
+                                                        else if (SelectedBindingTargetHasTenantMismatch)
+                                                        {
+                                                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                                                The stored External orchestration binding target has different tenant metadata from the selected organization. Review the job before saving.
+                                                            </MudAlert>
+                                                        }
+
+                                                        @if (SelectedCatalogRequestDefinition is not null)
+                                                        {
+                                                            <MudStack Row="true" Spacing="1" Class="request-form-chip-row">
+                                                                @if (!string.IsNullOrWhiteSpace(SelectedCatalogRequestDefinition.TenantName))
+                                                                {
+                                                                    <MudChip T="string" Size="Size.Small" Color="Color.Info">@SelectedCatalogRequestDefinition.TenantName</MudChip>
+                                                                }
+                                                                <MudChip T="string" Size="Size.Small" Color="Color.Default">@($"{SelectedOrchestrationInputs.Count} input{(SelectedOrchestrationInputs.Count == 1 ? string.Empty : "s")}")</MudChip>
+                                                            </MudStack>
+                                                        }
+
+                                                        <MudTextField T="string"
+                                                                      Value="@SelectedJobName"
+                                                                      Label="Job Name"
+                                                                      Variant="Variant.Outlined"
+                                                                      Margin="Margin.Dense"
+                                                                      Dense="true"
+                                                                      ReadOnly="true" />
+
+                                                        <MudGrid Spacing="1">
+                                                            <MudItem xs="12" sm="6">
+                                                                <MudNumericField T="int?"
+                                                                                 Value="@SelectedExpectedRuntimeMinutes"
+                                                                                 ValueChanged="OnSelectedExpectedRuntimeMinutesChanged"
+                                                                                 Label="Expected Runtime (minutes)"
+                                                                                 HelperText="External orchestration tested job runtime."
+                                                                                 Variant="Variant.Outlined"
+                                                                                 Margin="Margin.Dense"
+                                                                                 Dense="true"
+                                                                                 Min="1" />
+                                                            </MudItem>
+                                                            <MudItem xs="12" sm="6">
+                                                                <MudNumericField T="int?"
+                                                                                 Value="@SelectedGraceRuntimeMinutes"
+                                                                                 ValueChanged="OnSelectedGraceRuntimeMinutesChanged"
+                                                                                 Label="Grace Runtime (minutes)"
+                                                                                 HelperText="Helpdesk allowance after expected runtime."
+                                                                                 Variant="Variant.Outlined"
+                                                                                 Margin="Margin.Dense"
+                                                                                 Dense="true"
+                                                                                 Min="0" />
+                                                            </MudItem>
+                                                        </MudGrid>
+
+                                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="request-form-task-actions">
+                                                            <MudSwitch T="bool"
+                                                                       Value="@(SelectedBinding?.Enabled ?? true)"
+                                                                       ValueChanged="OnSelectedBindingEnabledChanged"
+                                                                       Color="Color.Primary"
+                                                                       Size="Size.Small"
+                                                                       Label="Binding Enabled" />
+
+                                                            <MudButton Variant="Variant.Text"
+                                                                       Color="Color.Warning"
+                                                                       Size="Size.Small"
+                                                                       StartIcon="@Icons.Material.Filled.LinkOff"
+                                                                       OnClick="ClearSelectedTaskBinding">
+                                                                Clear
+                                                            </MudButton>
+
+                                                            @if (SelectedBinding is not null && !string.IsNullOrWhiteSpace(SelectedBinding.BindingId))
+                                                            {
+                                                                <MudButton Variant="Variant.Text"
+                                                                           Size="Size.Small"
+                                                                           StartIcon="@Icons.Material.Filled.Sync"
+                                                                           OnClick="RefreshSelectedBindingDriftAsync">
+                                                                    Refresh
+                                                                </MudButton>
+
+                                                                <MudButton Variant="Variant.Text"
+                                                                           Size="Size.Small"
+                                                                           StartIcon="@Icons.Material.Filled.CompareArrows"
+                                                                           OnClick="LoadSelectedBindingDriftPreviewAsync">
+                                                                    Drift
+                                                                </MudButton>
+
+                                                                @if (SelectedBinding.SyncState == AutomationBindingSyncState.Drifted)
+                                                                {
+                                                                    <MudButton Variant="Variant.Text"
+                                                                               Color="Color.Info"
+                                                                               Size="Size.Small"
+                                                                               StartIcon="@Icons.Material.Filled.PendingActions"
+                                                                               OnClick="MarkSelectedBindingImportPendingAsync">
+                                                                        Mark Import
+                                                                    </MudButton>
+                                                                }
+
+                                                                @if (SelectedBinding.SyncState == AutomationBindingSyncState.ImportPending)
+                                                                {
+                                                                    <MudButton Variant="Variant.Text"
+                                                                               Color="Color.Success"
+                                                                               Size="Size.Small"
+                                                                               StartIcon="@Icons.Material.Filled.Download"
+                                                                               OnClick="ImportSelectedBindingInputsAsync">
+                                                                        Import
+                                                                    </MudButton>
+                                                                }
+                                                            }
+                                                        </MudStack>
+
+                                                        @if (selectedBindingDriftPreviewLoading)
+                                                        {
+                                                            <MudProgressLinear Indeterminate="true" Class="mt-1 mb-1" />
+                                                        }
+                                                        else if (!string.IsNullOrWhiteSpace(selectedBindingDriftPreviewError))
+                                                        {
+                                                            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="mt-1 mb-1">
+                                                                @selectedBindingDriftPreviewError
+                                                            </MudAlert>
+                                                        }
+                                                        else if (selectedBindingDriftPreview is not null
+                                                            && SelectedBinding is not null
+                                                            && string.Equals(selectedBindingDriftPreview.BindingId, SelectedBinding.BindingId, StringComparison.Ordinal))
+                                                        {
+                                                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mt-1 mb-1">
+                                                                Review the mapped Helpdesk inputs against the External orchestration request definition before importing External orchestration-side changes.
+                                                            </MudAlert>
+
+                                                            <MudTable Items="VisibleDriftDifferences"
+                                                                      Dense="true"
+                                                                      Hover="true"
+                                                                      Breakpoint="Breakpoint.Sm">
+                                                                <HeaderContent>
+                                                                    <MudTh>Input Key</MudTh>
+                                                                    <MudTh>Change</MudTh>
+                                                                    <MudTh>Helpdesk</MudTh>
+                                                                    <MudTh>External orchestration</MudTh>
+                                                                </HeaderContent>
+                                                                <RowTemplate>
+                                                                    <MudTd DataLabel="Input Key">@context.Key</MudTd>
+                                                                    <MudTd DataLabel="Change">
+                                                                        <MudChip T="string" Size="Size.Small" Color="@GetDriftChangeColor(context.ChangeType)">
+                                                                            @context.ChangeType
+                                                                        </MudChip>
+                                                                    </MudTd>
+                                                                    <MudTd DataLabel="Helpdesk">@FormatInputSnapshot(context.Helpdesk)</MudTd>
+                                                                    <MudTd DataLabel="External orchestration">@FormatInputSnapshot(context.Orchestration)</MudTd>
+                                                                </RowTemplate>
+                                                                <NoRecordsContent>
+                                                                    <MudText Typo="Typo.body2">No schema differences detected.</MudText>
+                                                                </NoRecordsContent>
+                                                            </MudTable>
+                                                        }
+
+                                                        <MudDivider Class="my-2" />
+                                                        <MudText Typo="Typo.subtitle2">Payload Mapping</MudText>
+                                                        <MudGrid Spacing="1">
+                                                            <MudItem xs="12" sm="5">
+                                                                <MudSelect T="string"
+                                                                           @bind-Value="SelectedDraftFieldKey"
+                                                                           Label="Helpdesk Field"
+                                                                           HelperText="Source field from Helpdesk."
+                                                                           Variant="Variant.Outlined"
+                                                                           Margin="Margin.Dense"
+                                                                           Dense="true">
+                                                                    @foreach (var option in FieldOptions)
+                                                                    {
+                                                                        <MudSelectItem Value="@option.Key">@option.Label (@option.Key)</MudSelectItem>
+                                                                    }
+                                                                </MudSelect>
+                                                            </MudItem>
+                                                            <MudItem xs="12" sm="5">
+                                                                <MudSelect T="string"
+                                                                           @bind-Value="SelectedDraftJobParamKey"
+                                                                           Label="Job Param"
+                                                                           HelperText="Destination parameter on the External orchestration job."
+                                                                           Variant="Variant.Outlined"
+                                                                           Margin="Margin.Dense"
+                                                                           Dense="true"
+                                                                           Disabled="@(!SelectedOrchestrationInputs.Any())">
+                                                                    @foreach (var input in SelectedOrchestrationInputs.OrderBy(x => x.Order).ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+                                                                    {
+                                                                        <MudSelectItem Value="@input.Key">@GetOrchestrationInputLabel(input)</MudSelectItem>
+                                                                    }
+                                                                </MudSelect>
+                                                            </MudItem>
+                                                            <MudItem xs="12" sm="2" Class="d-flex align-center">
+                                                                <MudIconButton Icon="@Icons.Material.Filled.Add" Color="Color.Primary" Variant="Variant.Outlined" Size="Size.Small" OnClick="AddPayloadMapping" Disabled="@(!CanAddPayloadMapping)" />
+                                                            </MudItem>
+                                                        </MudGrid>
+
+                                                        @if (VisiblePayloadMappingRows.Count > 0)
+                                                        {
+                                                            <MudTable Items="VisiblePayloadMappingRows" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+                                                                <HeaderContent>
+                                                                    <MudTh>Job Param</MudTh>
+                                                                    <MudTh>Helpdesk Field</MudTh>
+                                                                    <MudTh Style="width: 1%;"></MudTh>
+                                                                </HeaderContent>
+                                                                <RowTemplate>
+                                                                    <MudTd DataLabel="Job Param">
+                                                                        <MudText Typo="Typo.body2">@context.Label</MudText>
+                                                                        <MudText Typo="Typo.caption">@context.JobParamKey</MudText>
+                                                                    </MudTd>
+                                                                    <MudTd DataLabel="Helpdesk Field">
+                                                                        <MudSelect T="string"
+                                                                                   Value="@context.HelpdeskFieldKey"
+                                                                                   ValueChanged="@((string? value) => OnPayloadMappingFieldChanged(context.JobParamKey, value))"
+                                                                                   Margin="Margin.Dense"
+                                                                                   Dense="true"
+                                                                                   Clearable="true">
+                                                                            @foreach (var option in FieldOptions)
+                                                                            {
+                                                                                <MudSelectItem Value="@option.Key">@option.Label (@option.Key)</MudSelectItem>
+                                                                            }
+                                                                        </MudSelect>
+                                                                    </MudTd>
+                                                                    <MudTd>
+                                                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => RemovePayloadMapping(context.JobParamKey))" />
+                                                                    </MudTd>
+                                                                </RowTemplate>
+                                                            </MudTable>
+                                                        }
+                                                    }
+                                                </div>
+                                            }
+
+                                        </MudPaper>
+                                    </MudStack>
+                                </div>
+
+                                <div class="request-form-task-config-panel">
+                                    <MudStack Spacing="1" Class="request-form-editor-column">
+                                        <MudText Typo="Typo.subtitle2">Task Details</MudText>
+
+                                        <MudTextField @bind-Value="selectedTask.Name" Label="Task Name" Required="true" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" />
+                                        <MudTextField @bind-Value="selectedTask.Description" Label="Task Description" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" />
+
+                                        <MudGrid Spacing="1">
+                                            <MudItem xs="12" sm="6">
+                                                <MudSelect T="string" Value="selectedTask.Type" ValueChanged="OnSelectedTaskTypeChanged" Label="Task Type" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                                    <MudSelectItem T="string" Value="@("manual")">Manual</MudSelectItem>
+                                                    <MudSelectItem T="string" Value="@("automation")">Automation</MudSelectItem>
+                                                    <MudSelectItem T="string" Value="@("approval")">Get Approval</MudSelectItem>
+                                                </MudSelect>
+                                            </MudItem>
+                                            <MudItem xs="12" sm="6" Class="d-flex align-center">
+                                                <MudSwitch @bind-Value="selectedTask.AutoStart" Color="Color.Primary" Label="Auto Start" Size="Size.Small" Class="mt-1" />
+                                            </MudItem>
+                                        </MudGrid>
+
+                                        @if (selectedTask.Type == "manual")
+                                        {
+                                            <MudDivider Class="my-2" />
+                                            <MudText Typo="Typo.subtitle2">Manual Configuration</MudText>
+
+                                            <MudSelect T="string" @bind-Value="selectedTask.DefaultAssigneeId" Label="Default Assignee" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
+                                                @foreach (var user in users)
+                                                {
+                                                    <MudSelectItem Value="@user.Id">@user.Name (@user.Email)</MudSelectItem>
+                                                }
+                                            </MudSelect>
+
+                                            <MudTextField @bind-Value="selectedTask.TeamOrRole" Label="Team/Role (optional)" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" />
+                                        }
+                                        else if (selectedTask.Type == "approval")
+                                        {
+                                            <MudDivider Class="my-2" />
+                                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                                <MudText Typo="Typo.subtitle2">Approval Configuration</MudText>
+                                                <MudButton Variant="Variant.Outlined"
+                                                           Size="Size.Small"
+                                                           StartIcon="@Icons.Material.Filled.PersonSearch"
+                                                           OnClick="OpenApprovalApproverDialogAsync">
+                                                    Browse
+                                                </MudButton>
+                                            </MudStack>
+
+                                            <MudSelect T="int?"
+                                                       @bind-Value="selectedTask.ApprovalAllowedDays"
+                                                       Label="Approval time allowed"
+                                                       Variant="Variant.Outlined"
+                                                       Margin="Margin.Dense"
+                                                       Dense="true">
+                                                @foreach (var day in Enumerable.Range(1, 14))
+                                                {
+                                                    <MudSelectItem T="int?" Value="@day">@($"{day} day{(day == 1 ? string.Empty : "s")}")</MudSelectItem>
+                                                }
+                                            </MudSelect>
+
+                                            @if (selectedTask.ApprovalApprovers.Count == 0)
+                                            {
+                                                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+                                                    Select at least one approver.
+                                                </MudAlert>
+                                            }
+                                            else
+                                            {
+                                                <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                                                    @foreach (var approver in selectedTask.ApprovalApprovers)
+                                                    {
+                                                        <MudChip T="string"
+                                                                 Size="Size.Small"
+                                                                 Color="Color.Info"
+                                                                 Variant="Variant.Outlined"
+                                                                 OnClose="@(() => RemoveApprovalApprover(approver))">
+                                                            @($"{approver.Name} ({approver.Email})")
+                                                        </MudChip>
+                                                    }
+                                                </MudStack>
+                                            }
+                                        }
+
+                                        <MudDivider Class="my-2" />
+
+                                        <MudExpansionPanels Class="request-form-advanced-panel" Dense="true">
+                                            <MudExpansionPanel Text="Advanced Workflow Settings">
+                                                <MudText Typo="Typo.subtitle2" Class="mb-1">Dependencies</MudText>
+                                                <MudSelect T="Guid"
+                                                           Label="Depends On"
+                                                           MultiSelection="true"
+                                                           Dense="true"
+                                                           Variant="Variant.Outlined"
+                                                           Margin="Margin.Dense"
+                                                           SelectedValues="@SelectedDependencyIds"
+                                                           SelectedValuesChanged="OnSelectedTaskDependenciesChanged">
+                                                    @foreach (var option in DependencyOptions)
+                                                    {
+                                                        <MudSelectItem T="Guid" Value="@option.Id">@option.Name</MudSelectItem>
+                                                    }
+                                                </MudSelect>
+                                                <MudText Typo="Typo.caption" Class="mb-2">
+                                                    Depends on: @GetDependencySummary(selectedTask)
+                                                </MudText>
+
+                                                <MudTextField @bind-Value="selectedTask.ConditionExpression"
+                                                              Label="Condition (optional)"
+                                                              Placeholder="payload.userType == &quot;external&quot;"
+                                                              HelperText="Expression evaluated against request payload. Leave empty for always execute."
+                                                              Variant="Variant.Outlined"
+                                                              Margin="Margin.Dense"
+                                                              Dense="true" />
+
+                                                <MudGrid Spacing="1">
+                                                    <MudItem xs="12" sm="6">
+                                                        <MudNumericField T="int?"
+                                                                         @bind-Value="selectedTask.TaskSlaMinutes"
+                                                                         Label="Task SLA (minutes)"
+                                                                         Variant="Variant.Outlined"
+                                                                         Margin="Margin.Dense" />
+                                                    </MudItem>
+                                                    <MudItem xs="12" sm="6">
+                                                        <MudNumericField T="int?"
+                                                                         @bind-Value="selectedTask.EscalateAfterMinutes"
+                                                                         Label="Escalate After (minutes)"
+                                                                         Variant="Variant.Outlined"
+                                                                         Margin="Margin.Dense" />
+                                                    </MudItem>
+                                                </MudGrid>
+
+                                                <MudText Typo="Typo.subtitle2" Class="mt-2">Escalation Target</MudText>
+                                                <MudGrid Spacing="1">
+                                                    <MudItem xs="12" sm="6">
+                                                        <MudSelect T="string"
+                                                                   Label="Escalation User"
+                                                                   Variant="Variant.Outlined"
+                                                                   Margin="Margin.Dense"
+                                                                   Dense="true"
+                                                                   Clearable="true"
+                                                                   Value="selectedTask.EscalationUserId"
+                                                                   ValueChanged="OnEscalationUserChanged">
+                                                            @foreach (var user in users)
+                                                            {
+                                                                <MudSelectItem T="string" Value="@user.Id">@user.Name (@user.Email)</MudSelectItem>
+                                                            }
+                                                        </MudSelect>
+                                                    </MudItem>
+                                                    <MudItem xs="12" sm="6">
+                                                        <MudSelect T="string"
+                                                                   Label="Escalation Role"
+                                                                   Variant="Variant.Outlined"
+                                                                   Margin="Margin.Dense"
+                                                                   Dense="true"
+                                                                   Clearable="true"
+                                                                   Value="selectedTask.EscalationRole"
+                                                                   ValueChanged="OnEscalationRoleChanged">
+                                                            @foreach (var role in AvailableRoles)
+                                                            {
+                                                                <MudSelectItem T="string" Value="@role">@role</MudSelectItem>
+                                                            }
+                                                        </MudSelect>
+                                                    </MudItem>
+                                                </MudGrid>
+
+                                                <MudTooltip Text="If this task fails, the request may be marked as failed (Phase 6G).">
+                                                    <MudSwitch @bind-Value="selectedTask.IsCritical"
+                                                               Color="Color.Warning"
+                                                               Label="Critical Task"
+                                                               Size="Size.Small"
+                                                               Class="mt-1" />
+                                                </MudTooltip>
+                                            </MudExpansionPanel>
+                                        </MudExpansionPanels>
+
+                                    </MudStack>
+                                </div>
+                            </div>
+                        }
+                    </MudPaper>
+                </MudItem>
+
+            </MudGrid>
+
+            @if (_showWorkflowPreview)
+            {
+                <MudPaper Outlined="true" Class="pa-3 mt-3 request-form-preview-panel">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Workflow Preview</MudText>
+                    @if (!Tasks.Any())
+                    {
+                        <MudText Typo="Typo.body2">No tasks configured.</MudText>
+                    }
+                    else
+                    {
+                        @foreach (var node in BuildWorkflowPreview())
+                        {
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Style="@($"margin-left:{node.Depth * 18}px")">
+                                <MudText Typo="Typo.body2">@node.TaskName</MudText>
+                                @if (node.IsConditional)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Info">conditional</MudChip>
+                                }
+                                @if (node.IsCritical)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error">critical</MudChip>
+                                }
+                            </MudStack>
+                        }
+                    }
+                </MudPaper>
+            }
+        </MudForm>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@saving" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .request-form-builder-dialog {
+        width: min(1560px, 96vw);
+    }
+
+    .request-form-builder-title {
+        width: 100%;
+        gap: 1rem;
+    }
+
+    .request-form-builder-subtitle {
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .request-form-builder-form {
+        padding-top: 0.25rem;
+    }
+
+    .request-form-stat-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        width: 100%;
+    }
+
+    .request-form-stat-card {
+        min-width: 0;
+    }
+
+    .request-form-task-actions {
+        flex-wrap: wrap;
+    }
+
+    .request-form-task-editor-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 7fr) minmax(320px, 3fr);
+        gap: 1rem;
+        align-items: start;
+    }
+
+    .request-form-task-list-panel,
+    .request-form-task-config-panel,
+    .request-form-editor-column {
+        min-width: 0;
+    }
+
+    .request-form-step-automation-panel {
+        display: grid;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid var(--mud-palette-lines-default);
+        background: var(--mud-palette-surface);
+    }
+
+    .request-form-info-icon {
+        padding: 0.15rem;
+    }
+
+    .request-form-script-picker {
+        flex-wrap: wrap;
+    }
+
+    .request-form-script-picker .mud-input-control {
+        flex: 1 1 280px;
+        min-width: min(100%, 280px);
+    }
+
+    .request-form-section-header,
+    .request-form-chip-row {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .request-form-task-list {
+        max-height: 560px;
+        overflow-y: auto;
+    }
+
+    .request-form-task-list-inner {
+        padding: 0.5rem;
+    }
+
+    .request-form-task-drop-zone {
+        min-height: 4rem;
+    }
+
+    .request-form-task-item {
+        cursor: pointer;
+        margin-bottom: 0.45rem;
+        padding: 0.8rem 0.9rem;
+        border: 1px solid var(--mud-palette-lines-default);
+        background: var(--mud-palette-surface);
+    }
+
+    .request-form-task-drag-handle {
+        color: var(--mud-palette-text-secondary);
+        cursor: grab;
+    }
+
+    .request-form-task-item-active {
+        border-color: var(--mud-palette-primary);
+        background: var(--mud-palette-action-default-hover);
+    }
+
+    @@media (max-width: 1199px) {
+        .request-form-task-editor-grid {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .request-form-task-list {
+            max-height: 320px;
+        }
+    }
+</style>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string? RequestFormId { get; set; }
+    [Parameter] public string? ServiceId { get; set; }
+
+    private MudForm form = default!;
+    private readonly RequestFormModel model = new();
+    private List<FormField> FormFields = new();
+    private List<RequestTaskTemplateModel> Tasks = new();
+    private RequestTaskTemplateModel? selectedTask;
+    private bool saving;
+    private bool _isNew => string.IsNullOrWhiteSpace(RequestFormId);
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private readonly (string Value, string Label)[] FieldTypes = new[]
+    {
+        ("text", "Text"),
+        ("textarea", "Text Area"),
+        ("number", "Number"),
+        ("boolean", "Yes/No"),
+        ("predefined", "Predefined"),
+        ("helpdeskData", "HelpdeskData")
+    };
+
+    private List<OrganizationDto> organizations = new();
+    private HashSet<string> selectedOrgIds { get; set; } = new();
+    private List<DatasetDefinitionDto> availableDatasets = new();
+    private List<UserDto> users = new();
+    private readonly Dictionary<Guid, AutomationBindingEditorModel> automationBindings = new();
+    private readonly Dictionary<Guid, PayloadMappingDraft> payloadMappingDrafts = new();
+    private List<OrchestrationCatalogRequestDefinitionDto> orchestrationRequestDefinitions = new();
+    private List<OrchestrationCatalogJobDto> orchestrationJobs = new();
+    private bool orchestrationCatalogLoading;
+    private string? orchestrationCatalogError;
+    private AutomationBindingDriftPreviewDto? selectedBindingDriftPreview;
+    private bool selectedBindingDriftPreviewLoading;
+    private string? selectedBindingDriftPreviewError;
+    private const string DefaultOrchestrationTargetFolderPath = "/helpdesk/requests/";
+    private const string DefaultOrchestrationTargetClientIdentity = "helpdesk-automation";
+    private const string TaskDropZoneId = "request-form-tasks";
+
+    private string? SelectedDraftFieldKey
+    {
+        get => selectedTask is null ? null : GetPayloadMappingDraft(selectedTask.Id).HelpdeskFieldKey;
+        set
+        {
+            if (selectedTask is not null)
+            {
+                GetPayloadMappingDraft(selectedTask.Id).HelpdeskFieldKey = value;
+            }
+        }
+    }
+
+    private string? SelectedDraftJobParamKey
+    {
+        get => selectedTask is null ? null : GetPayloadMappingDraft(selectedTask.Id).JobParamKey;
+        set
+        {
+            if (selectedTask is not null)
+            {
+                GetPayloadMappingDraft(selectedTask.Id).JobParamKey = value;
+            }
+        }
+    }
+    private bool _showWorkflowPreview;
+    private Guid? expandedAutomationTaskId;
+    private MudDropContainer<RequestTaskTemplateModel>? taskDropContainer;
+    private bool refreshTaskDropContainerAfterRender;
+    private int taskDropRenderVersion;
+    private OrganizationDto? SelectedOrganization => organizations.FirstOrDefault(x => x.Id == model.OrganizationId);
+    private bool CanCreateTenantScopedOrchestrationTarget =>
+        !string.IsNullOrWhiteSpace(model.OrganizationId) && SelectedOrganization?.OrchestrationTenantId is not null;
+    private string OrchestrationTargetCreationReadinessMessage
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(model.OrganizationId))
+            {
+                return "Select a primary organization before creating a new External orchestration automation target.";
+            }
+
+            if (SelectedOrganization?.OrchestrationTenantId is null)
+            {
+                return "The selected organization is not linked to an External orchestration tenant. Link it in Organization Management first.";
+            }
+
+            return string.Empty;
+        }
+    }
+
+    private bool CanMoveSelectedTaskUp => selectedTask is not null && Tasks.OrderBy(x => x.Order).ToList().FindIndex(x => x.Id == selectedTask.Id) > 0;
+    private bool CanMoveSelectedTaskDown => selectedTask is not null && Tasks.OrderBy(x => x.Order).ToList().FindIndex(x => x.Id == selectedTask.Id) < Tasks.Count - 1;
+    private bool CanAddPayloadMapping => selectedTask is not null
+        && selectedTask.Type == "automation"
+        && !string.IsNullOrWhiteSpace(SelectedDraftFieldKey)
+        && !string.IsNullOrWhiteSpace(SelectedDraftJobParamKey);
+    private bool CanCreateOrchestrationRequestDefinition => selectedTask is not null
+        && string.Equals(selectedTask.Type, "automation", StringComparison.OrdinalIgnoreCase)
+        && CanCreateTenantScopedOrchestrationTarget;
+    private AutomationBindingEditorModel? SelectedBinding => selectedTask is null ? null : GetBindingModel(selectedTask);
+    private OrchestrationCatalogRequestDefinitionDto? SelectedCatalogRequestDefinition => GetCatalogRequestDefinition(SelectedBinding);
+    private IReadOnlyList<OrchestrationCatalogInputDefinitionDto> SelectedOrchestrationInputs => GetSelectedOrchestrationInputs();
+    private IReadOnlyList<OrchestrationCatalogRequestDefinitionDto> FilteredOrchestrationRequestDefinitions => GetFilteredOrchestrationRequestDefinitions();
+    private string? SelectedJobName => GetSelectedJobName();
+    private string SelectedOrchestrationTargetLabel => SelectedCatalogRequestDefinition is null
+        ? FirstNonEmpty(SelectedBinding?.OrchestrationRequestDefinitionName, SelectedBinding?.OrchestrationRequestDefinitionId) ?? "No External orchestration target selected"
+        : GetOrchestrationRequestDefinitionLabel(SelectedCatalogRequestDefinition);
+    private int? SelectedExpectedRuntimeMinutes => selectedTask?.ExpectedRuntimeMinutes ?? SecondsToMinutes(SelectedCatalogRequestDefinition?.ExpectedRuntimeSeconds);
+    private int? SelectedGraceRuntimeMinutes => selectedTask?.GraceRuntimeMinutes ?? 10;
+    private bool SelectedBindingTargetIsVisible => SelectedBinding is null
+        || string.IsNullOrWhiteSpace(SelectedBinding.OrchestrationRequestDefinitionId)
+        || FilteredOrchestrationRequestDefinitions.Any(x => string.Equals(x.RequestDefinitionId, SelectedBinding.OrchestrationRequestDefinitionId, StringComparison.OrdinalIgnoreCase));
+    private bool OrchestrationCatalogTenantMetadataUnavailable => orchestrationRequestDefinitions.Count > 0
+        && !OrchestrationCatalogTargetFilter.HasAnyTenantMetadata(orchestrationRequestDefinitions);
+    private bool SelectedBindingTargetHasTenantMismatch => SelectedCatalogRequestDefinition is not null
+        && OrchestrationCatalogTargetFilter.HasTenantMetadata(SelectedCatalogRequestDefinition)
+        && !OrchestrationCatalogTargetFilter.IsTenantMatch(
+            SelectedCatalogRequestDefinition,
+            SelectedOrganization?.OrchestrationTenantId,
+            SelectedOrganization?.OrchestrationTenantName);
+    private IReadOnlyList<PayloadMappingRow> VisiblePayloadMappingRows => GetVisiblePayloadMappingRows();
+    private IEnumerable<AutomationBindingInputDiffDto> VisibleDriftDifferences =>
+        selectedBindingDriftPreview?.Differences.Where(x => !string.Equals(x.ChangeType, "Unchanged", StringComparison.Ordinal))
+        ?? Enumerable.Empty<AutomationBindingInputDiffDto>();
+
+    private List<FieldOption> FieldOptions => FormFields
+        .Select((f, i) => new FieldOption(FormFieldKeyResolver.Resolve(f, i), string.IsNullOrWhiteSpace(f.Label) ? $"Field {i + 1}" : f.Label))
+        .ToList();
+    private IReadOnlyCollection<string> AvailableRoles => users
+        .Select(x => x.Role?.Trim())
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Cast<string>()
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x)
+        .ToList();
+    private HashSet<Guid> SelectedDependencyIds => selectedTask?.DependsOn
+        .Where(x => x != Guid.Empty)
+        .ToHashSet() ?? new HashSet<Guid>();
+    private IReadOnlyCollection<TaskDependencyOption> DependencyOptions => selectedTask is null
+        ? Array.Empty<TaskDependencyOption>()
+        : Tasks
+            .Where(x => x.Id != selectedTask.Id)
+            .OrderBy(x => x.Order)
+            .Select(x => new TaskDependencyOption(x.Id, $"{x.Order}. {x.Name}"))
+            .ToList();
+    protected override async Task OnInitializedAsync()
+    {
+        if (string.IsNullOrWhiteSpace(ServiceId))
+        {
+            Snackbar.Add("Service context is missing. Open a Service and try again.", Severity.Error);
+            MudDialog.Cancel();
+            return;
+        }
+
+        organizations = await Api.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations") ?? new();
+        users = await Api.GetFromJsonAsync<List<UserDto>>("api/v1/users") ?? new();
+        await LoadAvailableDatasetsAsync();
+        await LoadOrchestrationCatalogAsync();
+
+        if (!_isNew)
+        {
+            var formDto = await Api.GetFromJsonAsync<RequestFormDto>($"api/v1/request-forms/{RequestFormId}");
+            if (formDto is not null)
+            {
+                ApplyLoadedRequestForm(formDto);
+                await LoadBindingsAsync(formDto.Id);
+                await RefreshBindingDriftAsync(formDto.Id);
+            }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!refreshTaskDropContainerAfterRender)
+        {
+            return;
+        }
+
+        refreshTaskDropContainerAfterRender = false;
+
+        if (taskDropContainer is not null)
+        {
+            taskDropContainer.Refresh();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static double? TryGetDouble(JsonObject obj, string key)
+        => obj.TryGetPropertyValue(key, out var n) && n is JsonValue v && v.TryGetValue<double>(out var d) ? d : null;
+
+    private void ApplyLoadedRequestForm(RequestFormDto formDto)
+    {
+        model.Title = formDto.Title;
+        model.Description = formDto.Description;
+        model.ReleaseStatus = formDto.ReleaseStatus;
+        model.OrganizationId = string.IsNullOrWhiteSpace(formDto.OrganizationId) && (formDto.AllowedOrganizationIds?.Count ?? 0) == 1
+            ? formDto.AllowedOrganizationIds[0]
+            : formDto.OrganizationId;
+        selectedOrgIds = new HashSet<string>(formDto.AllowedOrganizationIds ?? new());
+        if (!string.IsNullOrWhiteSpace(model.OrganizationId))
+        {
+            selectedOrgIds.Add(model.OrganizationId);
+        }
+        _ = LoadAvailableDatasetsAsync();
+
+        try
+        {
+            var node = JsonNode.Parse(formDto.JsonSchema) as JsonObject;
+
+            if (node?["layout"] is JsonObject layout)
+            {
+                model.Width = TryGetDouble(layout, "width");
+                model.Height = TryGetDouble(layout, "height");
+                model.Depth = TryGetDouble(layout, "depth");
+            }
+
+            if (node?["fields"] is JsonArray arr)
+            {
+                var parsed = arr.Deserialize<List<FormField>>(JsonOptions);
+                if (parsed is not null)
+                {
+                    FormFields = parsed.Select(NormalizeFieldForEditor).ToList();
+                    FormFieldKeyResolver.EnsureKeys(FormFields);
+                }
+            }
+
+            if (node?["tasks"] is JsonArray tasksArr)
+            {
+                var parsedTasks = tasksArr.Deserialize<List<RequestTaskTemplateModel>>(JsonOptions);
+                if (parsedTasks is not null)
+                {
+                    var previouslySelectedTaskId = selectedTask?.Id;
+                    Tasks = parsedTasks.Select(NormalizeTask).ToList();
+                    NormalizeTaskOrder();
+                    selectedTask = previouslySelectedTaskId.HasValue
+                        ? Tasks.FirstOrDefault(x => x.Id == previouslySelectedTaskId.Value) ?? Tasks.FirstOrDefault()
+                        : Tasks.FirstOrDefault();
+                    RequestTaskDropContainerRefresh(rebuild: true);
+                }
+            }
+        }
+        catch
+        {
+            // ignore parse errors
+        }
+    }
+
+    private void AddField()
+        => FormFields.Add(new FormField { Label = "New Field", Type = "text", Required = false });
+
+    private void RemoveField(FormField f)
+        => FormFields.Remove(f);
+
+    private void AddTask()
+    {
+        var ordered = RequestFormTaskEditorState.NormalizeTaskOrder(Tasks);
+        var task = new RequestTaskTemplateModel
+        {
+            Id = Guid.NewGuid(),
+            Name = "New Task",
+            Type = "manual",
+            AutoStart = true,
+            ApprovalAllowedDays = 7,
+            ApprovalApprovers = new List<RequestTaskApprovalApproverModel>(),
+            DependsOn = new List<Guid>(),
+            Order = ordered.Count + 1
+        };
+        ordered.Add(task);
+        Tasks = RequestFormTaskEditorState.NormalizeTaskOrder(ordered);
+        selectedTask = Tasks.FirstOrDefault(x => x.Id == task.Id);
+        expandedAutomationTaskId = null;
+        SeedNewOrchestrationRequestDefinitionDefaults();
+        RequestTaskDropContainerRefresh(rebuild: true);
+    }
+
+    private void ToggleWorkflowPreview()
+    {
+        _showWorkflowPreview = !_showWorkflowPreview;
+    }
+
+    private void OnSelectedTaskTypeChanged(string value)
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        selectedTask.Type = RequestFormTaskEditorState.NormalizeType(value);
+        if (string.Equals(selectedTask.Type, "approval", StringComparison.OrdinalIgnoreCase))
+        {
+            selectedTask.AutoStart = true;
+            selectedTask.ApprovalAllowedDays ??= 7;
+            selectedTask.ApprovalApprovers ??= new List<RequestTaskApprovalApproverModel>();
+        }
+        if (!string.Equals(selectedTask.Type, "automation", StringComparison.OrdinalIgnoreCase))
+        {
+            expandedAutomationTaskId = null;
+        }
+        RequestTaskDropContainerRefresh();
+    }
+
+    private bool IsTaskAutomationExpanded(Guid taskId) => expandedAutomationTaskId == taskId;
+
+    private void ToggleTaskAutomationConfiguration(Guid taskId)
+    {
+        var wasExpanded = expandedAutomationTaskId == taskId;
+        SelectTask(taskId, preserveExpansionForToggle: true);
+        expandedAutomationTaskId = wasExpanded ? null : taskId;
+        RequestTaskDropContainerRefresh();
+    }
+
+    private void SelectTask(Guid id, bool preserveExpansionForToggle = false)
+    {
+        var previousSelectedId = selectedTask?.Id;
+        selectedTask = Tasks.FirstOrDefault(x => x.Id == id);
+        if (!preserveExpansionForToggle && previousSelectedId != id)
+        {
+            expandedAutomationTaskId = null;
+        }
+        ClearSelectedBindingDriftPreview();
+        SeedNewOrchestrationRequestDefinitionDefaults();
+        RequestTaskDropContainerRefresh();
+    }
+
+    private void DuplicateSelectedTask()
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        NormalizeTaskOrder();
+        var clone = new RequestTaskTemplateModel
+        {
+            Id = Guid.NewGuid(),
+            Name = $"{selectedTask.Name} (Copy)",
+            Description = selectedTask.Description,
+            Order = selectedTask.Order + 1,
+            Type = selectedTask.Type,
+            AutoStart = selectedTask.AutoStart,
+            DefaultAssigneeId = selectedTask.DefaultAssigneeId,
+            TeamOrRole = selectedTask.TeamOrRole,
+            DependsOn = new List<Guid>(selectedTask.DependsOn),
+            ConditionExpression = selectedTask.ConditionExpression,
+            TaskSlaMinutes = selectedTask.TaskSlaMinutes,
+            EscalateAfterMinutes = selectedTask.EscalateAfterMinutes,
+            EscalationUserId = selectedTask.EscalationUserId,
+            EscalationRole = selectedTask.EscalationRole,
+            IsCritical = selectedTask.IsCritical,
+            ExpectedRuntimeMinutes = selectedTask.ExpectedRuntimeMinutes,
+            GraceRuntimeMinutes = selectedTask.GraceRuntimeMinutes,
+            ApprovalAllowedDays = selectedTask.ApprovalAllowedDays,
+            ApprovalApprovers = selectedTask.ApprovalApprovers
+                .Select(x => new RequestTaskApprovalApproverModel
+                {
+                    Source = x.Source,
+                    Id = x.Id,
+                    Name = x.Name,
+                    Email = x.Email,
+                    OrganizationId = x.OrganizationId,
+                    OrganizationName = x.OrganizationName
+                })
+                .ToList(),
+            PayloadMapping = selectedTask.PayloadMapping is null
+                ? new Dictionary<string, string>()
+                : new Dictionary<string, string>(selectedTask.PayloadMapping)
+        };
+
+        if (automationBindings.TryGetValue(selectedTask.Id, out var binding))
+        {
+            automationBindings[clone.Id] = binding.CloneForTask();
+        }
+
+        var ordered = Tasks.OrderBy(x => x.Order).ToList();
+        var index = ordered.FindIndex(x => x.Id == selectedTask.Id);
+        if (index < 0)
+        {
+            ordered.Add(clone);
+        }
+        else
+        {
+            ordered.Insert(index + 1, clone);
+        }
+
+        Tasks = RequestFormTaskEditorState.NormalizeTaskOrder(ordered);
+        selectedTask = Tasks.FirstOrDefault(x => x.Id == clone.Id);
+        ClearSelectedBindingDriftPreview();
+        SeedNewOrchestrationRequestDefinitionDefaults();
+        expandedAutomationTaskId = null;
+        RequestTaskDropContainerRefresh(rebuild: true);
+    }
+
+    private void DeleteSelectedTask()
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        var selectedId = selectedTask.Id;
+        var remainingTasks = Tasks.Where(x => x.Id != selectedId).ToList();
+        automationBindings.Remove(selectedId);
+        payloadMappingDrafts.Remove(selectedId);
+        if (expandedAutomationTaskId == selectedId)
+        {
+            expandedAutomationTaskId = null;
+        }
+        foreach (var task in remainingTasks)
+        {
+            task.DependsOn.RemoveAll(x => x == selectedId);
+        }
+        Tasks = RequestFormTaskEditorState.NormalizeTaskOrder(remainingTasks);
+        selectedTask = Tasks.FirstOrDefault();
+        ClearSelectedBindingDriftPreview();
+        SeedNewOrchestrationRequestDefinitionDefaults();
+        RequestTaskDropContainerRefresh(rebuild: true);
+    }
+
+    private void MoveTaskUp()
+    {
+        if (!CanMoveSelectedTaskUp || selectedTask is null)
+        {
+            return;
+        }
+
+        var index = Tasks.OrderBy(x => x.Order).ToList().FindIndex(x => x.Id == selectedTask.Id);
+        ReorderTask(selectedTask.Id, index - 1);
+        SeedNewOrchestrationRequestDefinitionDefaults();
+    }
+
+    private void MoveTaskDown()
+    {
+        if (!CanMoveSelectedTaskDown || selectedTask is null)
+        {
+            return;
+        }
+
+        var index = Tasks.OrderBy(x => x.Order).ToList().FindIndex(x => x.Id == selectedTask.Id);
+        ReorderTask(selectedTask.Id, index + 1);
+        SeedNewOrchestrationRequestDefinitionDefaults();
+    }
+
+    private void OnTaskDropped(MudItemDropInfo<RequestTaskTemplateModel> dropInfo)
+    {
+        if (dropInfo.Item is null)
+        {
+            return;
+        }
+
+        ReorderTask(dropInfo.Item.Id, dropInfo.IndexInZone);
+        SeedNewOrchestrationRequestDefinitionDefaults();
+    }
+
+    private void ReorderTask(Guid taskId, int destinationIndex)
+    {
+        Tasks = RequestFormTaskEditorState.MoveTaskToIndex(Tasks, taskId, destinationIndex);
+        selectedTask = Tasks.FirstOrDefault(x => x.Id == selectedTask?.Id) ?? Tasks.FirstOrDefault(x => x.Id == taskId) ?? Tasks.FirstOrDefault();
+        RequestTaskDropContainerRefresh(rebuild: true);
+    }
+
+    private void AddPayloadMapping()
+    {
+        if (!CanAddPayloadMapping || selectedTask is null)
+        {
+            return;
+        }
+
+        selectedTask.PayloadMapping ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        selectedTask.PayloadMapping[SelectedDraftJobParamKey!.Trim()] = SelectedDraftFieldKey!;
+        ResetPayloadMappingDraft(selectedTask.Id);
+        ClearSelectedBindingDriftPreview();
+    }
+
+    private void OnPayloadMappingFieldChanged(string jobParamKey, string? helpdeskFieldKey)
+    {
+        if (selectedTask is null || string.IsNullOrWhiteSpace(jobParamKey))
+        {
+            return;
+        }
+
+        selectedTask.PayloadMapping ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(helpdeskFieldKey))
+        {
+            selectedTask.PayloadMapping.Remove(jobParamKey);
+        }
+        else
+        {
+            selectedTask.PayloadMapping[jobParamKey.Trim()] = helpdeskFieldKey.Trim();
+        }
+
+        if (selectedTask.PayloadMapping.Count == 0)
+        {
+            selectedTask.PayloadMapping = null;
+        }
+
+        ClearSelectedBindingDriftPreview();
+    }
+
+    private void RemovePayloadMapping(string key)
+    {
+        if (selectedTask?.PayloadMapping is null)
+        {
+            return;
+        }
+
+        selectedTask.PayloadMapping.Remove(key);
+        if (selectedTask.PayloadMapping.Count == 0)
+        {
+            selectedTask.PayloadMapping = null;
+        }
+
+        ClearSelectedBindingDriftPreview();
+    }
+
+    private void OnSelectedTaskDependenciesChanged(IEnumerable<Guid>? values)
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        selectedTask.DependsOn = values?
+            .Where(x => x != Guid.Empty && x != selectedTask.Id)
+            .Distinct()
+            .ToList() ?? new List<Guid>();
+    }
+
+    private void OnSelectedCatalogRequestDefinitionChanged(string? value)
+    {
+        if (SelectedBinding is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            SelectedBinding.OrchestrationRequestDefinitionId = null;
+            SelectedBinding.OrchestrationRequestDefinitionName = null;
+            SelectedBinding.OrchestrationJobDefinitionId = null;
+            SelectedBinding.OrchestrationJobDefinitionName = null;
+            ResetSelectedPayloadMappingJobParamDraft();
+            return;
+        }
+
+        var selectedDefinition = orchestrationRequestDefinitions.FirstOrDefault(x =>
+            string.Equals(x.RequestDefinitionId, value, StringComparison.OrdinalIgnoreCase));
+        if (selectedDefinition is null)
+        {
+            SelectedBinding.OrchestrationRequestDefinitionId = value.Trim();
+            SelectedBinding.OrchestrationRequestDefinitionName = null;
+            SelectedBinding.OrchestrationJobDefinitionId = null;
+            SelectedBinding.OrchestrationJobDefinitionName = null;
+            ResetSelectedPayloadMappingJobParamDraft();
+            return;
+        }
+
+        SelectedBinding.OrchestrationRequestDefinitionId = selectedDefinition.RequestDefinitionId;
+        SelectedBinding.OrchestrationRequestDefinitionName = selectedDefinition.RequestDefinitionName;
+        SelectedBinding.OrchestrationJobDefinitionId = Normalize(selectedDefinition.OrchestrationJobDefinitionId);
+        SelectedBinding.OrchestrationJobDefinitionName = Normalize(selectedDefinition.OrchestrationJobDefinitionName);
+        ApplySelectedRuntimeDefaults();
+        ResetSelectedPayloadMappingJobParamDraft();
+        ClearSelectedBindingDriftPreview();
+    }
+
+    private void OnSelectedExpectedRuntimeMinutesChanged(int? value)
+    {
+        if (selectedTask is not null)
+        {
+            selectedTask.ExpectedRuntimeMinutes = NormalizeRuntimeMinutes(value, minimum: 1);
+        }
+    }
+
+    private void OnSelectedGraceRuntimeMinutesChanged(int? value)
+    {
+        if (selectedTask is not null)
+        {
+            selectedTask.GraceRuntimeMinutes = NormalizeRuntimeMinutes(value, minimum: 0) ?? 10;
+        }
+    }
+
+    private void OnSelectedBindingEnabledChanged(bool value)
+    {
+        if (SelectedBinding is null)
+        {
+            return;
+        }
+
+        SelectedBinding.Enabled = value;
+    }
+
+    private async Task OpenOrchestrationScriptLibraryDialogAsync()
+    {
+        if (SelectedBinding is null || orchestrationCatalogLoading || !CanCreateTenantScopedOrchestrationTarget || !FilteredOrchestrationRequestDefinitions.Any())
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            [nameof(OrchestrationScriptLibraryDialog.Definitions)] = FilteredOrchestrationRequestDefinitions.ToList(),
+            [nameof(OrchestrationScriptLibraryDialog.SelectedRequestDefinitionId)] = SelectedBinding.OrchestrationRequestDefinitionId,
+            [nameof(OrchestrationScriptLibraryDialog.OrganizationDisplayName)] = FirstNonEmpty(SelectedOrganization?.Name, SelectedOrganization?.OrchestrationTenantName),
+            [nameof(OrchestrationScriptLibraryDialog.TenantMetadataUnavailable)] = OrchestrationCatalogTenantMetadataUnavailable
+        };
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Large,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<OrchestrationScriptLibraryDialog>("Script Library", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not OrchestrationCatalogRequestDefinitionDto selectedDefinition)
+        {
+            return;
+        }
+
+        OnSelectedCatalogRequestDefinitionChanged(selectedDefinition.RequestDefinitionId);
+    }
+
+    private async Task OpenCreateOrchestrationTargetDialogAsync()
+    {
+        if (!CanCreateOrchestrationRequestDefinition || SelectedBinding is null)
+        {
+            if (!CanCreateTenantScopedOrchestrationTarget)
+            {
+                Snackbar.Add(OrchestrationTargetCreationReadinessMessage, Severity.Warning);
+            }
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            [nameof(CreateOrchestrationAutomationTargetDialog.InitialJobName)] = GetDefaultOrchestrationTargetName(),
+            [nameof(CreateOrchestrationAutomationTargetDialog.InitialFolderPath)] = DefaultOrchestrationTargetFolderPath,
+            [nameof(CreateOrchestrationAutomationTargetDialog.InitialClientIdentity)] = DefaultOrchestrationTargetClientIdentity,
+            [nameof(CreateOrchestrationAutomationTargetDialog.InitialDescription)] = GetDefaultOrchestrationTargetDescription(),
+            [nameof(CreateOrchestrationAutomationTargetDialog.TenantId)] = SelectedOrganization?.OrchestrationTenantId
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateOrchestrationAutomationTargetDialog>("Create External orchestration Target", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not OrchestrationCatalogRequestDefinitionDto created)
+        {
+            return;
+        }
+
+        created.TenantId ??= SelectedOrganization?.OrchestrationTenantId;
+        created.TenantName ??= SelectedOrganization?.OrchestrationTenantName;
+
+        orchestrationRequestDefinitions.Add(created);
+        orchestrationRequestDefinitions = orchestrationRequestDefinitions
+            .OrderBy(x => x.FolderPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.RequestDefinitionName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        SelectedBinding.OrchestrationRequestDefinitionId = created.RequestDefinitionId;
+        SelectedBinding.OrchestrationRequestDefinitionName = created.RequestDefinitionName;
+        SelectedBinding.OrchestrationJobDefinitionId = Normalize(created.OrchestrationJobDefinitionId);
+        SelectedBinding.OrchestrationJobDefinitionName = Normalize(created.OrchestrationJobDefinitionName);
+        SelectedBinding.Enabled = true;
+        ApplySelectedRuntimeDefaults();
+        ResetSelectedPayloadMappingJobParamDraft();
+        ClearSelectedBindingDriftPreview();
+
+        Snackbar.Add($"Created External orchestration automation target '{GetOrchestrationDisplayName(created)}'.", Severity.Success);
+    }
+
+    private void OnEscalationUserChanged(string? userId)
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        selectedTask.EscalationUserId = string.IsNullOrWhiteSpace(userId) ? null : userId;
+        if (!string.IsNullOrWhiteSpace(selectedTask.EscalationUserId))
+        {
+            selectedTask.EscalationRole = null;
+        }
+    }
+
+    private void OnEscalationRoleChanged(string? role)
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        selectedTask.EscalationRole = string.IsNullOrWhiteSpace(role) ? null : role;
+        if (!string.IsNullOrWhiteSpace(selectedTask.EscalationRole))
+        {
+            selectedTask.EscalationUserId = null;
+        }
+    }
+
+    private string GetDependencySummary(RequestTaskTemplateModel task)
+    {
+        if (task.DependsOn.Count == 0)
+        {
+            return "None";
+        }
+
+        var lookup = Tasks.ToDictionary(x => x.Id, x => x.Name);
+        var names = task.DependsOn
+            .Where(x => lookup.ContainsKey(x))
+            .Select(x => lookup[x])
+            .ToList();
+        return names.Count == 0 ? "None" : string.Join(", ", names);
+    }
+
+    private bool IsTaskConfigurationValid()
+    {
+        foreach (var task in Tasks)
+        {
+            if (string.IsNullOrWhiteSpace(task.Name))
+            {
+                Snackbar.Add("Every task must have a name.", Severity.Error);
+                return false;
+            }
+
+            if (string.Equals(task.Type, "automation", StringComparison.OrdinalIgnoreCase))
+            {
+                var binding = GetBindingModel(task, createIfMissing: false);
+                var hasBinding = binding is not null
+                    && binding.Enabled
+                    && !string.IsNullOrWhiteSpace(binding.OrchestrationRequestDefinitionId);
+                if (!hasBinding)
+                {
+                    Snackbar.Add($"Automation task '{task.Name}' requires an enabled External orchestration binding.", Severity.Error);
+                    return false;
+                }
+            }
+
+            if (task.EscalateAfterMinutes.HasValue
+                && task.TaskSlaMinutes.HasValue
+                && task.EscalateAfterMinutes.Value > task.TaskSlaMinutes.Value)
+            {
+                Snackbar.Add($"Task '{task.Name}' has invalid SLA settings. Escalation threshold cannot exceed task SLA.", Severity.Error);
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(task.EscalationUserId)
+                && !string.IsNullOrWhiteSpace(task.EscalationRole))
+            {
+                Snackbar.Add($"Task '{task.Name}' can only target one escalation target (user OR role).", Severity.Error);
+                return false;
+            }
+        }
+
+        if (HasCircularDependencies())
+        {
+            Snackbar.Add("Circular dependency detected.", Severity.Error);
+            return false;
+        }
+
+        return true;
+    }
+
+    private void NormalizeTaskOrder()
+    {
+        Tasks = RequestFormTaskEditorState.NormalizeTaskOrder(Tasks);
+    }
+
+    private void RequestTaskDropContainerRefresh(bool rebuild = false)
+    {
+        if (rebuild)
+        {
+            taskDropRenderVersion++;
+        }
+
+        refreshTaskDropContainerAfterRender = true;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private bool HasCircularDependencies()
+    {
+        var graph = Tasks.ToDictionary(
+            x => x.Id,
+            x => x.DependsOn.Where(dep => dep != Guid.Empty).ToList());
+        var states = new Dictionary<Guid, VisitState>();
+
+        foreach (var node in graph.Keys)
+        {
+            if (HasCycle(node, graph, states))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasCycle(Guid node, IReadOnlyDictionary<Guid, List<Guid>> graph, IDictionary<Guid, VisitState> states)
+    {
+        if (states.TryGetValue(node, out var state))
+        {
+            return state == VisitState.Visiting;
+        }
+
+        states[node] = VisitState.Visiting;
+
+        if (graph.TryGetValue(node, out var deps))
+        {
+            foreach (var dep in deps)
+            {
+                if (!graph.ContainsKey(dep))
+                {
+                    continue;
+                }
+
+                if (HasCycle(dep, graph, states))
+                {
+                    return true;
+                }
+            }
+        }
+
+        states[node] = VisitState.Visited;
+        return false;
+    }
+
+    private static RequestTaskTemplateModel NormalizeTask(RequestTaskTemplateModel task)
+        => RequestFormTaskEditorState.NormalizeTask(task);
+
+    private static Color GetTaskTypeColor(string? type)
+        => RequestFormTaskEditorState.NormalizeType(type) switch
+        {
+            RequestFormTaskEditorState.AutomationType => Color.Warning,
+            RequestFormTaskEditorState.ApprovalType => Color.Primary,
+            _ => Color.Info
+        };
+
+    private async Task OpenApprovalApproverDialogAsync()
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            [nameof(ApprovalApproverPickerDialog.OrganizationId)] = model.OrganizationId,
+            [nameof(ApprovalApproverPickerDialog.SelectedApprovers)] = selectedTask.ApprovalApprovers.ToList()
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<ApprovalApproverPickerDialog>("Select Approvers", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not List<RequestTaskApprovalApproverModel> approvers)
+        {
+            return;
+        }
+
+        selectedTask.ApprovalApprovers = approvers
+            .Where(x => !string.IsNullOrWhiteSpace(x.Email))
+            .DistinctBy(x => x.Email, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private void RemoveApprovalApprover(RequestTaskApprovalApproverModel approver)
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        selectedTask.ApprovalApprovers.RemoveAll(x =>
+            string.Equals(x.Email, approver.Email, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void ApplySelectedRuntimeDefaults()
+    {
+        if (selectedTask is null || !string.Equals(selectedTask.Type, "automation", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        selectedTask.ExpectedRuntimeMinutes ??= SecondsToMinutes(SelectedCatalogRequestDefinition?.ExpectedRuntimeSeconds) ?? 30;
+        selectedTask.GraceRuntimeMinutes ??= 10;
+    }
+
+    private void ApplyRuntimeDefaultsToAutomationTasks()
+    {
+        foreach (var task in Tasks.Where(x => string.Equals(x.Type, "automation", StringComparison.OrdinalIgnoreCase)))
+        {
+            var binding = GetBindingModel(task, createIfMissing: false);
+            var definition = GetCatalogRequestDefinition(binding);
+            task.ExpectedRuntimeMinutes ??= SecondsToMinutes(definition?.ExpectedRuntimeSeconds) ?? 30;
+            task.GraceRuntimeMinutes ??= 10;
+        }
+    }
+
+    private static int? SecondsToMinutes(int? seconds)
+        => seconds.HasValue && seconds.Value > 0
+            ? Math.Max(1, (int)Math.Ceiling(seconds.Value / 60.0))
+            : null;
+
+    private static int? NormalizeRuntimeMinutes(int? value, int minimum)
+        => value.HasValue ? Math.Max(minimum, value.Value) : null;
+
+    private List<WorkflowPreviewNode> BuildWorkflowPreview()
+    {
+        var orderedTasks = Tasks.OrderBy(x => x.Order).ToList();
+        if (orderedTasks.Count == 0)
+        {
+            return new List<WorkflowPreviewNode>();
+        }
+
+        var lookup = orderedTasks.ToDictionary(x => x.Id);
+        var childrenByDependency = orderedTasks
+            .SelectMany(task => task.DependsOn.Select(dep => new { Dependency = dep, Task = task }))
+            .Where(x => lookup.ContainsKey(x.Dependency))
+            .GroupBy(x => x.Dependency)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.Task).OrderBy(x => x.Order).ToList());
+
+        var roots = orderedTasks.Where(x => x.DependsOn.Count == 0).ToList();
+        if (roots.Count == 0)
+        {
+            roots = orderedTasks;
+        }
+
+        var result = new List<WorkflowPreviewNode>();
+        var appended = new HashSet<Guid>();
+
+        foreach (var root in roots)
+        {
+            AppendPreviewNode(root, 0, childrenByDependency, appended, new HashSet<Guid>(), result);
+        }
+
+        foreach (var remaining in orderedTasks.Where(x => !appended.Contains(x.Id)))
+        {
+            AppendPreviewNode(remaining, 0, childrenByDependency, appended, new HashSet<Guid>(), result);
+        }
+
+        return result;
+    }
+
+    private static void AppendPreviewNode(
+        RequestTaskTemplateModel task,
+        int depth,
+        IReadOnlyDictionary<Guid, List<RequestTaskTemplateModel>> childrenByDependency,
+        ISet<Guid> appended,
+        ISet<Guid> path,
+        ICollection<WorkflowPreviewNode> result)
+    {
+        if (!appended.Add(task.Id))
+        {
+            return;
+        }
+
+        result.Add(new WorkflowPreviewNode(
+            task.Name,
+            depth,
+            !string.IsNullOrWhiteSpace(task.ConditionExpression),
+            task.IsCritical));
+
+        if (!path.Add(task.Id))
+        {
+            return;
+        }
+
+        if (childrenByDependency.TryGetValue(task.Id, out var children))
+        {
+            foreach (var child in children)
+            {
+                if (path.Contains(child.Id))
+                {
+                    continue;
+                }
+
+                AppendPreviewNode(child, depth + 1, childrenByDependency, appended, new HashSet<Guid>(path), result);
+            }
+        }
+    }
+
+    private async Task Save()
+    {
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        if (!IsTaskConfigurationValid())
+        {
+            return;
+        }
+
+        saving = true;
+
+        if (string.IsNullOrWhiteSpace(ServiceId))
+        {
+            Snackbar.Add("ServiceId is required to create a request form.", Severity.Error);
+            saving = false;
+            return;
+        }
+
+        try
+        {
+            ApplyRuntimeDefaultsToAutomationTasks();
+            NormalizeTaskOrder();
+            FormFieldKeyResolver.EnsureKeys(FormFields);
+
+            var schemaNode = new JsonObject
+            {
+                ["title"] = model.Title ?? string.Empty,
+                ["description"] = model.Description ?? string.Empty,
+                ["layout"] = new JsonObject
+                {
+                    ["width"] = model.Width,
+                    ["height"] = model.Height,
+                    ["depth"] = model.Depth
+                },
+                ["fields"] = JsonSerializer.SerializeToNode(FormFields, JsonOptions),
+                ["tasks"] = JsonSerializer.SerializeToNode(Tasks, JsonOptions)
+            };
+
+            var jsonSchema = schemaNode.ToJsonString(JsonOptionsIndented);
+
+            HttpResponseMessage resp;
+            if (_isNew)
+            {
+                var dto = new CreateRequestFormDto
+                {
+                    ServiceId = ServiceId!,
+                    Title = model.Title ?? string.Empty,
+                    Description = model.Description,
+                    OrganizationId = model.OrganizationId,
+                    AllowedOrganizationIds = selectedOrgIds.ToList(),
+                    ReleaseStatus = model.ReleaseStatus,
+                    JsonSchema = jsonSchema
+                };
+                resp = await Api.PostAsJsonAsync("api/v1/request-forms", dto);
+            }
+            else
+            {
+                var dto = new UpdateRequestFormDto
+                {
+                    Title = model.Title,
+                    Description = model.Description,
+                    OrganizationId = model.OrganizationId,
+                    AllowedOrganizationIds = selectedOrgIds.ToList(),
+                    ReleaseStatus = model.ReleaseStatus,
+                    JsonSchema = jsonSchema,
+                    ServiceIdHasValue = false
+                };
+                resp = await Api.PutAsJsonAsync($"api/v1/request-forms/{RequestFormId}", dto);
+            }
+
+        if (resp.IsSuccessStatusCode)
+        {
+            var savedForm = await resp.Content.ReadFromJsonAsync<RequestFormDto>() ?? new RequestFormDto
+            {
+                Id = RequestFormId ?? string.Empty
+            };
+
+            await SyncBindingsAsync(savedForm.Id);
+            var syncWarning = await TrySyncBindingSchemasAsync(savedForm.Id);
+            if (!string.IsNullOrWhiteSpace(syncWarning))
+            {
+                Snackbar.Add(syncWarning, Severity.Warning);
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        else
+        {
+                Snackbar.Add($"Save failed: {(int)resp.StatusCode} {await resp.Content.ReadAsStringAsync()}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task OnOrganizationChanged(string? organizationId)
+    {
+        model.OrganizationId = string.IsNullOrWhiteSpace(organizationId) ? null : organizationId;
+        selectedOrgIds = string.IsNullOrWhiteSpace(model.OrganizationId)
+            ? new HashSet<string>()
+            : new HashSet<string>(new[] { model.OrganizationId });
+        if (SelectedBinding is not null && !SelectedBindingTargetIsVisible)
+        {
+            ResetSelectedPayloadMappingJobParamDraft();
+        }
+        ClearSelectedBindingDriftPreview();
+        await LoadAvailableDatasetsAsync();
+    }
+
+    private async Task LoadAvailableDatasetsAsync()
+    {
+        availableDatasets = string.IsNullOrWhiteSpace(model.OrganizationId)
+            ? new List<DatasetDefinitionDto>()
+            : await Api.GetFromJsonAsync<List<DatasetDefinitionDto>>($"api/v1/resources/datasets?organizationId={Uri.EscapeDataString(model.OrganizationId)}") ?? new List<DatasetDefinitionDto>();
+    }
+
+    private static void OnFieldTypeChanged(FormField field, string value)
+    {
+        field.Type = value;
+        if (!IsHelpdeskDataField(field))
+        {
+            field.DataBinding = null;
+        }
+        if (!IsPredefinedField(field))
+        {
+            field.PredefinedOptions.Clear();
+        }
+        else
+        {
+            field.DataBinding = null;
+        }
+    }
+
+    private async Task OpenPredefinedOptionsDialogAsync(FormField field)
+    {
+        if (!IsPredefinedField(field))
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            [nameof(PredefinedFieldOptionsDialog.FieldLabel)] = field.Label,
+            [nameof(PredefinedFieldOptionsDialog.Options)] = field.PredefinedOptions.ToList()
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<PredefinedFieldOptionsDialog>("Predefined Options", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not List<string> selectedOptions)
+        {
+            return;
+        }
+
+        field.PredefinedOptions = selectedOptions;
+    }
+
+    private void OnFieldDatasetChanged(FormField field, string? datasetId)
+    {
+        if (string.IsNullOrWhiteSpace(datasetId))
+        {
+            field.DataBinding = null;
+            return;
+        }
+
+        var dataset = availableDatasets.FirstOrDefault(x => x.Id == datasetId);
+        if (dataset is null)
+        {
+            field.DataBinding = null;
+            return;
+        }
+
+        field.DataBinding = new FormFieldDataBinding
+        {
+            DatasetId = dataset.Id,
+            DisplayColumn = dataset.DisplayColumn,
+            SearchColumns = dataset.SearchColumns,
+            Placeholder = $"Search {dataset.Name}",
+            AllowFreeText = false,
+            MinSearchLength = 1
+        };
+    }
+
+    private static void OnFieldBindingPlaceholderChanged(FormField field, string? value)
+    {
+        if (field.DataBinding is not null)
+        {
+            field.DataBinding.Placeholder = value;
+        }
+    }
+
+    private static FormField NormalizeFieldForEditor(FormField field)
+    {
+        if (field.DataBinding is not null)
+        {
+            field.Type = "helpdeskData";
+        }
+        field.PredefinedOptions ??= new List<string>();
+
+        return field;
+    }
+
+    private static bool IsHelpdeskDataField(FormField field)
+        => string.Equals(field.Type, "helpdeskData", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPredefinedField(FormField field)
+        => string.Equals(field.Type, "predefined", StringComparison.OrdinalIgnoreCase);
+
+    private static string GetPredefinedOptionsTooltip(FormField field)
+    {
+        if (!IsPredefinedField(field))
+        {
+            return "Available only for Predefined fields";
+        }
+
+        var count = field.PredefinedOptions.Count(x => !string.IsNullOrWhiteSpace(x));
+        return count == 0
+            ? "Edit predefined options"
+            : $"Edit {count} predefined option{(count == 1 ? string.Empty : "s")}";
+    }
+
+    private async Task LoadBindingsAsync(string requestFormId)
+    {
+        automationBindings.Clear();
+
+        if (string.IsNullOrWhiteSpace(requestFormId))
+        {
+            return;
+        }
+
+        var bindings = await Api.GetFromJsonAsync<List<AutomationBindingDto>>(
+            $"api/v1/admin/orchestration/orchestration/bindings?requestFormId={Uri.EscapeDataString(requestFormId)}") ?? new();
+
+        foreach (var binding in bindings)
+        {
+            automationBindings[binding.TaskTemplateId] = AutomationBindingEditorModel.FromDto(binding);
+        }
+    }
+
+    private async Task RefreshBindingDriftAsync(string requestFormId)
+    {
+        if (string.IsNullOrWhiteSpace(requestFormId))
+        {
+            return;
+        }
+
+        using var response = await Api.PostAsync(
+            $"api/v1/admin/orchestration/orchestration/bindings/refresh-drift?requestFormId={Uri.EscapeDataString(requestFormId)}",
+            content: null);
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var updated = await response.Content.ReadFromJsonAsync<List<AutomationBindingDto>>() ?? new();
+        foreach (var binding in updated)
+        {
+            automationBindings[binding.TaskTemplateId] = AutomationBindingEditorModel.FromDto(binding);
+        }
+    }
+
+    private async Task RefreshSelectedBindingDriftAsync()
+    {
+        if (SelectedBinding is null || string.IsNullOrWhiteSpace(RequestFormId))
+        {
+            return;
+        }
+
+        await RefreshBindingDriftAsync(RequestFormId);
+        await LoadSelectedBindingDriftPreviewAsync();
+    }
+
+    private async Task MarkSelectedBindingImportPendingAsync()
+    {
+        if (SelectedBinding is null || string.IsNullOrWhiteSpace(SelectedBinding.BindingId))
+        {
+            return;
+        }
+
+        using var response = await Api.PostAsync(
+            $"api/v1/admin/orchestration/orchestration/bindings/{SelectedBinding.BindingId}/mark-import-pending",
+            content: null);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add("Could not mark External orchestration binding as import pending.", Severity.Error);
+            return;
+        }
+
+        var updated = await response.Content.ReadFromJsonAsync<AutomationBindingDto>();
+        if (updated is not null)
+        {
+            automationBindings[updated.TaskTemplateId] = AutomationBindingEditorModel.FromDto(updated);
+            Snackbar.Add("Binding marked as import pending for admin review.", Severity.Info);
+        }
+
+        await LoadSelectedBindingDriftPreviewAsync();
+    }
+
+    private async Task ImportSelectedBindingInputsAsync()
+    {
+        if (SelectedBinding is null || string.IsNullOrWhiteSpace(SelectedBinding.BindingId))
+        {
+            return;
+        }
+
+        using var response = await Api.PostAsync(
+            $"api/v1/admin/orchestration/orchestration/bindings/{SelectedBinding.BindingId}/import-inputs",
+            content: null);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add($"Could not import External orchestration inputs: {await response.Content.ReadAsStringAsync()}", Severity.Error);
+            return;
+        }
+
+        var updated = await response.Content.ReadFromJsonAsync<AutomationBindingDto>();
+        if (updated is not null)
+        {
+            automationBindings[updated.TaskTemplateId] = AutomationBindingEditorModel.FromDto(updated);
+        }
+
+        if (!string.IsNullOrWhiteSpace(RequestFormId))
+        {
+            var formDto = await Api.GetFromJsonAsync<RequestFormDto>($"api/v1/request-forms/{RequestFormId}");
+            if (formDto is not null)
+            {
+                ApplyLoadedRequestForm(formDto);
+            }
+        }
+
+        Snackbar.Add("Imported External orchestration inputs into the Helpdesk request form.", Severity.Success);
+        await LoadSelectedBindingDriftPreviewAsync();
+    }
+
+    private async Task LoadSelectedBindingDriftPreviewAsync()
+    {
+        if (SelectedBinding is null || string.IsNullOrWhiteSpace(SelectedBinding.BindingId))
+        {
+            ClearSelectedBindingDriftPreview();
+            return;
+        }
+
+        selectedBindingDriftPreviewLoading = true;
+        selectedBindingDriftPreviewError = null;
+
+        try
+        {
+            selectedBindingDriftPreview = await Api.GetFromJsonAsync<AutomationBindingDriftPreviewDto>(
+                $"api/v1/admin/orchestration/orchestration/bindings/{SelectedBinding.BindingId}/drift-preview");
+        }
+        catch (Exception ex)
+        {
+            selectedBindingDriftPreview = null;
+            selectedBindingDriftPreviewError = $"Could not load drift preview: {ex.Message}";
+        }
+        finally
+        {
+            selectedBindingDriftPreviewLoading = false;
+        }
+    }
+
+    private async Task LoadOrchestrationCatalogAsync()
+    {
+        orchestrationCatalogLoading = true;
+        orchestrationCatalogError = null;
+
+        try
+        {
+            orchestrationRequestDefinitions = await Api.GetFromJsonAsync<List<OrchestrationCatalogRequestDefinitionDto>>(
+                "api/v1/admin/orchestration/orchestration/catalog/request-definitions") ?? new();
+            orchestrationJobs = await Api.GetFromJsonAsync<List<OrchestrationCatalogJobDto>>(
+                "api/v1/admin/orchestration/orchestration/catalog/jobs") ?? new();
+        }
+        catch (Exception ex)
+        {
+            orchestrationRequestDefinitions = new();
+            orchestrationJobs = new();
+            orchestrationCatalogError = ex.Message;
+        }
+        finally
+        {
+            orchestrationCatalogLoading = false;
+            SeedNewOrchestrationRequestDefinitionDefaults();
+        }
+    }
+
+    private AutomationBindingEditorModel GetBindingModel(RequestTaskTemplateModel task, bool createIfMissing = true)
+    {
+        if (automationBindings.TryGetValue(task.Id, out var existing))
+        {
+            return existing;
+        }
+
+        var created = new AutomationBindingEditorModel();
+        if (createIfMissing)
+        {
+            automationBindings[task.Id] = created;
+        }
+
+        return created;
+    }
+
+    private void ClearSelectedTaskBinding()
+    {
+        if (selectedTask is null)
+        {
+            return;
+        }
+
+        var model = GetBindingModel(selectedTask);
+        model.ClearForDelete();
+        ResetSelectedPayloadMappingJobParamDraft();
+        ClearSelectedBindingDriftPreview();
+    }
+
+    private Color GetBindingStateColor(AutomationBindingSyncState state) => state switch
+    {
+        AutomationBindingSyncState.InSync => Color.Success,
+        AutomationBindingSyncState.Drifted => Color.Warning,
+        AutomationBindingSyncState.ImportPending => Color.Info,
+        AutomationBindingSyncState.Broken => Color.Error,
+        _ => Color.Default
+    };
+
+    private async Task SyncBindingsAsync(string requestFormId)
+    {
+        if (string.IsNullOrWhiteSpace(requestFormId))
+        {
+            return;
+        }
+
+        var currentBindings = await Api.GetFromJsonAsync<List<AutomationBindingDto>>(
+            $"api/v1/admin/orchestration/orchestration/bindings?requestFormId={Uri.EscapeDataString(requestFormId)}") ?? new();
+        var bindingsByTask = currentBindings.ToDictionary(x => x.TaskTemplateId);
+        var automationTaskIds = Tasks
+            .Where(x => string.Equals(x.Type, "automation", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Id)
+            .ToHashSet();
+
+        foreach (var task in Tasks)
+        {
+            var existingBinding = bindingsByTask.TryGetValue(task.Id, out var found) ? found : null;
+
+            if (!string.Equals(task.Type, "automation", StringComparison.OrdinalIgnoreCase))
+            {
+                if (existingBinding is not null)
+                {
+                    await Api.DeleteAsync($"api/v1/admin/orchestration/orchestration/bindings/{existingBinding.Id}");
+                }
+
+                automationBindings.Remove(task.Id);
+                continue;
+            }
+
+            var editor = GetBindingModel(task);
+            if (string.IsNullOrWhiteSpace(editor.OrchestrationRequestDefinitionId))
+            {
+                if (!string.IsNullOrWhiteSpace(editor.BindingId))
+                {
+                    await Api.DeleteAsync($"api/v1/admin/orchestration/orchestration/bindings/{editor.BindingId}");
+                }
+                else if (existingBinding is not null)
+                {
+                    await Api.DeleteAsync($"api/v1/admin/orchestration/orchestration/bindings/{existingBinding.Id}");
+                }
+
+                editor.ClearForDelete();
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(editor.BindingId))
+            {
+                if (existingBinding is null)
+                {
+                    var createDto = new CreateAutomationBindingDto
+                    {
+                        RequestFormId = requestFormId,
+                        TaskTemplateId = task.Id,
+                        OrchestrationRequestDefinitionId = editor.OrchestrationRequestDefinitionId.Trim(),
+                        OrchestrationRequestDefinitionName = Normalize(editor.OrchestrationRequestDefinitionName),
+                        OrchestrationJobDefinitionId = Normalize(editor.OrchestrationJobDefinitionId),
+                        OrchestrationJobDefinitionName = Normalize(editor.OrchestrationJobDefinitionName)
+                    };
+
+                    using var createResponse = await Api.PostAsJsonAsync("api/v1/admin/orchestration/orchestration/bindings", createDto);
+                    if (!createResponse.IsSuccessStatusCode)
+                    {
+                        throw new InvalidOperationException(await createResponse.Content.ReadAsStringAsync());
+                    }
+
+                    var created = await createResponse.Content.ReadFromJsonAsync<AutomationBindingDto>();
+                    if (created is not null)
+                    {
+                        automationBindings[task.Id] = AutomationBindingEditorModel.FromDto(created);
+                    }
+                }
+                else
+                {
+                    editor.BindingId = existingBinding.Id;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(editor.BindingId))
+            {
+                var updateDto = new UpdateAutomationBindingDto
+                {
+                    OrchestrationRequestDefinitionId = editor.OrchestrationRequestDefinitionId.Trim(),
+                    OrchestrationRequestDefinitionName = Normalize(editor.OrchestrationRequestDefinitionName),
+                    ClearOrchestrationRequestDefinitionName = string.IsNullOrWhiteSpace(editor.OrchestrationRequestDefinitionName),
+                    OrchestrationJobDefinitionId = Normalize(editor.OrchestrationJobDefinitionId),
+                    ClearOrchestrationJobDefinitionId = string.IsNullOrWhiteSpace(editor.OrchestrationJobDefinitionId),
+                    OrchestrationJobDefinitionName = Normalize(editor.OrchestrationJobDefinitionName),
+                    ClearOrchestrationJobDefinitionName = string.IsNullOrWhiteSpace(editor.OrchestrationJobDefinitionName),
+                    SyncState = editor.SyncState,
+                    Enabled = editor.Enabled
+                };
+
+                using var updateResponse = await Api.PutAsJsonAsync(
+                    $"api/v1/admin/orchestration/orchestration/bindings/{editor.BindingId}",
+                    updateDto);
+                if (!updateResponse.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException(await updateResponse.Content.ReadAsStringAsync());
+                }
+
+                var updated = await updateResponse.Content.ReadFromJsonAsync<AutomationBindingDto>();
+                if (updated is not null)
+                {
+                    automationBindings[task.Id] = AutomationBindingEditorModel.FromDto(updated);
+                }
+            }
+        }
+
+        foreach (var staleBinding in currentBindings.Where(x => !automationTaskIds.Contains(x.TaskTemplateId)))
+        {
+            await Api.DeleteAsync($"api/v1/admin/orchestration/orchestration/bindings/{staleBinding.Id}");
+        }
+    }
+
+    private async Task<string?> TrySyncBindingSchemasAsync(string requestFormId)
+    {
+        if (string.IsNullOrWhiteSpace(requestFormId))
+        {
+            return null;
+        }
+
+        var bindings = await Api.GetFromJsonAsync<List<AutomationBindingDto>>(
+            $"api/v1/admin/orchestration/orchestration/bindings?requestFormId={Uri.EscapeDataString(requestFormId)}") ?? new();
+
+        var failures = new List<string>();
+        foreach (var binding in bindings.Where(x => x.Enabled))
+        {
+            try
+            {
+                using var response = await Api.PostAsync(
+                    $"api/v1/admin/orchestration/orchestration/bindings/{binding.Id}/sync-inputs",
+                    content: null);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    failures.Add(await response.Content.ReadAsStringAsync());
+                    continue;
+                }
+
+                var updated = await response.Content.ReadFromJsonAsync<AutomationBindingDto>();
+                if (updated is not null)
+                {
+                    automationBindings[updated.TaskTemplateId] = AutomationBindingEditorModel.FromDto(updated);
+                }
+            }
+            catch (Exception ex)
+            {
+                failures.Add(ex.Message);
+            }
+        }
+
+        return failures.Count switch
+        {
+            0 => null,
+            1 => $"Saved, but External orchestration input sync failed: {Truncate(failures[0], 180)}",
+            _ => $"Saved, but {failures.Count} External orchestration input syncs failed. Refresh drift after External orchestration connectivity is healthy."
+        };
+    }
+
+    private static string? Normalize(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private void ClearSelectedBindingDriftPreview()
+    {
+        selectedBindingDriftPreview = null;
+        selectedBindingDriftPreviewError = null;
+        selectedBindingDriftPreviewLoading = false;
+    }
+
+    private static Color GetDriftChangeColor(string? changeType) => changeType switch
+    {
+        "AddedInOrchestration" => Color.Success,
+        "MissingInOrchestration" => Color.Warning,
+        "Modified" => Color.Info,
+        _ => Color.Default
+    };
+
+    private static string FormatInputSnapshot(AutomationBindingInputSnapshotDto? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return "-";
+        }
+
+        var fieldPart = string.IsNullOrWhiteSpace(snapshot.FieldKey) ? string.Empty : $" [{snapshot.FieldKey}]";
+        var requiredPart = snapshot.Required ? " required" : " optional";
+        return $"{snapshot.Label}{fieldPart} | {snapshot.Type}{requiredPart}";
+    }
+
+    private void SeedNewOrchestrationRequestDefinitionDefaults()
+    {
+    }
+
+    private PayloadMappingDraft GetPayloadMappingDraft(Guid taskId)
+    {
+        if (!payloadMappingDrafts.TryGetValue(taskId, out var draft))
+        {
+            draft = new PayloadMappingDraft();
+            payloadMappingDrafts[taskId] = draft;
+        }
+
+        return draft;
+    }
+
+    private void ResetPayloadMappingDraft(Guid taskId)
+    {
+        payloadMappingDrafts.Remove(taskId);
+    }
+
+    private void ResetSelectedPayloadMappingJobParamDraft()
+    {
+        if (selectedTask is not null && payloadMappingDrafts.TryGetValue(selectedTask.Id, out var draft))
+        {
+            draft.JobParamKey = null;
+        }
+    }
+
+    private OrchestrationCatalogRequestDefinitionDto? GetCatalogRequestDefinition(AutomationBindingEditorModel? binding)
+    {
+        if (binding is null || string.IsNullOrWhiteSpace(binding.OrchestrationRequestDefinitionId))
+        {
+            return null;
+        }
+
+        return orchestrationRequestDefinitions.FirstOrDefault(x =>
+            string.Equals(x.RequestDefinitionId, binding.OrchestrationRequestDefinitionId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private IReadOnlyList<OrchestrationCatalogRequestDefinitionDto> GetFilteredOrchestrationRequestDefinitions()
+    {
+        return OrchestrationCatalogTargetFilter.FilterForOrganization(
+            orchestrationRequestDefinitions,
+            SelectedOrganization?.OrchestrationTenantId,
+            SelectedOrganization?.OrchestrationTenantName,
+            SelectedBinding?.OrchestrationRequestDefinitionId);
+    }
+
+    private IReadOnlyList<PayloadMappingRow> GetVisiblePayloadMappingRows()
+    {
+        if (selectedTask is null)
+        {
+            return [];
+        }
+
+        var mappings = selectedTask.PayloadMapping ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var rows = new Dictionary<string, PayloadMappingRow>(StringComparer.OrdinalIgnoreCase);
+
+        if (SelectedCatalogRequestDefinition is not null)
+        {
+            foreach (var input in SelectedOrchestrationInputs
+                .OrderBy(x => x.Order)
+                .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var key = input.Key.Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                mappings.TryGetValue(key, out var helpdeskFieldKey);
+                rows[key] = new PayloadMappingRow(key, GetOrchestrationInputLabel(input), Normalize(helpdeskFieldKey));
+            }
+        }
+
+        foreach (var mapping in mappings.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var key = mapping.Key.Trim();
+            if (string.IsNullOrWhiteSpace(key) || rows.ContainsKey(key))
+            {
+                continue;
+            }
+
+            rows[key] = new PayloadMappingRow(key, key, Normalize(mapping.Value));
+        }
+
+        return rows.Values.ToList();
+    }
+
+    private IReadOnlyList<OrchestrationCatalogInputDefinitionDto> GetSelectedOrchestrationInputs()
+    {
+        var resolved = OrchestrationCatalogInputResolver.ResolveInputs(SelectedCatalogRequestDefinition, orchestrationJobs);
+        if (resolved.Count > 0)
+        {
+            return resolved;
+        }
+
+        var selectedRequestDefinitionId = SelectedBinding?.OrchestrationRequestDefinitionId;
+        if (string.IsNullOrWhiteSpace(selectedRequestDefinitionId))
+        {
+            return [];
+        }
+
+        var inferred = new List<OrchestrationCatalogInputDefinitionDto>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in Tasks.OrderBy(x => x.Order))
+        {
+            var binding = GetBindingModel(task, createIfMissing: false);
+            if (binding is null
+                || !string.Equals(binding.OrchestrationRequestDefinitionId, selectedRequestDefinitionId, StringComparison.OrdinalIgnoreCase)
+                || task.PayloadMapping is null)
+            {
+                continue;
+            }
+
+            foreach (var mapping in task.PayloadMapping.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var key = mapping.Key?.Trim();
+                if (string.IsNullOrWhiteSpace(key) || !seen.Add(key))
+                {
+                    continue;
+                }
+
+                inferred.Add(new OrchestrationCatalogInputDefinitionDto
+                {
+                    Key = key,
+                    Label = key,
+                    Type = "text",
+                    Order = inferred.Count
+                });
+            }
+        }
+
+        return inferred;
+    }
+
+    private string? GetSelectedJobName()
+    {
+        if (SelectedBinding is null)
+        {
+            return null;
+        }
+
+        return FirstReadableName(
+            SelectedBinding.OrchestrationJobDefinitionName,
+            SelectedBinding.OrchestrationRequestDefinitionName,
+            SelectedCatalogRequestDefinition?.OrchestrationJobDefinitionName,
+            SelectedCatalogRequestDefinition?.DisplayName,
+            SelectedCatalogRequestDefinition?.RequestDefinitionName);
+    }
+
+    private string GetDefaultOrchestrationTargetName()
+    {
+        var formName = string.IsNullOrWhiteSpace(model.Title) ? "request" : model.Title.Trim();
+        var taskName = selectedTask is null || string.IsNullOrWhiteSpace(selectedTask.Name)
+            ? "task"
+            : selectedTask.Name.Trim();
+        return $"{formName}-{taskName}".ToLowerInvariant().Replace(' ', '-');
+    }
+
+    private string? GetDefaultOrchestrationTargetDescription()
+    {
+        if (selectedTask is not null && !string.IsNullOrWhiteSpace(selectedTask.Description))
+        {
+            return selectedTask.Description;
+        }
+
+        return model.Description;
+    }
+
+    private static string GetOrchestrationRequestDefinitionLabel(OrchestrationCatalogRequestDefinitionDto definition)
+    {
+        var baseLabel = OrchestrationCatalogInputResolver.JoinTargetLabel(definition.FolderPath, GetOrchestrationDisplayName(definition));
+        return string.IsNullOrWhiteSpace(definition.OrchestrationJobDefinitionName)
+            ? baseLabel
+            : $"{baseLabel} ({definition.OrchestrationJobDefinitionName})";
+    }
+
+    private static string GetOrchestrationInputLabel(OrchestrationCatalogInputDefinitionDto input)
+        => string.IsNullOrWhiteSpace(input.Label) || string.Equals(input.Label, input.Key, StringComparison.OrdinalIgnoreCase)
+            ? input.Key
+            : $"{input.Label} ({input.Key})";
+
+    private static string GetOrchestrationDisplayName(OrchestrationCatalogRequestDefinitionDto definition)
+        => OrchestrationCatalogInputResolver.FirstReadableName(definition.DisplayName, definition.OrchestrationJobDefinitionName, definition.RequestDefinitionName) ?? "External orchestration target";
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+
+    private static string Truncate(string value, int maxLength)
+        => string.IsNullOrWhiteSpace(value) || value.Length <= maxLength
+            ? value
+            : value[..maxLength];
+
+    private static string? FirstReadableName(params string?[] values)
+        => OrchestrationCatalogInputResolver.FirstReadableName(values) ?? FirstNonEmpty(values);
+
+    private static bool LooksLikeOpaqueIdentifier(string value)
+        => OrchestrationCatalogInputResolver.IsOpaqueIdentifier(value);
+
+    private sealed class RequestFormModel
+    {
+        public string? Title { get; set; }
+        public string? Description { get; set; }
+        public string? OrganizationId { get; set; }
+        public RequestFormReleaseStatus ReleaseStatus { get; set; } = RequestFormReleaseStatus.InTesting;
+        public double? Width { get; set; }
+        public double? Height { get; set; }
+        public double? Depth { get; set; }
+    }
+
+    private sealed record FieldOption(string Key, string Label);
+    private sealed record TaskDependencyOption(Guid Id, string Name);
+    private sealed record PayloadMappingRow(string JobParamKey, string Label, string? HelpdeskFieldKey);
+    private sealed record WorkflowPreviewNode(string TaskName, int Depth, bool IsConditional, bool IsCritical);
+
+    private sealed class PayloadMappingDraft
+    {
+        public string? HelpdeskFieldKey { get; set; }
+        public string? JobParamKey { get; set; }
+    }
+
+    private sealed class AutomationBindingEditorModel
+    {
+        public string? BindingId { get; set; }
+        public string? OrchestrationRequestDefinitionId { get; set; }
+        public string? OrchestrationRequestDefinitionName { get; set; }
+        public string? OrchestrationJobDefinitionId { get; set; }
+        public string? OrchestrationJobDefinitionName { get; set; }
+        public AutomationBindingSyncState SyncState { get; set; } = AutomationBindingSyncState.InSync;
+        public bool Enabled { get; set; } = true;
+
+        public static AutomationBindingEditorModel FromDto(AutomationBindingDto dto) => new()
+        {
+            BindingId = dto.Id,
+            OrchestrationRequestDefinitionId = dto.OrchestrationRequestDefinitionId,
+            OrchestrationRequestDefinitionName = dto.OrchestrationRequestDefinitionName,
+            OrchestrationJobDefinitionId = dto.OrchestrationJobDefinitionId,
+            OrchestrationJobDefinitionName = dto.OrchestrationJobDefinitionName,
+            SyncState = dto.SyncState,
+            Enabled = dto.Enabled
+        };
+
+        public AutomationBindingEditorModel CloneForTask() => new()
+        {
+            OrchestrationRequestDefinitionId = OrchestrationRequestDefinitionId,
+            OrchestrationRequestDefinitionName = OrchestrationRequestDefinitionName,
+            OrchestrationJobDefinitionId = OrchestrationJobDefinitionId,
+            OrchestrationJobDefinitionName = OrchestrationJobDefinitionName,
+            SyncState = SyncState,
+            Enabled = Enabled
+        };
+
+        public void ClearForDelete()
+        {
+            BindingId = null;
+            OrchestrationRequestDefinitionId = null;
+            OrchestrationRequestDefinitionName = null;
+            OrchestrationJobDefinitionId = null;
+            OrchestrationJobDefinitionName = null;
+            SyncState = AutomationBindingSyncState.InSync;
+            Enabled = true;
+        }
+    }
+
+    private enum VisitState
+    {
+        Visiting = 1,
+        Visited = 2
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = RequestFormTaskEditorState.CreateJsonOptions();
+
+    private static readonly JsonSerializerOptions JsonOptionsIndented = RequestFormTaskEditorState.CreateJsonOptions(writeIndented: true);
+}

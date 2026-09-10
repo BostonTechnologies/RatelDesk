@@ -1,0 +1,282 @@
+using Helpdesk.Application.Services.AI;
+using Helpdesk.Application.Services.Email;
+using Helpdesk.Application.Services.EmailTemplates;
+using Helpdesk.Application.Services.KB;
+using Helpdesk.Application.Services.Notifications;
+using Helpdesk.Application.Services.SupportNotifications;
+using Helpdesk.Application.Services.Tenants;
+using Helpdesk.Application.Services.Tickets;
+using Helpdesk.Application.Services.Changes;
+using Helpdesk.Application.Sla;
+using Helpdesk.Application.RequestTasks;
+using Helpdesk.Application.Orchestration;
+using Helpdesk.Application.Tickets;
+using Helpdesk.Application.Notifications;
+using Helpdesk.Application.Resources;
+using Helpdesk.Application.Events;
+using Helpdesk.Application.Timeline;
+using Helpdesk.Application.WorkLogs;
+using Helpdesk.Application.Workflow;
+using Helpdesk.Application.AiAssistant;
+using Helpdesk.Infrastructure.Configuration;
+using Helpdesk.Infrastructure.AI;
+using Helpdesk.Infrastructure.Changes;
+using Helpdesk.Infrastructure.Email;
+using Helpdesk.Infrastructure.Html;
+using Helpdesk.Infrastructure.KB;
+using Helpdesk.Infrastructure.Services;
+using Helpdesk.Infrastructure.Events;
+using Helpdesk.Infrastructure.EmailTemplates;
+using Helpdesk.Infrastructure.Identity;
+using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.RequestTasks;
+using Helpdesk.Infrastructure.Security;
+using Helpdesk.Infrastructure.Storage;
+using Helpdesk.Infrastructure.Orchestration;
+using Helpdesk.Infrastructure.Resources;
+using Helpdesk.Infrastructure.AiAssistant;
+using Helpdesk.Infrastructure.Auth.Authentik;
+using Helpdesk.Infrastructure.Auth.Rbac;
+using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Npgsql.EntityFrameworkCore.PostgreSQL;
+using Microsoft.Extensions.Http.Resilience;
+
+namespace Helpdesk.Infrastructure;
+
+public static class DependencyInjection
+{
+    public static IServiceCollection AddHelpdeskInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    {
+        var helpdeskDbConnectionString = configuration.GetConnectionString("HelpdeskDb");
+        if (string.IsNullOrWhiteSpace(helpdeskDbConnectionString))
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:HelpdeskDb is required. Set ConnectionStrings__HelpdeskDb in the deployment environment.");
+        }
+
+        services.AddHttpContextAccessor();
+        services.AddOptions<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatOptions>()
+            .Bind(configuration.GetSection("AiAssistantChat"))
+            .Validate(x => x.IsValid(), "Enabled chat requires Dev instance, session hub, credential and positive limits; private HTTP requires explicit opt-in.")
+            .ValidateOnStart();
+        services.AddScoped<Helpdesk.Application.AiAssistant.Chat.IAiAssistantChatStore, Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatStore>();
+        services.AddSingleton<Helpdesk.Application.AiAssistant.Chat.IChatLiveFeed, Helpdesk.Infrastructure.AiAssistant.Chat.ChatLiveFeed>();
+        services.AddSingleton<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatSessionManager>();
+        services.AddSingleton<Helpdesk.Infrastructure.AiAssistant.Chat.IAiAssistantChatClientFactory, Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatClientFactory>();
+        services.AddSingleton<Helpdesk.Application.AiAssistant.Chat.IAiAssistantChatTransport>(sp => sp.GetRequiredService<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatSessionManager>());
+        services.AddHostedService(sp => sp.GetRequiredService<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatSessionManager>());
+        services.AddScoped<ITenantContext, TenantContext>();
+        services.Configure<StorageOptions>(configuration.GetSection("StorageOptions"));
+        services.Configure<SlaReportingOptions>(configuration.GetSection("SlaReporting"));
+        services.Configure<OrchestrationM2MOptions>(configuration.GetSection("Orchestration:Provider"));
+        services.Configure<M2MClientOptions>(configuration.GetSection("M2M"));
+        services.Configure<AuthentikOptions>(configuration.GetSection("Authentication:AuthentikAdmin"));
+
+        services.AddDbContext<HelpdeskDbContext>(options =>
+            options.UseNpgsql(
+                helpdeskDbConnectionString,
+                npg => npg.UseVector()));
+
+        AddRepositoryRegistrations(services);
+
+        services.AddHttpClient("OpenAICompatible", client =>
+        {
+            client.Timeout = Timeout.InfiniteTimeSpan;
+        })
+        .SetHandlerLifetime(TimeSpan.FromMinutes(10))
+        .AddStandardResilienceHandler(options =>
+        {
+            options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(2);
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(5);
+        });
+        services.AddHttpClient("OrchestrationInternalApi")
+            .SetHandlerLifetime(TimeSpan.FromMinutes(10));
+        services.AddHttpClient("AiAssistantWebhook")
+            .SetHandlerLifetime(TimeSpan.FromMinutes(10));
+        services.AddHttpClient<IAuthentikAdminClient, AuthentikAdminClient>()
+            .SetHandlerLifetime(TimeSpan.FromMinutes(10));
+
+        services.AddScoped<IAiClient, OpenAiCompatibleClient>();
+        services.AddScoped<IAiRuntime, HelpdeskAiRuntime>();
+        services.AddScoped<IAiPromptTemplateService, StaticAiPromptTemplateService>();
+        services.AddScoped<IAiOperationAuditService, LoggerAiOperationAuditService>();
+        services.AddScoped<IAiProviderService, AiProviderService>();
+        services.AddScoped<IEmbeddingService, EmbeddingService>();
+        services.AddScoped<IKnowledgeVectorStore, PgVectorKnowledgeVectorStore>();
+        services.AddScoped<IKnowledgeRetrievalService, KnowledgeRetrievalService>();
+        services.AddScoped<IKnowledgeBuilderService, KnowledgeBuilderService>();
+        services.AddScoped<IKnowledgeSuggestionService, KnowledgeSuggestionService>();
+        services.AddScoped<ITicketUnderstandingService, TicketUnderstandingService>();
+        services.AddScoped<IRequesterReplyDraftService, RequesterReplyDraftService>();
+        services.AddScoped<IChangeReviewService, ChangeReviewService>();
+        services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
+        services.AddScoped<ITicketNotificationService, TicketNotificationService>();
+        services.AddScoped<ISupportAccessService, SupportAccessService>();
+        services.AddScoped<ISupportNotificationRecipientResolver, SupportNotificationRecipientResolver>();
+        services.AddScoped<ISupportNotificationService, SupportNotificationService>();
+        services.AddScoped<ISupportNotificationBootstrapper, SupportNotificationBootstrapper>();
+        services.AddScoped<ITicketAttachmentService, TicketAttachmentService>();
+        services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();
+        services.AddScoped<IInboundInlineImageResolver, InboundInlineImageResolver>();
+        services.AddScoped<IGraphEmailProcessor, GraphEmailProcessor>();
+        services.AddScoped<IForwardedEmailParser, ForwardedEmailParser>();
+        services.AddScoped<IInboundEmailRuleProcessor, InboundEmailRuleProcessor>();
+        services.AddScoped<IInboundEmailActionExecutor, InboundEmailActionExecutor>();
+        services.AddScoped<IEmailIngestionService, EmailIngestionService>();
+        services.AddSingleton<IImapEmailService, ImapEmailService>();
+        services.AddScoped<IEmailService, GraphEmailService>();
+        services.AddScoped<IEmailSettingsProvider, EmailSettingsProvider>();
+        services.AddScoped<IPasswordResetService, PasswordResetService>();
+        services.AddScoped<ITwoFactorService, TwoFactorService>();
+        services.AddSingleton<ICaptchaService, CaptchaService>();
+        services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddSingleton<INotificationEventBus, NotificationEventBus>();
+        services.AddScoped<IDomainEventPublisher, NotificationDomainEventPublisher>();
+        services.AddScoped<ICorrelationContext, HttpCorrelationContext>();
+        services.AddScoped<ITimelineService, TimelineService>();
+        services.AddSingleton<ITimelineEventBus, TimelineEventBus>();
+        services.AddSingleton<IAiInvestigationEventBus, AiInvestigationEventBus>();
+        services.AddScoped<IAiAssistantAiAssistantService, AiAssistantAiAssistantService>();
+        services.AddScoped<ISlaPolicyResolver, SlaPolicyResolver>();
+        services.AddScoped<ISlaPolicyValidator, SlaPolicyValidator>();
+        services.AddScoped<IWorkingCalendarResolver, WorkingCalendarResolver>();
+        services.AddScoped<IBusinessTimeCalculator, BusinessTimeCalculator>();
+        services.AddScoped<IRecipientResolver, RecipientResolver>();
+        services.AddScoped<ITicketSlaInitializer, TicketSlaInitializer>();
+        services.AddScoped<ISlaBreachEvaluator, SlaBreachEvaluator>();
+        services.AddScoped<ISlaClockService, SlaClockService>();
+        services.AddScoped<ITicketSlaService, TicketSlaService>();
+        services.AddScoped<ISlaEscalationEvaluator, SlaEscalationEvaluator>();
+        services.AddScoped<ISlaEvaluationJob, SlaEvaluationJob>();
+        services.AddScoped<ITicketSlaCompletionService, TicketSlaCompletionService>();
+        services.AddScoped<IRequestFormSchemaParser, RequestFormSchemaParser>();
+        services.AddScoped<IRequestTaskDependencyGraphValidator, RequestTaskDependencyGraphValidator>();
+        services.AddScoped<IRequestTaskGenerationService, RequestTaskGenerationService>();
+        services.AddScoped<IRequestTaskLifecycleService, RequestTaskLifecycleService>();
+        services.AddScoped<IRequestTaskApprovalService, RequestTaskApprovalService>();
+        services.AddScoped<IRequestTaskApprovalTimeoutProcessor, RequestTaskApprovalTimeoutProcessor>();
+        services.AddScoped<ITaskEscalationProcessor, TaskEscalationProcessor>();
+        services.AddScoped<IRequestTaskRetryProcessor, RequestTaskRetryProcessor>();
+        services.AddScoped<IRequestTaskStateService, RequestTaskStateService>();
+        services.AddScoped<IWorkflowDependencyEvaluator, WorkflowDependencyEvaluator>();
+        services.AddScoped<IWorkflowConditionEvaluator, WorkflowConditionEvaluator>();
+        services.AddScoped<IFailurePolicyEngine, FailurePolicyEngine>();
+        services.AddScoped<IWorkflowEngine, WorkflowEngine>();
+        services.AddScoped<IOrchestrationConnectivityService, OrchestrationConnectivityService>();
+        services.AddScoped<IAutomationBindingService, AutomationBindingService>();
+        services.AddScoped<IAutomationBindingPayloadContractService, AutomationBindingPayloadContractService>();
+        services.AddScoped<IAutomationBindingSchemaSyncService, AutomationBindingSchemaSyncService>();
+        services.AddScoped<IAutomationBindingDriftService, AutomationBindingDriftService>();
+        services.AddScoped<IAutomationBindingImportService, AutomationBindingImportService>();
+        services.AddSingleton<IOrchestrationTokenService, OrchestrationTokenService>();
+        services.AddScoped<IOrchestrationInternalClient, OrchestrationInternalClient>();
+        services.AddScoped<IOrchestrationCatalogService, OrchestrationCatalogService>();
+        services.AddScoped<IRequestTaskPayloadBuilder, RequestTaskPayloadBuilder>();
+        services.AddScoped<IDataManagementService, DataManagementService>();
+        services.AddScoped<IRequestFormDatasetBindingValidator, RequestFormDatasetBindingValidator>();
+        services.AddScoped<ISelfServiceDatasetBindingResolver, SelfServiceDatasetBindingResolver>();
+        services.AddScoped<ISlaReportingQueryService, SlaReportingQueryService>();
+        services.AddScoped<ISlaReportGenerator, SlaReportGenerator>();
+        services.AddScoped<ISlaReportDispatcher, SlaReportDispatcher>();
+        services.AddScoped<ISlaEmailTemplate, SlaEmailTemplate>();
+        services.AddScoped<IEmailSender, SlaEmailSender>();
+        services.AddScoped<ITemplateEngine, TemplateEngine>();
+        services.AddScoped<IEmailTemplateRenderer, EmailTemplateRenderer>();
+        services.AddScoped<IEmailLayoutResolver, EmailLayoutResolver>();
+        services.AddScoped<ITenantBrandingResolver, TenantBrandingResolver>();
+        services.AddScoped<IHtmlSanitizerService, HtmlSanitizerService>();
+        services.AddSingleton<IImageLinkSigner, ImageLinkSigner>();
+        services.AddSingleton<IPublicTicketLinkSigner, PublicTicketLinkSigner>();
+        services.AddScoped<IInlineImageStorageService, InlineImageStorageService>();
+        services.AddScoped<IEmailTemplateImageStorageService, EmailTemplateImageStorageService>();
+        services.AddScoped<ITenantBrandAssetStorageService, TenantBrandAssetStorageService>();
+        services.AddScoped<IWorklogImageStorageService, WorklogImageStorageService>();
+        services.AddScoped<IHtmlToPlainTextConverter, HtmlToPlainTextConverter>();
+        services.AddScoped<ICustomerInvitationService, CustomerInvitationService>();
+        services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
+        services.AddScoped<IAuthorizationScopeService, AuthorizationScopeService>();
+
+        services.AddMemoryCache();
+        services.Configure<ExchangeEmailOptions>(
+            configuration.GetSection("ExchangeEmail"));
+        services.AddOptions<ExchangeEmailOptions>()
+            .Bind(configuration.GetSection("ExchangeEmail"))
+            .Validate(
+                options =>
+                    !options.Enabled ||
+                    (!string.IsNullOrWhiteSpace(options.TenantId) &&
+                     !string.IsNullOrWhiteSpace(options.ClientId) &&
+                     !string.IsNullOrWhiteSpace(options.ClientSecret) &&
+                     !string.IsNullOrWhiteSpace(options.MailboxAddress)),
+                "Enabled ExchangeEmail configuration requires tenant, client, secret, and mailbox values.")
+            .ValidateOnStart();
+        return services;
+    }
+
+    private static void AddRepositoryRegistrations(IServiceCollection services)
+    {
+        services.AddScoped<IRepository<Incident>, EfRepository<Incident>>();
+        services.AddScoped<IRepository<Request>, EfRepository<Request>>();
+        services.AddScoped<IRepository<RequestTask>, EfRepository<RequestTask>>();
+        services.AddScoped<IRepository<Change>, EfRepository<Change>>();
+        services.AddScoped<IRepository<WorkLog>, EfRepository<WorkLog>>();
+        services.AddScoped<IRepository<TicketTimelineEvent>, EfRepository<TicketTimelineEvent>>();
+        services.AddScoped<IRepository<Ticket>, EfRepository<Ticket>>();
+        services.AddScoped<IRepository<TicketEvent>, EfRepository<TicketEvent>>();
+        services.AddScoped<IRepository<Role>, EfRepository<Role>>();
+        services.AddScoped<IRepository<User>, EfRepository<User>>();
+        services.AddScoped<IRepository<Organization>, EfRepository<Organization>>();
+        services.AddScoped<IRepository<Customer>, EfRepository<Customer>>();
+        services.AddScoped<IRepository<CustomerAuthLink>, EfRepository<CustomerAuthLink>>();
+        services.AddScoped<IRepository<KnowledgeBaseCategory>, EfRepository<KnowledgeBaseCategory>>();
+        services.AddScoped<IRepository<KnowledgeBaseArticle>, EfRepository<KnowledgeBaseArticle>>();
+        services.AddScoped<IRepository<Asset>, EfRepository<Asset>>();
+        services.AddScoped<IRepository<SlaPolicy>, SlaPolicyRepository>();
+        services.AddScoped<IRepository<WorkingCalendar>, EfRepository<WorkingCalendar>>();
+        services.AddScoped<IRepository<TenantSlaSettings>, EfRepository<TenantSlaSettings>>();
+        services.AddScoped<IRepository<SlaReportSubscription>, EfRepository<SlaReportSubscription>>();
+        services.AddScoped<IRepository<SlaReportSendEvent>, EfRepository<SlaReportSendEvent>>();
+        services.AddScoped<ISlaPolicyRepository, SlaPolicyRepository>();
+        services.AddScoped<IWorkingCalendarRepository, WorkingCalendarRepository>();
+        services.AddScoped<ITenantSlaSettingsRepository, TenantSlaSettingsRepository>();
+        services.AddScoped<ISlaReportSendEventRepository, SlaReportSendEventRepository>();
+        services.AddScoped<ITicketSlaRepository, TicketSlaRepository>();
+        services.AddScoped<ITicketSlaQueryRepository, TicketSlaQueryRepository>();
+        services.AddScoped<ITicketSlaEscalationEventRepository, TicketSlaEscalationEventRepository>();
+        services.AddScoped<IRepository<AutomationRule>, EfRepository<AutomationRule>>();
+        services.AddScoped<IRepository<ActivityLog>, EfRepository<ActivityLog>>();
+        services.AddScoped<IRepository<BlockedEntity>, EfRepository<BlockedEntity>>();
+        services.AddScoped<IRepository<EmailTemplate>, EfRepository<EmailTemplate>>();
+        services.AddScoped<IRepository<EmailLayout>, EfRepository<EmailLayout>>();
+        services.AddScoped<IRepository<TenantBranding>, EfRepository<TenantBranding>>();
+        services.AddScoped<IRepository<Service>, EfRepository<Service>>();
+        services.AddScoped<IRepository<RequestForm>, EfRepository<RequestForm>>();
+        services.AddScoped<IRepository<AutomationBinding>, EfRepository<AutomationBinding>>();
+        services.AddScoped<IRepository<DatasetDefinition>, EfRepository<DatasetDefinition>>();
+        services.AddScoped<IRepository<DatasetColumn>, EfRepository<DatasetColumn>>();
+        services.AddScoped<IRepository<DatasetRow>, EfRepository<DatasetRow>>();
+        services.AddScoped<IRepository<DatasetIngestCredential>, EfRepository<DatasetIngestCredential>>();
+        services.AddScoped<IRepository<TenantGraphDatasetSettings>, EfRepository<TenantGraphDatasetSettings>>();
+        services.AddScoped<IRepository<PasswordResetToken>, EfRepository<PasswordResetToken>>();
+        services.AddScoped<IRepository<TwoFactorCode>, EfRepository<TwoFactorCode>>();
+        services.AddScoped<IRepository<OrganizationAiKbSettings>, EfRepository<OrganizationAiKbSettings>>();
+        services.AddScoped<IRepository<TicketKnowledgeSuggestion>, EfRepository<TicketKnowledgeSuggestion>>();
+        services.AddScoped<IRepository<AiProvider>, EfRepository<AiProvider>>();
+        services.AddScoped<IRepository<AiModel>, EfRepository<AiModel>>();
+        services.AddScoped<IRepository<KnowledgeEmbedding>, EfRepository<KnowledgeEmbedding>>();
+        services.AddScoped<IRepository<SupportGroup>, EfRepository<SupportGroup>>();
+        services.AddScoped<IRepository<SupportGroupMember>, EfRepository<SupportGroupMember>>();
+        services.AddScoped<IRepository<OrganizationSupportCoverage>, EfRepository<OrganizationSupportCoverage>>();
+        services.AddScoped<IRepository<SupportNotificationSubscription>, EfRepository<SupportNotificationSubscription>>();
+        services.AddScoped<IRepository<UserSupportNotificationPreference>, EfRepository<UserSupportNotificationPreference>>();
+        services.AddScoped<IRepository<SupportNotificationDelivery>, EfRepository<SupportNotificationDelivery>>();
+        services.AddScoped<IRepository<InboundEmailRule>, EfRepository<InboundEmailRule>>();
+        services.AddScoped<IRepository<InboundEmailProcessingLog>, EfRepository<InboundEmailProcessingLog>>();
+    }
+}

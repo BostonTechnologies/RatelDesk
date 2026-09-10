@@ -1,0 +1,69 @@
+.helpdesk-timeline
+{
+    max-width: 1100px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.timeline-event-card
+{
+    padding: 14px;
+    width: 100%;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.timeline-message
+{
+    text-align: left;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+}
+
+.timeline-header
+{
+    font-weight: 500;
+    margin-bottom: 6px;
+}
+
+.timeline-customer
+{
+    border-left: 4px solid var(--mud-palette-success);
+}
+
+.timeline-technician
+{
+    border-left: 4px solid var(--mud-palette-info);
+}
+
+.timeline-system
+{
+    border-left: 4px solid var(--mud-palette-action-default);
+    opacity: 0.85;
+}
+
+.timeline-worklog
+{
+    border-left: 4px solid var(--mud-palette-warning);
+}
+
+.timeline-human-message {
+    max-height: 160px;
+    overflow: hidden;
+}
+
+    .timeline-human-message img {
+        max-width: 100%;
+        height: auto;
+    }
+
+.timeline-human-card {
+    max-width: 900px;
+    overflow: hidden;
+}
+
+.timeline-human-card img {
+    max-width: 100%;
+    height: auto;
+}

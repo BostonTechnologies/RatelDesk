@@ -1,0 +1,41 @@
+@using System.Text.Json
+@using FormCraft
+@using FormCraft.ForMudBlazor
+
+<MudPaper Class="pa-4 mt-4">
+    <MudTextField @bind-Value="formTitle" Label="Form Title" Required="true" />
+    <FormCraftComponent TModel="SimpleFormModel"
+                        Model="model"
+                        Configuration="config"
+                        ShowSubmitButton="false" />
+    <MudButton Variant="Variant.Filled"
+               Color="Color.Primary"
+               OnClick="GenerateSchema"
+               Class="mt-4">
+        Save Form
+    </MudButton>
+</MudPaper>
+
+@code {
+    [Parameter] public EventCallback<(string title, string json)> OnSchemaGenerated { get; set; }
+
+    private string formTitle = string.Empty;
+    private SimpleFormModel model = new();
+
+    // NOTE: Use the interface type here
+    private IFormConfiguration<SimpleFormModel> config = FormBuilder<SimpleFormModel>
+        .Create()
+        .AddRequiredTextField(x => x.FieldOne, "Sample Field")
+        .Build();
+
+    private async Task GenerateSchema()
+    {
+        var json = JsonSerializer.Serialize(config);
+        await OnSchemaGenerated.InvokeAsync((formTitle, json));
+    }
+
+    private class SimpleFormModel
+    {
+        public string FieldOne { get; set; } = string.Empty;
+    }
+}

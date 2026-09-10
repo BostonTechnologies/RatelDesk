@@ -1,0 +1,214 @@
+@page "/admin/categories"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+
+@using HelpDesk.NewWeb.Components.Pages.Admin.KnowledgeBase
+@using Helpdesk.Shared.DTOs.Category
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Enums
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Ticket Categories</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4">
+        <MudText Typo="Typo.h5">Ticket Categories</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="StartCreateAsync">
+            New Category
+        </MudButton>
+    </MudStack>
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudSelect T="TicketCategoryType" Label="Filter by type" Value="@selectedType" ValueChanged="OnTypeChanged" Dense="true">
+            @foreach (TicketCategoryType type in Enum.GetValues(typeof(TicketCategoryType)))
+            {
+                <MudSelectItem T="TicketCategoryType" Value="@type">@type</MudSelectItem>
+            }
+        </MudSelect>
+    </MudStack>
+
+    @if (loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else
+    {
+        <MudTable Items="@categories" Hover="true" Dense="true" T="TicketCategoryDto">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Description</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>Sort</MudTh>
+                <MudTh>Scope</MudTh>
+                <MudTh>Active</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">@context.Name</MudTd>
+                <MudTd DataLabel="Description">@context.Description</MudTd>
+                <MudTd DataLabel="Type">@context.Type</MudTd>
+                <MudTd DataLabel="Sort">@context.SortOrder</MudTd>
+                <MudTd DataLabel="Scope">@ResolveScope(context)</MudTd>
+                <MudTd DataLabel="Active">@(context.IsActive ? "Yes" : "No")</MudTd>
+                <MudTd>
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                   Color="Color.Primary"
+                                   Disabled="@context.IsSystem"
+                                   OnClick="@(() => StartEditAsync(context))" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Color="Color.Error"
+                                   Disabled="@context.IsSystem"
+                                   OnClick="@(() => DeleteAsync(context))" />
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudPaper>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private List<TicketCategoryDto> categories = new();
+    private Dictionary<Guid, string> tenantLookup = new();
+    private TicketCategoryType selectedType = TicketCategoryType.Request;
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTenantLookupAsync();
+        await LoadCategoriesAsync();
+    }
+
+    private async Task LoadTenantLookupAsync()
+    {
+        try
+        {
+            var tenants = await HelpdeskApi.GetFromJsonAsync<List<TenantLookupDto>>("api/v1/admin/tenants/lookup") ?? new();
+            tenantLookup = tenants
+                .Select(x => new { Tenant = x, Parsed = Guid.TryParse(x.Id, out var id) ? id : Guid.Empty })
+                .Where(x => x.Parsed != Guid.Empty)
+                .ToDictionary(x => x.Parsed, x => x.Tenant.Name);
+        }
+        catch
+        {
+            tenantLookup = new Dictionary<Guid, string>();
+        }
+    }
+
+    private async Task OnTypeChanged(TicketCategoryType type)
+    {
+        selectedType = type;
+        await LoadCategoriesAsync();
+    }
+
+    private async Task LoadCategoriesAsync()
+    {
+        loading = true;
+        try
+        {
+            categories = await HelpdeskApi.GetFromJsonAsync<List<TicketCategoryDto>>(
+                $"api/v1/categories?type={(int)selectedType}") ?? new();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load categories: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task StartCreateAsync()
+    {
+        var parameters = new DialogParameters
+        {
+            [nameof(EditCategoryDialog2.DefaultType)] = selectedType
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<EditCategoryDialog>("Create Category", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            if (result.Data is EditCategoryDialog2.DialogError err)
+            {
+                Snackbar.Add($"Save failed: {err.Message}", Severity.Error);
+            }
+            else
+            {
+                Snackbar.Add("Category saved.", Severity.Success);
+                await LoadTenantLookupAsync();
+                await LoadCategoriesAsync();
+            }
+        }
+    }
+
+    private async Task StartEditAsync(TicketCategoryDto category)
+    {
+        var parameters = new DialogParameters
+        {
+            [nameof(EditCategoryDialog.Category)] = category
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<EditCategoryDialog>("Edit Category", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            if (result.Data is EditCategoryDialog2.DialogError err)
+            {
+                Snackbar.Add($"Save failed: {err.Message}", Severity.Error);
+            }
+            else
+            {
+                Snackbar.Add("Category saved.", Severity.Success);
+                await LoadTenantLookupAsync();
+                await LoadCategoriesAsync();
+            }
+        }
+    }
+
+    private async Task DeleteAsync(TicketCategoryDto category)
+    {
+        if (category.IsSystem)
+        {
+            Snackbar.Add("System categories are read-only.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            var response = await HelpdeskApi.DeleteAsync($"api/v1/categories/{category.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Delete failed: {error}", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Category deleted.", Severity.Success);
+            await LoadCategoriesAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private string ResolveScope(TicketCategoryDto category)
+    {
+        if (category.TenantId is null)
+        {
+            return "Global";
+        }
+
+        return tenantLookup.TryGetValue(category.TenantId.Value, out var tenantName)
+            ? tenantName
+            : category.TenantId.Value.ToString();
+    }
+}

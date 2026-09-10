@@ -1,0 +1,200 @@
+@using HelpDesk.NewWeb.Services
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.SupportNotifications
+@inject ISupportNotificationAdminClient Client
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+        <div>
+            <MudText Typo="Typo.h6">Support Coverage</MudText>
+            <MudText Typo="Typo.body2" Class="text-secondary">Routes tickets for this organization to provider-owned support groups.</MudText>
+        </div>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   Disabled="@string.IsNullOrWhiteSpace(SelectedOrganizationId)"
+                   OnClick="OpenCreateDialogAsync">
+            Add Route
+        </MudButton>
+    </MudStack>
+
+    @if (Rows.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+            No coverage routes are configured for this organization.
+        </MudAlert>
+    }
+    else
+    {
+        <MudStack Spacing="2">
+            @foreach (var row in Rows.OrderByDescending(x => x.IsEnabled).ThenBy(x => x.Role).ThenBy(x => ProviderName(x.ProviderOrganizationId)))
+            {
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudGrid Spacing="2" AlignItems="Center">
+                        <MudItem xs="12" md="2">
+                            <MudText Typo="Typo.overline">Role</MudText>
+                            <MudText Typo="Typo.subtitle2">@SupportNotificationLabels.CoverageRole(row.Role)</MudText>
+                        </MudItem>
+                        <MudItem xs="12" md="3">
+                            <MudText Typo="Typo.overline">Provider organization</MudText>
+                            <MudText Typo="Typo.body2">@ProviderName(row.ProviderOrganizationId)</MudText>
+                        </MudItem>
+                        <MudItem xs="12" md="3">
+                            <MudText Typo="Typo.overline">Support group</MudText>
+                            <MudText Typo="Typo.body2">@SupportGroupName(row.SupportGroupId)</MudText>
+                        </MudItem>
+                        <MudItem xs="12" md="1">
+                            <MudChip T="string" Color="@(row.IsEnabled ? Color.Success : Color.Default)" Variant="Variant.Outlined" Dense="true">
+                                @(row.IsEnabled ? "Enabled" : "Disabled")
+                            </MudChip>
+                        </MudItem>
+                        <MudItem xs="12" md="3" Class="d-flex justify-end gap-2">
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Edit" OnClick="() => OpenEditDialogAsync(row)">Edit</MudButton>
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Outlined"
+                                       Color="@(row.IsEnabled ? Color.Warning : Color.Success)"
+                                       OnClick="() => ToggleEnabledAsync(row)">
+                                @(row.IsEnabled ? "Disable" : "Enable")
+                            </MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="() => DeleteAsync(row)">Delete</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+        </MudStack>
+    }
+</MudPaper>
+
+@code {
+    [Parameter] public string? SelectedOrganizationId { get; set; }
+    [Parameter] public List<OrganizationSupportCoverageDto> Rows { get; set; } = new();
+    [Parameter] public List<OrganizationDto> Organizations { get; set; } = new();
+    [Parameter] public List<SupportGroupDto> SupportGroups { get; set; } = new();
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private async Task OpenCreateDialogAsync()
+    {
+        var parameters = DialogParameters(null);
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<OrganizationSupportCoverageDialog>("Add Coverage Route", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not OrganizationSupportCoverageDialog.CoverageFormModel model)
+        {
+            return;
+        }
+
+        try
+        {
+            await Client.CreateCoverageAsync(new CreateOrganizationSupportCoverageDto
+            {
+                CustomerOrganizationId = model.CustomerOrganizationId,
+                ProviderOrganizationId = model.ProviderOrganizationId,
+                SupportGroupId = model.SupportGroupId,
+                Role = model.Role,
+                IsEnabled = model.IsEnabled
+            });
+            Snackbar.Add("Coverage route created.", Severity.Success);
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task OpenEditDialogAsync(OrganizationSupportCoverageDto row)
+    {
+        var parameters = DialogParameters(row);
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<OrganizationSupportCoverageDialog>("Edit Coverage Route", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not OrganizationSupportCoverageDialog.CoverageFormModel model)
+        {
+            return;
+        }
+
+        try
+        {
+            await Client.UpdateCoverageAsync(row.Id, new UpdateOrganizationSupportCoverageDto
+            {
+                CustomerOrganizationId = model.CustomerOrganizationId,
+                ProviderOrganizationId = model.ProviderOrganizationId,
+                SupportGroupId = model.SupportGroupId,
+                Role = model.Role,
+                IsEnabled = model.IsEnabled
+            });
+            Snackbar.Add("Coverage route saved.", Severity.Success);
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task ToggleEnabledAsync(OrganizationSupportCoverageDto row)
+    {
+        try
+        {
+            await Client.UpdateCoverageAsync(row.Id, new UpdateOrganizationSupportCoverageDto
+            {
+                CustomerOrganizationId = row.CustomerOrganizationId,
+                ProviderOrganizationId = row.ProviderOrganizationId,
+                SupportGroupId = row.SupportGroupId,
+                Role = row.Role,
+                IsEnabled = !row.IsEnabled
+            });
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task DeleteAsync(OrganizationSupportCoverageDto row)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Delete Coverage Route",
+            $"Delete the route to {SupportGroupName(row.SupportGroupId)}?",
+            yesText: "Delete",
+            cancelText: "Cancel");
+        if (confirm != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await Client.DeleteCoverageAsync(row.Id);
+            Snackbar.Add("Coverage route deleted.", Severity.Success);
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private DialogParameters DialogParameters(OrganizationSupportCoverageDto? row) => new()
+    {
+        ["Coverage"] = row,
+        ["DefaultCustomerOrganizationId"] = SelectedOrganizationId,
+        ["Organizations"] = Organizations,
+        ["SupportGroups"] = SupportGroups
+    };
+
+    private string ProviderName(string? id)
+        => Organizations.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase))?.Name
+           ?? id
+           ?? "-";
+
+    private string SupportGroupName(string? id)
+        => SupportGroups.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase))?.Name
+           ?? id
+           ?? "-";
+}

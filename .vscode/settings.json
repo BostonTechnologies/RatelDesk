@@ -1,0 +1,20 @@
+{
+  "chat.agent.enabled": true,
+  "chat.agent.maxRequests": 1000,
+
+  // Global YOLO (keeps older key too)
+  "chat.tools.global.autoApprove": true,
+  "chat.tools.autoApprove": true,
+
+  // Let the agent run commands no-questions-asked
+  "chat.tools.terminal.enableAutoApprove": true,
+  "chat.tools.terminal.autoApprove": { "/.*/": true },
+
+  // ✅ The ones you’re missing (Codex often uses these for PowerShell)
+  "chat.tools.process.autoApprove": { "/.*/": true },
+  "chat.tools.shell.autoApprove":   { "/.*/": true },
+  "chat.tools.powershell.autoApprove": { "/.*/": true },
+
+  // Also allow file edits without prompts (optional)
+  "chat.tools.edits.autoApprove": { "**": true }
+}

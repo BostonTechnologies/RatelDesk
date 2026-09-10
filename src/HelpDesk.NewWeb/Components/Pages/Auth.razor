@@ -1,0 +1,120 @@
+﻿@page "/auth"
+@attribute [Authorize]
+
+@* --- FIX: Added the required 'using' directive for the TokenService --- *@
+@using HelpDesk.NewWeb.Services
+
+@* Inject the services we'll need for tokens, pop-up messages, and copying to clipboard *@
+@inject ITokenService TokenService
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+
+@using System.Security.Claims
+
+<PageTitle>Auth Debug</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Authentication Dashboard</MudText>
+<MudText Class="mb-6">This page displays details from your current authenticated session for debugging.</MudText>
+
+<AuthorizeView>
+    <Authorized>
+        <MudGrid Spacing="4">
+            
+            @* Card 1: User Profile *@
+            <MudItem xs="12" md="4">
+                <MudPaper Elevation="3" Class="pa-4" Height="100%">
+                    <MudStack AlignItems="AlignItems.Center" Spacing="2">
+                        <MudAvatar Color="Color.Primary" Size="Size.Large" Variant="Variant.Outlined">@GetInitials(context.User.Identity?.Name)</MudAvatar>
+                        <MudText Typo="Typo.h6">@context.User.Identity?.Name</MudText>
+                        <MudText Typo="Typo.body2">Authenticated via: @context.User.Identity?.AuthenticationType</MudText>
+                        <MudText Typo="Typo.caption" Class="mt-2">User ID (sub): @context.User.FindFirstValue(ClaimTypes.NameIdentifier)</MudText>
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+
+            @* Card 2: JWT Bearer Token Viewer *@
+            <MudItem xs="12" md="8">
+                <MudPaper Elevation="3" Class="pa-4" Height="100%">
+                    <MudText Typo="Typo.h6" GutterBottom="true">JWT Bearer Token</MudText>
+                    @if (tokenIsLoading)
+                    {
+                        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-4"/>
+                    }
+                    else
+                    {
+                        <MudTextField T="string" @bind-Value="bearerToken"
+                                      Variant="Variant.Outlined"
+                                      Lines="5"
+                                      ReadOnly="true"
+                                      Label="Your Access Token" />
+                        <MudButton Variant="Variant.Filled" 
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.ContentCopy"
+                                   OnClick="CopyToClipboard"
+                                   FullWidth="true"
+                                   Class="mt-2">
+                            Copy Token to Clipboard
+                        </MudButton>
+                    }
+                </MudPaper>
+            </MudItem>
+            
+            @* Card 3: Claims Table *@
+            <MudItem xs="12">
+                <MudPaper Elevation="3" Class="pa-4">
+                    <MudTable Items="@context.User.Claims" Hover="true" Dense="true" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>Claim Type</MudTh>
+                            <MudTh>Claim Value</MudTh>
+                        </HeaderContent>
+                        @* --- FIX: Renamed the RowTemplate's context to "claim" to resolve the conflict --- *@
+                        <RowTemplate Context="claim">
+                            <MudTd DataLabel="Claim Type"><MudText Typo="Typo.body2">@claim.Type</MudText></MudTd>
+                            <MudTd DataLabel="Claim Value"><MudText Typo="Typo.body2" Style="word-break: break-all;">@claim.Value</MudText></MudTd>
+                        </RowTemplate>
+                        <PagerContent>
+                             <MudTablePager />
+                        </PagerContent>
+                    </MudTable>
+                </MudPaper>
+            </MudItem>
+
+        </MudGrid>
+    </Authorized>
+    <NotAuthorized>
+       <MudAlert Severity="Severity.Warning">You are not authorized. This should not happen on a page with.</MudAlert>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private bool tokenIsLoading = true;
+    private string? bearerToken;
+
+    protected override async Task OnInitializedAsync()
+    {
+        bearerToken = await TokenService.GetValidAccessTokenAsync();
+        tokenIsLoading = false;
+    }
+
+    private async Task CopyToClipboard()
+    {
+        if (!string.IsNullOrEmpty(bearerToken))
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", bearerToken);
+            Snackbar.Add("Token copied to clipboard!", Severity.Success);
+        }
+    }
+
+    private string GetInitials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "?";
+
+        var parts = name.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > 1)
+        {
+            return $"{parts[0][0]}{parts[^1][0]}".ToUpper();
+        }
+        return name.Length > 1 ? name.Substring(0, 2).ToUpper() : name.ToUpper();
+    }
+}

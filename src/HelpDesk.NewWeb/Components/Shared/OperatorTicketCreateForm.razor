@@ -1,0 +1,272 @@
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.User
+@using Helpdesk.Shared.DTOs.Auth
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.AddCircle" Class="mr-2 mb-n1" />
+            @Title
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm Model="model" @ref="form" Class="mt-4">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="model.Title"
+                                  Label="Title"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Required="true"
+                                  Immediate="true" />
+                </MudItem>
+
+                <MudItem xs="12">
+                    <div style="min-height: 300px;">
+                        <MudTextField T="string"
+                                      @bind-Value="model.Description"
+                                      Lines="12"
+                                      Variant="Variant.Outlined"
+                                      Placeholder="Enter the ticket description..." />
+                    </div>
+                </MudItem>
+
+                <MudItem xs="12">
+                    <MudPaper Outlined="true" Class="pa-3">
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="6">
+                                <MudStack Spacing="2">
+                                    <MudSelect T="string"
+                                               Label="Organization"
+                                               Variant="Variant.Outlined"
+                                               Dense="true"
+                                               Margin="Margin.Dense"
+                                               Value="@model.OrganizationId"
+                                               ValueChanged="OnOrganizationChanged"
+                                               Disabled="@(organizations.Count <= 1)"
+                                               Required="true">
+                                        @foreach (var organization in organizations)
+                                        {
+                                            <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                                        }
+                                    </MudSelect>
+
+                                    <CustomerRequesterPicker OrganizationId="@model.OrganizationId"
+                                                             CustomerId="@model.CustomerId"
+                                                             CustomerIdChanged="OnCustomerChanged"
+                                                             Organizations="organizations"
+                                                             AllowCreate="@canCreateCustomers"
+                                                             LockWhenSingleCustomer="true"
+                                                             Dense="true"
+                                                             Margin="Margin.Dense" />
+                                </MudStack>
+                            </MudItem>
+
+                            <MudItem xs="12" md="6">
+                                <MudStack Spacing="2">
+                                    <MudSelect T="TicketPriority" @bind-Value="model.Priority"
+                                               Label="Priority"
+                                               Variant="Variant.Outlined"
+                                               Dense="true"
+                                               Margin="Margin.Dense"
+                                               Required="true">
+                                        @foreach (TicketPriority priority in Enum.GetValues(typeof(TicketPriority)))
+                                        {
+                                            <MudSelectItem Value="priority">@priority.ToString()</MudSelectItem>
+                                        }
+                                    </MudSelect>
+
+                                    <MudSelect T="string"
+                                               Label="Technician assignment (optional)"
+                                               Variant="Variant.Outlined"
+                                               Dense="true"
+                                               Margin="Margin.Dense"
+                                               Value="@AssigneeSelectValue"
+                                               ValueChanged="OnAssigneeChanged"
+                                               Disabled="@(!canAssign || string.IsNullOrWhiteSpace(model.OrganizationId))">
+                                        <MudSelectItem T="string" Value="@UnassignedValue">Unassigned</MudSelectItem>
+                                        @foreach (var user in FilteredUsers)
+                                        {
+                                            <MudSelectItem T="string" Value="@user.Id">@user.Name (@user.Email)</MudSelectItem>
+                                        }
+                                    </MudSelect>
+                                </MudStack>
+                            </MudItem>
+                        </MudGrid>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Class="px-4">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="Submit"
+                   Disabled="@isSubmitting"
+                   Class="px-8">Create</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const string UnassignedValue = "__unassigned";
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [CascadingParameter]
+    private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter]
+    public string Title { get; set; } = "Create Ticket";
+
+    [Parameter]
+    public Func<OperatorTicketCreateFormModel, Task<HttpResponseMessage>> CreateAsync { get; set; } = default!;
+
+    private MudForm form = default!;
+    private OperatorTicketCreateFormModel model = new();
+    private List<OrganizationDto> organizations = new();
+    private List<UserDto> users = new();
+    private CurrentUserAccessDto? access;
+    private bool isSubmitting;
+    private bool canAssign;
+    private bool canCreateCustomers;
+
+    private IEnumerable<UserDto> FilteredUsers => string.IsNullOrWhiteSpace(model.OrganizationId)
+        ? Enumerable.Empty<UserDto>()
+        : users
+            .Where(x => string.Equals(x.OrganizationId, model.OrganizationId, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+    private string AssigneeSelectValue => string.IsNullOrWhiteSpace(model.AssignedToId)
+        ? UnassignedValue
+        : model.AssignedToId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var accessTask = HelpdeskApi.GetFromJsonAsync<CurrentUserAccessDto>("api/v1/auth/me");
+            var organizationsTask = HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/ticketing/organizations");
+
+            access = await accessTask;
+            organizations = (await organizationsTask ?? new())
+                .Where(x => x.IsEnabled)
+                .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            canAssign = access?.IsHelpdeskAdmin == true ||
+                access?.Permissions.Any(permission =>
+                    string.Equals(permission, "Incident.Manager", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(permission, "Request.Manager", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(permission, "Change.Manager", StringComparison.OrdinalIgnoreCase)) == true;
+            canCreateCustomers = access?.IsHelpdeskAdmin == true || canAssign;
+
+            if (organizations.Count == 1)
+            {
+                await OnOrganizationChanged(organizations[0].Id);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Unable to load organizations or users right now.", Severity.Warning);
+        }
+    }
+
+    private async Task OnOrganizationChanged(string? value)
+    {
+        model.OrganizationId = string.IsNullOrWhiteSpace(value) ? null : value;
+        if (!FilteredUsers.Any(x => x.Id == model.AssignedToId))
+        {
+            model.AssignedToId = null;
+        }
+        model.CustomerId = null;
+        users.Clear();
+        if (canAssign && !string.IsNullOrWhiteSpace(model.OrganizationId))
+        {
+            await LoadAssigneesAsync(model.OrganizationId);
+        }
+
+    }
+
+    private async Task LoadAssigneesAsync(string organizationId)
+    {
+        try
+        {
+            users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>($"api/v1/ticketing/assignees?organizationId={Uri.EscapeDataString(organizationId)}") ?? new();
+        }
+        catch
+        {
+            users.Clear();
+            Snackbar.Add("Unable to load assignees right now.", Severity.Warning);
+        }
+    }
+
+    private Task OnCustomerChanged(string? value)
+    {
+        model.CustomerId = string.IsNullOrWhiteSpace(value) ? null : value;
+        return Task.CompletedTask;
+    }
+
+    private Task OnAssigneeChanged(string? value)
+    {
+        model.AssignedToId = string.IsNullOrWhiteSpace(value) || value == UnassignedValue
+            ? null
+            : value;
+        return Task.CompletedTask;
+    }
+
+    private async Task Submit()
+    {
+        if (CreateAsync is null)
+        {
+            Snackbar.Add("Ticket creation is not configured.", Severity.Error);
+            return;
+        }
+
+        await form.Validate();
+        if (!form.IsValid)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(model.OrganizationId))
+        {
+            Snackbar.Add("Organization is required.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(model.CustomerId))
+        {
+            Snackbar.Add("Select the user the ticket is for.", Severity.Warning);
+            return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            var response = await CreateAsync(model);
+            if (response.IsSuccessStatusCode)
+            {
+                Dialog.Close(DialogResult.Ok(true));
+                Snackbar.Add("Create Success.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"Create Failed: {response.StatusCode}", Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Create Failed.", Severity.Error);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

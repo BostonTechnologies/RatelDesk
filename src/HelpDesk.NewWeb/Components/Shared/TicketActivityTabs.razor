@@ -1,0 +1,255 @@
+@using Helpdesk.Shared.DTOs.Article
+@using Helpdesk.Shared.DTOs.Attachment
+@using Helpdesk.Shared.DTOs.Worklog
+@using Helpdesk.Shared.Enums
+
+@inject IJSRuntime JS
+@inject IHttpClientFactory HttpClientFactory
+
+<MudTabs Elevation="0"
+         Rounded="false"
+         Border="true"
+         Class="@($"w-100 ticket-activity-tabs {Class}")"
+         TabPanelClass="pa-4"
+         Color="Color.Default"
+         ActivePanelIndex="@activePanelIndex"
+         ActivePanelIndexChanged="OnPanelChanged"
+         ApplyEffectsToContainer="false">
+
+    <MudTabPanel Text="@MessagesTabText"
+                 Icon="@Icons.Material.Filled.Email"
+                 BadgeDot="true"
+                 BadgeColor="Color.Primary">
+        @if (IsPanelActive(0) && MessagesContent is not null)
+        {
+            @MessagesContent
+        }
+        else if (IsPanelActive(0))
+        {
+            <TicketMessages TicketId="@TicketId" />
+        }
+    </MudTabPanel>
+
+    <MudTabPanel Text="Timeline"
+                 Icon="@Icons.Material.Filled.AccessTime"
+                 BadgeData="@TimelineBadge"
+                 BadgeColor="Color.Primary">
+        @if (IsPanelActive(1))
+        {
+            <TicketTimeline TicketId="@TicketId"
+                            TicketType="@TicketType"
+                            PublicMode="@PublicMode"
+                            OnWorklogAdded="OnWorklogAdded"
+                            OnTimelineLoaded="OnTimelineLoaded" />
+        }
+    </MudTabPanel>
+
+    <MudTabPanel Text="Attachments"
+                 Icon="@Icons.Material.Filled.AttachFile"
+                 BadgeData="@AttachmentBadge"
+                 BadgeColor="Color.Info">
+        @if (IsPanelActive(2))
+        {
+            <TicketAttachments TicketId="@TicketId"
+                               OnAttachmentsLoaded="OnAttachmentsLoaded" />
+        }
+    </MudTabPanel>
+
+    <MudTabPanel Text="Listeners"
+                 Icon="@Icons.Material.Filled.People"
+                 BadgeData="@ListenersBadge"
+                 BadgeColor="Color.Secondary">
+        @if (IsPanelActive(3))
+        {
+            <TicketListeners TicketId="@TicketId"
+                             TicketType="@TicketType"
+                             OnListenersLoaded="OnListenersLoaded" />
+        }
+    </MudTabPanel>
+
+    <MudTabPanel Text="AI Assistant"
+                 Icon="@Icons.Material.Filled.AutoAwesome"
+                 BadgeData="@AiBadge"
+                 BadgeColor="Color.Secondary">
+        @if (IsPanelActive(4))
+        {
+            <AiAssistantChat @key="TicketId" TicketId="@TicketId" TicketType="@TicketType" />
+        }
+    </MudTabPanel>
+
+    @if (IsIncidentType)
+    {
+        <MudTabPanel Text="Relations"
+                     Icon="@Icons.Material.Filled.AccountTree"
+                     BadgeData="@RelationsBadge"
+                     BadgeColor="Color.Primary">
+            @if (IsPanelActive(5))
+            {
+                <TicketRelations TicketId="@TicketId"
+                                 TicketType="@TicketType"
+                                 OnRelationsLoaded="OnRelationsLoaded" />
+            }
+        </MudTabPanel>
+    }
+
+</MudTabs>
+
+@code {
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+    [Parameter] public string TicketType { get; set; } = "incidents";
+    [Parameter] public string? OrganizationId { get; set; }
+    [Parameter] public bool PublicMode { get; set; }
+    [Parameter] public EventCallback OnWorklogAdded { get; set; }
+    [Parameter] public string Class { get; set; } = string.Empty;
+    [Parameter] public bool ShowAiStatusSummary { get; set; } = true;
+    [Parameter] public string MessagesTabText { get; set; } = "Messages";
+    [Parameter] public RenderFragment? MessagesContent { get; set; }
+    [Parameter] public int InitialAiCount { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private int TimelineCount;
+    private int AttachmentCount;
+    private int AiCount;
+    private int ListenersCount;
+    private int RelationsCount;
+    private int activePanelIndex;
+
+    private string TimelineBadge => TimelineCount.ToString();
+    private string AttachmentBadge => AttachmentCount.ToString();
+    private string AiBadge => AiCount.ToString();
+    private string ListenersBadge => ListenersCount.ToString();
+    private string RelationsBadge => RelationsCount.ToString();
+    private bool IsIncidentType => string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase);
+
+    protected override void OnParametersSet()
+    {
+        if (AiCount == 0 && InitialAiCount > 0)
+        {
+            AiCount = InitialAiCount;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await PreloadBadgeCountsAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorage.getItem", GetStorageKey());
+            if (int.TryParse(stored, out var storedIndex) && storedIndex >= 0)
+            {
+                activePanelIndex = storedIndex;
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // Ignore storage failures and keep default tab.
+        }
+    }
+
+    private async Task OnPanelChanged(int index)
+    {
+        activePanelIndex = index;
+
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", GetStorageKey(), index.ToString());
+        }
+        catch
+        {
+            // Ignore storage failures.
+        }
+    }
+
+    private string GetStorageKey() => $"ticket-tabs-index:{TicketType}:{TicketId}";
+
+    private bool IsPanelActive(int index) => activePanelIndex == index;
+
+    private async Task PreloadBadgeCountsAsync()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(TicketId))
+                return;
+
+            var timelineTask =
+                HelpdeskApi.GetFromJsonAsync<int>(
+                    $"api/v1/{TicketType}/{TicketId}/timeline/count");
+
+            var attachmentTask =
+                HelpdeskApi.GetFromJsonAsync<int>(
+                    $"api/v1/{TicketType}/{TicketId}/attachments/count");
+
+            var listenersTask =
+                HelpdeskApi.GetFromJsonAsync<int>(
+                    $"api/v1/{TicketType}/{TicketId}/listeners/count");
+
+            var relationsTask = IsIncidentType
+                ? HelpdeskApi.GetFromJsonAsync<List<TicketRelationDto>>($"api/v1/incidents/{TicketId}/relations")
+                : Task.FromResult<List<TicketRelationDto>?>(new());
+
+            await Task.WhenAll(timelineTask, attachmentTask, listenersTask, relationsTask);
+
+            TimelineCount = timelineTask.Result;
+            AttachmentCount = attachmentTask.Result;
+            ListenersCount = listenersTask.Result;
+            RelationsCount = relationsTask.Result?.Count ?? 0;
+
+            StateHasChanged();
+        }
+        catch
+        {
+            // Ignore failures to avoid breaking UI
+        }
+    }
+
+    private void OnTimelineLoaded(List<TicketTimelineEventDto> events)
+    {
+        TimelineCount = string.Equals(TicketType, "changes", StringComparison.OrdinalIgnoreCase)
+            ? events.Count
+            : events.Count(x => !IsSystemEvent(x));
+        StateHasChanged();
+    }
+
+    private void OnAttachmentsLoaded(List<AttachmentDto> attachments)
+    {
+        AttachmentCount = attachments.Count;
+        StateHasChanged();
+    }
+
+    private void OnSuggestionsLoaded(List<KnowledgeSuggestion> suggestions)
+    {
+        AiCount = suggestions.Count;
+        StateHasChanged();
+    }
+
+    private void OnListenersLoaded(int count)
+    {
+        ListenersCount = count;
+        StateHasChanged();
+    }
+
+    private void OnRelationsLoaded(int count)
+    {
+        RelationsCount = count;
+        StateHasChanged();
+    }
+
+    private static bool IsSystemEvent(TicketTimelineEventDto e)
+    {
+        if (string.Equals(e.CreatedByUserId, "system", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return e.EventType is TimelineEventType.EmailDelivery
+            or TimelineEventType.StatusChange
+            or TimelineEventType.AssignmentChange
+            or TimelineEventType.SystemNotification;
+    }
+}

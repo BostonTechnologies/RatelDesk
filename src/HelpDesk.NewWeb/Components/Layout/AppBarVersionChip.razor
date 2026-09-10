@@ -1,0 +1,89 @@
+@using HelpDesk.NewWeb.Services
+@inject IAppBarVersionApiClient ApiVersionClient
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
+
+<div class="helpdesk-appbar-version-anchor">
+    <MudChip T="string"
+             Class="helpdesk-appbar-chip helpdesk-appbar-version-chip"
+             Size="Size.Small"
+             Variant="Variant.Outlined"
+             Color="Color.Default"
+             OnClick="TogglePopover">
+        @Version.DisplayVersion
+    </MudChip>
+
+    @if (_isOpen)
+    {
+        <div class="helpdesk-version-popover-overlay" @onclick="ClosePopover"></div>
+    }
+
+    <MudPopover
+        Open="@_isOpen"
+        AnchorOrigin="Origin.BottomRight"
+        TransformOrigin="Origin.TopRight"
+        Class="helpdesk-version-popover">
+        <div @onclick:stopPropagation="true">
+            <MudPaper Class="helpdesk-version-container" Elevation="8">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="px-3 pt-2 pb-1">
+                    <MudText Typo="Typo.subtitle2">Release Info</MudText>
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="ClosePopover" aria-label="Close release info" />
+                </MudStack>
+                <MudDivider />
+                <div class="helpdesk-version-content">
+                    <div class="helpdesk-version-section">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Version.ServiceName</MudText>
+                        <MudText Typo="Typo.body2">@Version.DisplayVersion</MudText>
+                        <MudText Typo="Typo.caption">@Version.FullVersion</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Version.Source · @HostEnvironment.EnvironmentName</MudText>
+                    </div>
+                    <MudDivider />
+                    <div class="helpdesk-version-section">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">API</MudText>
+                        @if (_loading)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                        }
+                        else if (_apiVersion is null)
+                        {
+                            <MudText Typo="Typo.body2">API version unavailable</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@_apiVersion.ServiceName</MudText>
+                            <MudText Typo="Typo.body2">@_apiVersion.DisplayVersion</MudText>
+                            <MudText Typo="Typo.caption">@_apiVersion.InformationalVersion</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@_apiVersion.Environment</MudText>
+                        }
+                    </div>
+                </div>
+            </MudPaper>
+        </div>
+    </MudPopover>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public AppBarVersionDetails Version { get; set; } = default!;
+
+    private bool _isOpen;
+    private bool _loading;
+    private AppBarApiVersionInfo? _apiVersion;
+
+    private async Task TogglePopover()
+    {
+        _isOpen = !_isOpen;
+
+        if (_isOpen && _apiVersion is null && !_loading)
+        {
+            _loading = true;
+            _apiVersion = await ApiVersionClient.GetApiVersionAsync();
+            _loading = false;
+        }
+    }
+
+    private Task ClosePopover()
+    {
+        _isOpen = false;
+        return Task.CompletedTask;
+    }
+}

@@ -1,0 +1,78 @@
+@page "/admin/ai-assistant-webhooks"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@using Helpdesk.Shared.DTOs
+@using Helpdesk.Shared.Models
+@using Helpdesk.Shared.DTOs.Organization
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+        <MudText Typo="Typo.h5">AiAssistant Webhooks</MudText>
+        <MudButton Color="Color.Primary" OnClick="NewConfiguration">Add webhook</MudButton>
+    </MudStack>
+    <MudSelect T="string" Label="Tenant / Organization" Value="selectedOrganizationId" ValueChanged="OnOrganizationChanged" Required="true" Class="mb-3">
+        @foreach (var tenant in tenants)
+        {
+            <MudSelectItem Value="@tenant.Id">@tenant.Name</MudSelectItem>
+        }
+    </MudSelect>
+    @if (editing)
+    {
+        <MudPaper Class="pa-3 mb-3" Outlined="true">
+            <MudTextField Label="Name" @bind-Value="form.Name" Required="true" />
+            <MudTextField Label="Webhook endpoint" @bind-Value="form.Endpoint" Required="true" Immediate="true" Validation="ValidateEndpoint" HelperText="Use HTTPS for public/DNS endpoints. HTTP is allowed only for a trusted private or loopback IP, for example http://10.99.10.129:5199/api/webhooks/helpdesk-ai-assistant." />
+            <MudTextField Label="Route name" @bind-Value="form.RouteName" />
+            <MudTextField Label="Prompt template" @bind-Value="form.PromptTemplate" Lines="3" />
+            <MudTextField Label="Webhook signing secret" @bind-Value="form.SigningSecret" InputType="InputType.Password" HelperText="Stored encrypted. Leave blank when editing to keep the existing secret." />
+            <MudSelect T="AiAssistantTicketArea" Label="Ticket areas" MultiSelection="true" SelectedValues="form.Areas" SelectedValuesChanged="OnAreasChanged">
+                @foreach (var area in Enum.GetValues<AiAssistantTicketArea>()) { <MudSelectItem Value="@area">@area</MudSelectItem> }
+            </MudSelect>
+            <MudStack Row="true" Class="mt-2"><MudButton Color="Color.Primary" OnClick="SaveAsync">Save</MudButton><MudButton OnClick="Cancel">Cancel</MudButton></MudStack>
+        </MudPaper>
+    }
+    <MudTable Items="items" Dense="true" Hover="true">
+        <HeaderContent><MudTh>Name</MudTh><MudTh>Areas</MudTh><MudTh>Endpoint</MudTh><MudTh>Status</MudTh><MudTh></MudTh></HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.Name</MudTd><MudTd>@string.Join(", ", context.TicketAreas)</MudTd><MudTd>@context.Endpoint</MudTd><MudTd>@(context.IsArchived ? "Archived" : context.IsEnabled ? "Enabled" : "Disabled")</MudTd>
+            <MudTd><MudButton Size="Size.Small" OnClick="() => Edit(context)">Edit</MudButton><MudButton Size="Size.Small" OnClick="() => SetState(context, !context.IsEnabled, context.IsArchived)">@(context.IsEnabled ? "Disable" : "Enable")</MudButton><MudButton Size="Size.Small" Color="Color.Error" OnClick="() => SetState(context, false, true)">Archive</MudButton></MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private List<AiAssistantWebhookConfigurationDto> items = new(); private List<TenantLookupDto> tenants = new(); private string? selectedOrganizationId; private bool editing; private Guid? editingId; private Form form = new();
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    protected override async Task OnInitializedAsync() { tenants = await Api.GetFromJsonAsync<List<TenantLookupDto>>("api/v1/admin/tenants/lookup") ?? new(); selectedOrganizationId = tenants.FirstOrDefault()?.Id; await Load(); }
+    private async Task OnOrganizationChanged(string value) { selectedOrganizationId = value; editing = false; await Load(); }
+    private async Task Load() => items = string.IsNullOrWhiteSpace(selectedOrganizationId) ? new() : await Api.GetFromJsonAsync<List<AiAssistantWebhookConfigurationDto>>($"api/v1/admin/ai-assistant-webhooks/?organizationId={Uri.EscapeDataString(selectedOrganizationId)}") ?? new();
+    private void NewConfiguration() { editingId = null; form = new(); editing = true; }
+    private void Edit(AiAssistantWebhookConfigurationDto item) { editingId = item.Id; form = new() { Name = item.Name, Endpoint = item.Endpoint, RouteName = item.RouteName, PromptTemplate = item.PromptTemplate, Areas = item.TicketAreas.ToList() }; editing = true; }
+    private void Cancel() => editing = false;
+    private void OnAreasChanged(IEnumerable<AiAssistantTicketArea> values) => form.Areas = values.ToList();
+    private async Task SaveAsync()
+    {
+        var endpointError = ValidateEndpoint(form.Endpoint);
+        if (endpointError is not null) { Snackbar.Add(endpointError, Severity.Error); return; }
+        if (string.IsNullOrWhiteSpace(selectedOrganizationId)) { Snackbar.Add("Select a tenant organization first.", Severity.Error); return; }
+        var dto = new UpsertAiAssistantWebhookConfigurationDto(selectedOrganizationId, form.Name, form.Areas, form.Endpoint, form.RouteName, form.PromptTemplate, null, SigningSecret: form.SigningSecret);
+        var response = editingId.HasValue ? await Api.PutAsJsonAsync($"api/v1/admin/ai-assistant-webhooks/{editingId}", dto) : await Api.PostAsJsonAsync("api/v1/admin/ai-assistant-webhooks/", dto);
+        if (response.IsSuccessStatusCode) { editing = false; await Load(); return; }
+        var detail = await response.Content.ReadAsStringAsync();
+        Snackbar.Add(string.IsNullOrWhiteSpace(detail) ? "Webhook configuration could not be saved." : detail, Severity.Error);
+    }
+    private static string? ValidateEndpoint(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var endpoint)) return "Enter an absolute webhook URL.";
+        if (endpoint.Scheme == Uri.UriSchemeHttps) return null;
+        if (endpoint.Scheme == Uri.UriSchemeHttp && System.Net.IPAddress.TryParse(endpoint.Host, out var ip) && (System.Net.IPAddress.IsLoopback(ip) || IsPrivateIpv4(ip))) return null;
+        return "Use HTTPS, or HTTP only with a trusted private or loopback IP address.";
+    }
+    private static bool IsPrivateIpv4(System.Net.IPAddress ip)
+    {
+        var bytes = ip.GetAddressBytes();
+        return bytes.Length == 4 && (bytes[0] == 10 || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) || (bytes[0] == 192 && bytes[1] == 168));
+    }
+    private async Task SetState(AiAssistantWebhookConfigurationDto item, bool enabled, bool archived) { if (string.IsNullOrWhiteSpace(selectedOrganizationId)) return; await Api.PostAsJsonAsync($"api/v1/admin/ai-assistant-webhooks/{item.Id}/state", new AiAssistantWebhookStateDto(selectedOrganizationId, enabled, archived)); await Load(); }
+    private sealed class Form { public string Name { get; set; } = string.Empty; public string Endpoint { get; set; } = string.Empty; public string? RouteName { get; set; } public string? PromptTemplate { get; set; } public string? SigningSecret { get; set; } public List<AiAssistantTicketArea> Areas { get; set; } = new(); }
+}

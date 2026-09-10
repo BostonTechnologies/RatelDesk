@@ -1,0 +1,221 @@
+@using Helpdesk.Shared.Enums
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Close / Link Incident</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudSelect T="TicketRelationType"
+                       Label="Relation type"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       Value="@RelationType"
+                       ValueChanged="OnRelationTypeChanged">
+                <MudSelectItem T="TicketRelationType" Value="TicketRelationType.DuplicateOf">Duplicate of</MudSelectItem>
+                <MudSelectItem T="TicketRelationType" Value="TicketRelationType.RelatedTo">Related to</MudSelectItem>
+            </MudSelect>
+
+            <MudStack Spacing="1">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudText Typo="Typo.subtitle2">Target incident</MudText>
+                    <MudSpacer />
+                    <MudTooltip Text="Search incidents">
+                        <MudIconButton Icon="@Icons.Material.Filled.Search"
+                                       Color="Color.Primary"
+                                       Variant="Variant.Outlined"
+                                       OnClick="OpenTargetPickerAsync"
+                                       Disabled="@(!CanPickTargets)" />
+                    </MudTooltip>
+                </MudStack>
+
+                @if (SelectedTargets.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Error">Required</MudText>
+                }
+                else
+                {
+                    <MudChipSet T="IncidentDto" Size="Size.Small">
+                        @foreach (var target in SelectedTargets)
+                        {
+                            <MudChip T="IncidentDto"
+                                     Value="@target"
+                                     Closeable="true"
+                                     OnClose="@(() => RemoveTarget(target.Id))"
+                                     Color="Color.Primary"
+                                     Variant="Variant.Outlined">
+                                @target.TrackingId
+                            </MudChip>
+                        }
+                    </MudChipSet>
+                    @foreach (var target in SelectedTargets)
+                    {
+                        <MudText Typo="Typo.caption" Class="d-block">@target.TrackingId - @target.Subject</MudText>
+                    }
+                }
+            </MudStack>
+
+            <MudSwitch T="bool"
+                       Label="Close source incident"
+                       Color="Color.Primary"
+                       Disabled="@IsDuplicate"
+                       @bind-Value="CloseSourceTicket" />
+
+            <MudTextField T="string"
+                          Label="Note"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Lines="3"
+                          MaxLength="1000"
+                          @bind-Value="Note" />
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@Submitting">Cancel</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   OnClick="SubmitAsync"
+                   Disabled="@(!CanSubmit)">
+            @if (Submitting)
+            {
+                <MudProgressCircular Class="mr-2" Size="Size.Small" Indeterminate="true" />
+            }
+            Link
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public string SourceIncidentId { get; set; } = string.Empty;
+    [Parameter] public string SourceOrganizationId { get; set; } = string.Empty;
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private TicketRelationType RelationType { get; set; } = TicketRelationType.DuplicateOf;
+    private List<IncidentDto> SelectedTargets { get; set; } = new();
+    private bool CloseSourceTicket { get; set; } = true;
+    private string? Note { get; set; }
+    private bool Submitting { get; set; }
+
+    private bool IsDuplicate => RelationType == TicketRelationType.DuplicateOf;
+    private bool CanPickTargets => !Submitting && !string.IsNullOrWhiteSpace(SourceIncidentId) && !string.IsNullOrWhiteSpace(SourceOrganizationId);
+    private bool CanSubmit => !Submitting && !string.IsNullOrWhiteSpace(SourceIncidentId) && SelectedTargets.Count > 0 && (!IsDuplicate || SelectedTargets.Count == 1);
+
+    private void OnRelationTypeChanged(TicketRelationType value)
+    {
+        RelationType = value;
+        CloseSourceTicket = value == TicketRelationType.DuplicateOf;
+        if (IsDuplicate && SelectedTargets.Count > 1)
+        {
+            SelectedTargets = SelectedTargets.Take(1).ToList();
+        }
+    }
+
+    private async Task OpenTargetPickerAsync()
+    {
+        if (!CanPickTargets)
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            ["SourceIncidentId"] = SourceIncidentId,
+            ["SourceOrganizationId"] = SourceOrganizationId,
+            ["InitialSelectedTargets"] = SelectedTargets
+        };
+        var options = new DialogOptions
+        {
+            CloseOnEscapeKey = true,
+            FullWidth = true,
+            MaxWidth = MaxWidth.Large
+        };
+
+        var dialog = await DialogService.ShowAsync<IncidentRelationTargetPickerDialog>("Select Incident", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled && result.Data is List<IncidentDto> targets)
+        {
+            SelectedTargets = IsDuplicate
+                ? targets.Take(1).ToList()
+                : targets;
+        }
+    }
+
+    private void RemoveTarget(string targetId)
+    {
+        SelectedTargets = SelectedTargets
+            .Where(x => !string.Equals(x.Id, targetId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (!CanSubmit)
+        {
+            return;
+        }
+
+        Submitting = true;
+        var successes = new List<TicketRelationCreateResultDto>();
+        var failures = new List<string>();
+        try
+        {
+            foreach (var target in SelectedTargets)
+            {
+                var dto = new CreateTicketRelationDto
+                {
+                    TargetTicketId = target.Id,
+                    RelationType = RelationType,
+                    CloseSourceTicket = IsDuplicate || CloseSourceTicket,
+                    Note = string.IsNullOrWhiteSpace(Note) ? null : Note.Trim()
+                };
+
+                var response = await HelpdeskApi.PostAsJsonAsync($"api/v1/incidents/{SourceIncidentId}/relations", dto);
+                if (response.IsSuccessStatusCode)
+                {
+                    var result = await response.Content.ReadFromJsonAsync<TicketRelationCreateResultDto>();
+                    if (result is not null)
+                    {
+                        successes.Add(result);
+                    }
+                    continue;
+                }
+
+                failures.Add($"{target.TrackingId}: {await ReadErrorAsync(response)}");
+            }
+
+            if (failures.Count > 0)
+            {
+                Snackbar.Add($"Failed to link {failures.Count} incident(s): {string.Join("; ", failures)}", Severity.Error);
+            }
+
+            if (successes.Count > 0)
+            {
+                Dialog.Close(DialogResult.Ok(successes));
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not link incident: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            Submitting = false;
+        }
+    }
+
+    private static async Task<string> ReadErrorAsync(HttpResponseMessage response)
+    {
+        var content = await response.Content.ReadAsStringAsync();
+        return string.IsNullOrWhiteSpace(content)
+            ? $"Could not link incident ({(int)response.StatusCode})."
+            : content.Trim('"');
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

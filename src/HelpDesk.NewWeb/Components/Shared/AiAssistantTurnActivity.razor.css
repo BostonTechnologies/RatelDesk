@@ -1,0 +1,7 @@
+.ai-assistant-activity { margin-inline-start: 1rem; border-inline-start: 2px solid var(--mud-palette-divider); padding: .5rem; min-width: 0; }
+.activity-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; text-align: start; width: 100%; background: transparent; color: inherit; border: 0; cursor: pointer; padding: .5rem; }
+.activity-heading:focus-visible { outline: 2px solid var(--mud-palette-primary); }
+.activity-row { display: flex; align-items: center; gap: .5rem; padding: .5rem; flex-wrap: wrap; font-size: .875rem; }
+.activity-name { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+.activity-interaction { padding: .5rem; }
+@media (max-width: 600px) { .ai-assistant-activity { margin-inline-start: .25rem; } }

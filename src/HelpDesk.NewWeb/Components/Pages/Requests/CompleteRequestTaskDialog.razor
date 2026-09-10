@@ -1,0 +1,36 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Complete Task</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            Mark <b>@TaskName</b> as completed.
+        </MudText>
+        <MudTextField T="string"
+                      Label="Completion notes (optional)"
+                      Variant="Variant.Outlined"
+                      Lines="3"
+                      @bind-Value="Notes" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Complete</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public string TaskName { get; set; } = "Task";
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private string? Notes { get; set; }
+
+    private void Submit()
+    {
+        Dialog.Close(DialogResult.Ok(Notes));
+    }
+
+    private void Cancel()
+    {
+        Dialog.Cancel();
+    }
+}

@@ -1,0 +1,236 @@
+using Helpdesk.Application.Incidents;
+using Helpdesk.Application.WorkLogs;
+using Helpdesk.Application.Services.Tickets;
+using Helpdesk.Application.Messaging;
+using Helpdesk.Application.Services.Email;
+using Helpdesk.Application.Services.Tenants;
+using Helpdesk.Infrastructure.Email;
+using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.DTOs.EmailRules;
+using Helpdesk.Shared.Enums;
+using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Services;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
+
+namespace Helpdesk.Tests.Application.Services;
+
+public class InboundEmailActionExecutorTests
+{
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_AuthorizedForward_CreatesNewUnassignedIncidentForOriginalRequester(bool withInlineImage)
+    {
+        await using var db = CreateDb();
+        db.Organizations.Add(new Organization { Id = "tenant-1", Name = "Tenant", DnsName = "example.com" });
+        db.Users.Add(new User { Id = "tech-1", Email = "tech@support.local", Name = "Tech", Role = HelpdeskRoleBundles.Technical, OrganizationId = "tenant-1" });
+        await db.SaveChangesAsync();
+
+        var sender = Substitute.For<IRequestSender>();
+        var created = new Incident { Id = "inc-1", TrackingId = "INC-1", State = TicketState.New };
+        CreateIncidentCommand? command = null;
+        sender.Send(Arg.Do<CreateIncidentCommand>(x => command = x), Arg.Any<CancellationToken>()).Returns(created);
+
+        var provisioning = Substitute.For<ITenantProvisioningService>();
+        provisioning.GetOrCreateCustomerAsync("jane@example.com", "Jane", "example.com")
+            .Returns((new Customer { Id = "customer-1", Email = "jane@example.com", Name = "Jane", OrganizationId = "tenant-1" }, false));
+
+        var incidentRepo = Substitute.For<IRepository<Incident>>();
+        incidentRepo.UpdateAsync(Arg.Any<Incident>()).Returns(call => call.Arg<Incident>());
+        var timelineRepo = Substitute.For<IRepository<TicketTimelineEvent>>();
+        timelineRepo.CreateAsync(Arg.Any<TicketTimelineEvent>()).Returns(call => call.Arg<TicketTimelineEvent>());
+
+        var storage = Substitute.For<IInlineImageStorageService>();
+        storage.SaveIncidentInlineImageAsync("inc-1", "image001.png", Arg.Any<byte[]>())
+            .Returns("/api/incidents/inc-1/images/image001-hash.png?token=test");
+        var attachmentService = Substitute.For<ITicketAttachmentService>();
+        var context = Context() with
+        {
+            HtmlBody = "<p>Forwarder wrapper</p><img src='cid:wrapper'>",
+            Attachments = withInlineImage
+                ? [new("image001.png", "image/png", "body", [1, 2]), new("download.txt", "text/plain", "unreferenced", [3])]
+                : []
+        };
+        var forwarded = withInlineImage ? Forwarded() with { OriginalBodyHtml = "<p>Original body</p><img src='cid:body'>" } : Forwarded();
+
+        var executor = new InboundEmailActionExecutor(
+            db,
+            sender,
+            provisioning,
+            incidentRepo,
+            timelineRepo,
+            NullLogger<InboundEmailActionExecutor>.Instance,
+            new InboundInlineImageResolver(storage, NullLogger<InboundInlineImageResolver>.Instance),
+            attachmentService);
+
+        var result = await executor.ExecuteAsync(
+            Rule("tenant-1"),
+            new InboundEmailRuleActionConfig(InboundEmailRuleActionType.CreateIncidentForOriginalForwardedSender),
+            context,
+            forwarded,
+            CancellationToken.None);
+
+        if (withInlineImage)
+        {
+            Assert.Equal("<p>Original body</p><img src='/api/incidents/inc-1/images/image001-hash.png?token=test'>", created.OriginalEmailHtml);
+            Assert.Equal(created.OriginalEmailHtml, created.Description);
+            await attachmentService.Received(1).SaveAsync("inc-1",
+                Arg.Is<IEnumerable<Helpdesk.Shared.DTOs.Attachment.AttachmentUpload>>(uploads => uploads.Single().FileName == "download.txt"),
+                null, Arg.Any<CancellationToken>());
+        }
+
+        Assert.True(result.Handled);
+        Assert.True(result.StopDefaultProcessing);
+        Assert.Equal("jane@example.com", command!.RequesterEmail);
+        Assert.Equal("customer-1", command.CustomerId);
+        Assert.Equal("tenant-1", command.OrganizationId);
+        Assert.Null(command.AssignedToId);
+        await incidentRepo.Received(1).UpdateAsync(Arg.Is<Incident>(x => x.State == TicketState.New && x.AssignedToId == null && x.EmailFrom == "jane@example.com"));
+        await timelineRepo.Received(1).CreateAsync(Arg.Is<TicketTimelineEvent>(x => x.EventType == TimelineEventType.InternalNote && x.MessageText!.Contains("tech@support.local")));
+        Assert.Contains(db.InboundEmailProcessingLogs, x => x.Status == InboundEmailProcessingStatus.Succeeded && x.TicketId == "inc-1");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnauthorizedSender_DoesNotCreateIncident()
+    {
+        await using var db = CreateDb();
+        db.Users.Add(new User { Id = "user-1", Email = "tech@support.local", Name = "Not support", Role = "User", OrganizationId = "tenant-1" });
+        await db.SaveChangesAsync();
+        var sender = Substitute.For<IRequestSender>();
+        var executor = CreateExecutor(db, sender);
+
+        var result = await executor.ExecuteAsync(Rule("tenant-1"), Action(), Context(), Forwarded());
+
+        Assert.False(result.Handled);
+        await sender.DidNotReceive().Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>());
+        Assert.Contains(db.InboundEmailProcessingLogs, x => x.Status == InboundEmailProcessingStatus.UnauthorizedSender);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AmbiguousTenant_DoesNotCreateIncident()
+    {
+        await using var db = CreateDb();
+        db.Users.Add(new User { Id = "tech-1", Email = "tech@support.local", Name = "Tech", Role = HelpdeskRoleBundles.Technical, OrganizationId = "msp" });
+        db.Organizations.AddRange(
+            new Organization { Id = "tenant-1", Name = "Tenant 1", ItSupportOrganizationId = "msp" },
+            new Organization { Id = "tenant-2", Name = "Tenant 2", ItSupportOrganizationId = "msp" });
+        await db.SaveChangesAsync();
+        var sender = Substitute.For<IRequestSender>();
+        var executor = CreateExecutor(db, sender);
+
+        var result = await executor.ExecuteAsync(Rule(null), Action(), Context(), Forwarded());
+
+        Assert.True(result.Handled);
+        await sender.DidNotReceive().Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>());
+        Assert.Contains(db.InboundEmailProcessingLogs, x => x.Status == InboundEmailProcessingStatus.TenantResolutionAmbiguous);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DuplicateSucceededLog_DoesNotCreateSecondIncident()
+    {
+        await using var db = CreateDb();
+        db.Users.Add(new User { Id = "tech-1", Email = "tech@support.local", Name = "Tech", Role = HelpdeskRoleBundles.Technical, OrganizationId = "tenant-1" });
+        db.InboundEmailProcessingLogs.Add(new InboundEmailProcessingLog
+        {
+            MessageId = "message-1",
+            MailboxKey = "default",
+            RuleId = "rule-1",
+            ActionKey = InboundEmailRuleActionType.CreateIncidentForOriginalForwardedSender.ToString(),
+            Status = InboundEmailProcessingStatus.Succeeded,
+            Matched = true,
+            TicketId = "inc-1"
+        });
+        await db.SaveChangesAsync();
+        var sender = Substitute.For<IRequestSender>();
+        var executor = CreateExecutor(db, sender);
+
+        var result = await executor.ExecuteAsync(Rule("tenant-1"), Action(), Context(), Forwarded());
+
+        Assert.True(result.Handled);
+        await sender.DidNotReceive().Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ParserFailure_DoesNotCreateIncidentForForwarder()
+    {
+        await using var db = CreateDb();
+        db.Users.Add(new User { Id = "tech-1", Email = "tech@support.local", Name = "Tech", Role = HelpdeskRoleBundles.Technical, OrganizationId = "tenant-1" });
+        await db.SaveChangesAsync();
+        var sender = Substitute.For<IRequestSender>();
+        var executor = CreateExecutor(db, sender);
+        var failedParse = new ForwardedEmailParseResult(ForwardedEmailParseStatus.MissingOriginalSender, null, null, null, null, null, null, null, 0.2);
+
+        await executor.ExecuteAsync(Rule("tenant-1"), Action(), Context(), failedParse);
+
+        await sender.DidNotReceive().Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>());
+        Assert.Contains(db.InboundEmailProcessingLogs, x => x.Status == InboundEmailProcessingStatus.ParserFailed);
+    }
+
+    private static InboundEmailActionExecutor CreateExecutor(HelpdeskDbContext db, IRequestSender sender)
+    {
+        var provisioning = Substitute.For<ITenantProvisioningService>();
+        var incidentRepo = Substitute.For<IRepository<Incident>>();
+        var timelineRepo = Substitute.For<IRepository<TicketTimelineEvent>>();
+        return new InboundEmailActionExecutor(
+            db,
+            sender,
+            provisioning,
+            incidentRepo,
+            timelineRepo,
+            NullLogger<InboundEmailActionExecutor>.Instance,
+            new InboundInlineImageResolver(Substitute.For<IInlineImageStorageService>(), NullLogger<InboundInlineImageResolver>.Instance),
+            Substitute.For<ITicketAttachmentService>());
+    }
+
+    private static HelpdeskDbContext CreateDb()
+    {
+        var options = new DbContextOptionsBuilder<HelpdeskDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        return new HelpdeskDbContext(options, Substitute.For<ITenantContext>(), new HttpContextAccessor());
+    }
+
+    private static InboundEmailRule Rule(string? tenantId) => new()
+    {
+        Id = "rule-1",
+        ScopeType = tenantId is null ? InboundEmailRuleScopeType.Global : InboundEmailRuleScopeType.Tenant,
+        TenantId = tenantId,
+        StopProcessing = true,
+        Name = "Rule"
+    };
+
+    private static InboundEmailRuleActionConfig Action() =>
+        new(InboundEmailRuleActionType.CreateIncidentForOriginalForwardedSender);
+
+    private static InboundEmailContext Context() => new(
+        "message-1",
+        "graph-1",
+        null,
+        null,
+        "support@example.com",
+        "tech@support.local",
+        "Tech",
+        [],
+        [],
+        "Fwd: Printer",
+        "<p>Forwarded</p>",
+        "Forwarded",
+        DateTimeOffset.UtcNow,
+        new Dictionary<string, string>(),
+        []);
+
+    private static ForwardedEmailParseResult Forwarded() => new(
+        ForwardedEmailParseStatus.Parsed,
+        "jane@example.com",
+        "Jane",
+        "support@example.com",
+        DateTimeOffset.UtcNow,
+        "Printer down",
+        "<p>The printer is offline.</p>",
+        "The printer is offline.",
+        0.95);
+}

@@ -1,0 +1,472 @@
+﻿@page "/admin/requests/services"
+@page "/admin/requests/services/{ServiceId}"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+
+@using Helpdesk.Shared.DTOs.Service
+@using Helpdesk.Shared.DTOs.Orchestration
+@using Helpdesk.Shared.DTOs.RequestForm
+@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.Models
+@using System.Net.Http.Json
+@using HelpDesk.NewWeb.Components.Pages.Admin.Requests
+
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager NavigationManager
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>@(ParentService is not null ? $"Service: {ParentService!.Name}" : "Service Explorer")</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="helpdesk-page service-explorer-page">
+    @if (loading)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else
+    {
+        <MudBreadcrumbs Items="_breadcrumbs" Class="mb-3" />
+
+        <div class="helpdesk-page-header">
+            <div>
+                <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">@(ParentService?.Name ?? "Service Explorer")</MudText>
+                <MudText Typo="Typo.body2" Class="helpdesk-page-description">Manage service folders, request forms, access, and automation bindings.</MudText>
+            </div>
+            <MudStack Row="true" Spacing="1" Class="service-explorer-actions">
+                <MudButton Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.DomainAdd"
+                           OnClick="CreateNewService">
+                    New Service
+                </MudButton>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.NoteAdd"
+                           Disabled="@string.IsNullOrWhiteSpace(ServiceId)"
+                           OnClick="CreateNewRequestForm">
+                    New Request
+                </MudButton>
+            </MudStack>
+        </div>
+
+        @if (!serviceItems.Any())
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-3">
+                No items here yet. Use the buttons below to add a Service or a Request.
+            </MudAlert>
+        }
+
+        <MudGrid Spacing="3">
+            @foreach (var item in serviceItems)
+            {
+                <MudItem xs="12" sm="6" lg="4">
+                    <MudCard Class="svc-card">
+                        <MudCardHeader Class="pb-0">
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6" Class="text-truncate" Title="@item.Name">@item.Name</MudText>
+                            </CardHeaderContent>
+                            <CardHeaderActions>
+                                @if (item.ItemType == ServiceItemType.Service)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">Service</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Request</MudChip>
+                                    <MudChip T="string"
+                                             Size="Size.Small"
+                                             Color="@(item.ReleaseStatus == RequestFormReleaseStatus.Production ? Color.Success : Color.Warning)"
+                                             Variant="Variant.Outlined">
+                                        @(item.ReleaseStatus == RequestFormReleaseStatus.Production ? "Production" : "In Testing")
+                                    </MudChip>
+                                }
+                            </CardHeaderActions>
+                        </MudCardHeader>
+
+                        <MudCardContent Class="pt-2 svc-content">
+                            <MudText Typo="Typo.body2" Class="line-clamp-3 mb-2">@item.Description</MudText>
+
+                            @if ((item.AllowedOrganizationIds?.Any() ?? false))
+                            {
+                                <MudChipSet T="string" Class="mb-1 svc-chipset" Filter="false">
+                                    @foreach (var orgId in item.AllowedOrganizationIds!)
+                                    {
+                                        var orgName = organizations.FirstOrDefault(o => o.Id == orgId)?.Name ?? orgId;
+                                        <MudChip T="string"
+                                                 Value="@orgId"
+                                                 Closeable="true"
+                                                 OnClose="@(() => RemoveOrgAccess(item, orgId))"
+                                                 Color="Color.Default"
+                                                 Variant="Variant.Outlined"
+                                                 Class="me-1 mb-1">
+                                            @orgName
+                                        </MudChip>
+                                    }
+                                </MudChipSet>
+                            }
+
+                            @if (item.ItemType == ServiceItemType.RequestForm && bindingsByRequestFormId.TryGetValue(item.Id, out var requestBindings) && requestBindings.Count > 0)
+                            {
+                                <MudStack Row="true" Spacing="1" Class="mt-2">
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                                        Automation @requestBindings.Count
+                                    </MudChip>
+                                    <MudChip T="string" Size="Size.Small" Color="@GetBindingSummaryColor(requestBindings)" Variant="Variant.Outlined">
+                                        @GetBindingSummaryLabel(requestBindings)
+                                    </MudChip>
+                                </MudStack>
+                            }
+                        </MudCardContent>
+
+                        <MudCardActions Class="svc-actions">
+                            <MudButtonGroup Color="Color.Primary" Variant="Variant.Outlined" Size="Size.Small">
+                                @if (item.ItemType == ServiceItemType.Service)
+                                {
+                                    <MudTooltip Text="Open service">
+                                        <MudIconButton Icon="@Icons.Material.Filled.FolderOpen"
+                                                       OnClick="@(() => OpenService(item.Id))" />
+                                    </MudTooltip>
+                                }
+
+                                <MudTooltip Text="Edit">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                                   OnClick="@(() => EditItem(item))" />
+                                </MudTooltip>
+
+                                @if (item.ItemType == ServiceItemType.RequestForm)
+                                {
+                                    <MudTooltip Text="Copy request">
+                                        <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                                       OnClick="@(() => CopyRequest(item))" />
+                                    </MudTooltip>
+                                }
+
+                                <MudTooltip Text="Manage org access">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Group"
+                                                   OnClick="@(() => ManageAccess(item))" />
+                                </MudTooltip>
+                            </MudButtonGroup>
+
+                            <MudTooltip Text="Delete">
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                               Color="Color.Error"
+                                               OnClick="@(() => DeleteItem(item))" />
+                            </MudTooltip>
+                        </MudCardActions>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+
+</MudContainer>
+
+@code {
+    [Parameter] public string? ServiceId { get; set; }
+
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private bool loading = true;
+
+    private ServiceDto? ParentService;
+    private int ParentDepth = 0;
+    private bool CanCreateMore => ParentDepth < 3;
+
+    private List<ServiceItemDto> serviceItems = new();
+    private List<BreadcrumbItem> _breadcrumbs = new();
+    private List<OrganizationDto> organizations = new();
+    private Dictionary<string, List<AutomationBindingDto>> bindingsByRequestFormId = new(StringComparer.Ordinal);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        try { await LoadData(); }
+        catch (Exception ex) { Snackbar.Add($"Failed to load items: {ex.Message}", Severity.Error); }
+        finally { loading = false; }
+    }
+
+    private async Task LoadData()
+    {
+        organizations = await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations") ?? new();
+
+        ParentService = null;
+        ParentDepth = 0;
+        if (!string.IsNullOrWhiteSpace(ServiceId))
+        {
+            ParentService = await HelpdeskApi.GetFromJsonAsync<ServiceDto>($"api/v1/services/{ServiceId}");
+            ParentDepth = ParentService?.Depth ?? 0;
+        }
+
+        var endpoint = string.IsNullOrWhiteSpace(ServiceId) ? "api/v1/service-items" : $"api/v1/service-items/{ServiceId}";
+        serviceItems = await HelpdeskApi.GetFromJsonAsync<List<ServiceItemDto>>(endpoint) ?? new();
+        await LoadBindingsAsync();
+
+        await BuildBreadcrumbs();
+        StateHasChanged();
+    }
+
+    private async Task BuildBreadcrumbs()
+    {
+        var items = new List<BreadcrumbItem> { new("Services", "/admin/requests/services", false) };
+
+        if (!string.IsNullOrWhiteSpace(ServiceId))
+        {
+            try
+            {
+                var chain = await HelpdeskApi.GetFromJsonAsync<List<BreadcrumbDto>>($"api/v1/services/{ServiceId}/breadcrumb");
+                if (chain?.Any() == true)
+                {
+                    foreach (var c in chain) items.Add(new BreadcrumbItem(c.Name, $"/admin/requests/services/{c.Id}", false));
+                    items[^1] = new BreadcrumbItem(items[^1].Text, href: null, disabled: true);
+                    _breadcrumbs = items; return;
+                }
+            }
+            catch { /* ignore */ }
+
+            if (ParentService is not null)
+                items.Add(new BreadcrumbItem(ParentService.Name, href: null, disabled: true));
+        }
+
+        _breadcrumbs = items;
+    }
+
+    // Navigation
+    private void OpenService(string id) => NavigationManager.NavigateTo($"/admin/requests/services/{id}");
+
+    // Actions
+    private async Task EditItem(ServiceItemDto item)
+        => await (item.ItemType == ServiceItemType.Service ? OpenServiceDialog(item.Id) : OpenFormBuilderDialog(item));
+
+    private async Task CopyRequest(ServiceItemDto item)
+    {
+        try
+        {
+            var source = await HelpdeskApi.GetFromJsonAsync<RequestFormDto>($"api/v1/request-forms/{item.Id}");
+            if (source is null) { Snackbar.Add("Could not load source form.", Severity.Error); return; }
+
+            var copy = new CreateRequestFormDto
+            {
+                ServiceId = source.ServiceId,
+                Title = $"{source.Title} (Copy)",
+                Description = source.Description,
+                JsonSchema = source.JsonSchema,
+                AllowedOrganizationIds = source.AllowedOrganizationIds?.ToList(),
+                ReleaseStatus = source.ReleaseStatus
+            };
+
+            var resp = await HelpdeskApi.PostAsJsonAsync("api/v1/request-forms", copy);
+            if (resp.IsSuccessStatusCode) { Snackbar.Add("Request copied.", Severity.Success); await LoadData(); }
+            else Snackbar.Add($"Copy failed: {(int)resp.StatusCode} {await resp.Content.ReadAsStringAsync()}", Severity.Error);
+        }
+        catch (Exception ex) { Snackbar.Add($"Copy failed: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task ManageAccess(ServiceItemDto item)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(Dialogs.OrgAccessDialog.Item), item },
+            { nameof(Dialogs.OrgAccessDialog.Organizations), organizations }
+        };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dlg = await DialogService.ShowAsync<Dialogs.OrgAccessDialog>("Manage Access", parameters, options);
+        var result = await dlg.Result;
+        if (!result.Canceled) await LoadData();
+    }
+
+    private async Task RemoveOrgAccess(ServiceItemDto item, string orgId)
+    {
+        // snapshot + optimistic UI update
+        var before = item.AllowedOrganizationIds?.ToList() ?? new List<string>();
+        var after = before.Where(x => x != orgId).ToList();
+
+        item.AllowedOrganizationIds = after;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            HttpResponseMessage resp;
+
+            if (item.ItemType == ServiceItemType.Service)
+            {
+                var svc = await HelpdeskApi.GetFromJsonAsync<ServiceDto>($"api/v1/services/{item.Id}");
+                if (svc is null) { throw new InvalidOperationException("Service not found"); }
+
+                var dto = new UpdateServiceDto
+                {
+                    Name = svc.Name,
+                    Description = svc.Description,
+                    AllowedOrganizationIds = after
+                };
+                resp = await HelpdeskApi.PutAsJsonAsync($"api/v1/services/{item.Id}", dto);
+            }
+            else
+            {
+                var rf = await HelpdeskApi.GetFromJsonAsync<RequestFormDto>($"api/v1/request-forms/{item.Id}");
+                if (rf is null) { throw new InvalidOperationException("Form not found"); }
+
+                var dto = new UpdateRequestFormDto
+                {
+                    Title = rf.Title,
+                    Description = rf.Description,
+                    JsonSchema = rf.JsonSchema,
+                    AllowedOrganizationIds = after,
+                    ReleaseStatus = rf.ReleaseStatus
+                };
+                resp = await HelpdeskApi.PutAsJsonAsync($"api/v1/request-forms/{item.Id}", dto);
+            }
+
+            if (resp.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Access updated.", Severity.Success);
+            }
+            else
+            {
+                // rollback on failure
+                item.AllowedOrganizationIds = before;
+                await InvokeAsync(StateHasChanged);
+
+                var txt = await resp.Content.ReadAsStringAsync();
+                Snackbar.Add($"Update failed: {(int)resp.StatusCode} {txt}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            // rollback on exception
+            item.AllowedOrganizationIds = before;
+            await InvokeAsync(StateHasChanged);
+
+            Snackbar.Add($"Update failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task DeleteItem(ServiceItemDto item)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            title: "Confirm delete",
+            markupMessage: (MarkupString)$"Delete <b>{item.Name}</b>?",
+            yesText: "Delete",
+            cancelText: "Cancel",
+            options: new DialogOptions { CloseOnEscapeKey = true });
+
+        if (confirm != true) return;
+
+        try
+        {
+            HttpResponseMessage resp = item.ItemType == ServiceItemType.Service
+                ? await HelpdeskApi.DeleteAsync($"api/v1/services/{item.Id}")
+                : await HelpdeskApi.DeleteAsync($"api/v1/request-forms/{item.Id}");
+
+            if (resp.IsSuccessStatusCode) { Snackbar.Add("Deleted.", Severity.Success); await LoadData(); }
+            else Snackbar.Add($"Delete failed: {(int)resp.StatusCode} {await resp.Content.ReadAsStringAsync()}", Severity.Error);
+        }
+        catch (Exception ex) { Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task CreateNewService() => await OpenServiceDialog(null);
+
+    private async Task OpenServiceDialog(string? serviceId)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(Dialogs.ServiceEditDialog.ServiceId), serviceId },
+            { nameof(Dialogs.ServiceEditDialog.ParentId), ServiceId }
+        };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<Dialogs.ServiceEditDialog>(serviceId is null ? "New Service" : "Edit Service", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled) await LoadData();
+    }
+
+    private void CreateNewRequestForm()
+    {
+        if (string.IsNullOrWhiteSpace(ServiceId))
+        {
+            Snackbar.Add("Open a Service first, then create a Request inside it.", Severity.Warning);
+            return;
+        }
+        _ = OpenFormBuilderDialog(null);
+    }
+
+    private async Task OpenFormBuilderDialog(ServiceItemDto? existingRequestForm)
+    {
+        var parameters = new DialogParameters { { nameof(RequestFormBuilder.ServiceId), ServiceId } };
+        if (existingRequestForm is not null)
+            parameters.Add(nameof(RequestFormBuilder.RequestFormId), existingRequestForm.Id);
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.False, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<RequestFormBuilder>("Request Form Builder", parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled) { Snackbar.Add("Form saved.", Severity.Success); await LoadData(); }
+    }
+
+    private async Task LoadBindingsAsync()
+    {
+        bindingsByRequestFormId = new Dictionary<string, List<AutomationBindingDto>>(StringComparer.Ordinal);
+
+        var requestFormIds = serviceItems
+            .Where(x => x.ItemType == ServiceItemType.RequestForm)
+            .Select(x => x.Id)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (requestFormIds.Count == 0)
+        {
+            return;
+        }
+
+        using (var refreshResponse = await HelpdeskApi.PostAsync("api/v1/admin/orchestration/orchestration/bindings/refresh-drift", content: null))
+        {
+            if (!refreshResponse.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Could not refresh External orchestration binding drift state.", Severity.Warning);
+            }
+        }
+
+        var bindings = await HelpdeskApi.GetFromJsonAsync<List<AutomationBindingDto>>("api/v1/admin/orchestration/orchestration/bindings") ?? new();
+        bindingsByRequestFormId = bindings
+            .Where(x => requestFormIds.Contains(x.RequestFormId, StringComparer.Ordinal))
+            .GroupBy(x => x.RequestFormId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.OrderBy(y => y.TaskTemplateName).ToList(), StringComparer.Ordinal);
+    }
+
+    private static Color GetBindingSummaryColor(IReadOnlyCollection<AutomationBindingDto> bindings)
+    {
+        if (bindings.Any(x => x.SyncState == AutomationBindingSyncState.Broken))
+        {
+            return Color.Error;
+        }
+
+        if (bindings.Any(x => x.SyncState == AutomationBindingSyncState.Drifted))
+        {
+            return Color.Warning;
+        }
+
+        if (bindings.Any(x => x.SyncState == AutomationBindingSyncState.ImportPending))
+        {
+            return Color.Info;
+        }
+
+        return Color.Success;
+    }
+
+    private static string GetBindingSummaryLabel(IReadOnlyCollection<AutomationBindingDto> bindings)
+    {
+        if (bindings.Any(x => x.SyncState == AutomationBindingSyncState.Broken))
+        {
+            return "Broken";
+        }
+
+        if (bindings.Any(x => x.SyncState == AutomationBindingSyncState.Drifted))
+        {
+            return "Drifted";
+        }
+
+        if (bindings.Any(x => x.SyncState == AutomationBindingSyncState.ImportPending))
+        {
+            return "Import Pending";
+        }
+
+        return "In Sync";
+    }
+
+    public sealed class BreadcrumbDto { public string Id { get; set; } = default!; public string Name { get; set; } = default!; }
+}

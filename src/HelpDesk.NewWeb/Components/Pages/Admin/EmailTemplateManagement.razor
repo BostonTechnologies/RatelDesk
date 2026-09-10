@@ -1,0 +1,118 @@
+@page "/admin/templates"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@using Helpdesk.Shared.Models
+
+<MudPaper Class="pa-4">
+    <MudText Typo="Typo.h5" GutterBottom="true">Email Template Management</MudText>
+
+    <MudTabs Rounded="true" Border="true" PanelClass="pt-3">
+        @foreach (var category in TemplateCategories)
+        {
+            var templates = GetTemplatesForCategory(category.Key).ToList();
+            <MudTabPanel Text="@category.Label" BadgeData="@templates.Count" BadgeColor="@category.Color">
+                <MudTable Items="templates" Hover="true" Dense="true" Elevation="0" RowsPerPage="12">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Subject</MudTh>
+                        <MudTh Style="width:120px; text-align:right">Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">
+                            <MudText Typo="Typo.body2">@context.Name</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Subject">
+                            <MudText Typo="Typo.body2">@context.Subject</MudText>
+                        </MudTd>
+                        <MudTd Style="text-align:right">
+                            <MudTooltip Text="Edit template">
+                                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" OnClick="@(() => OpenEditDialog(context))" />
+                            </MudTooltip>
+                            <MudTooltip Text="Preview template">
+                                <MudIconButton Icon="@Icons.Material.Filled.Preview" Size="Size.Small" OnClick="@(() => OpenPreviewDialog(context))" />
+                            </MudTooltip>
+                        </MudTd>
+                    </RowTemplate>
+                    <PagerContent>
+                        <MudTablePager PageSizeOptions="new[] { 12, 24, 48 }" />
+                    </PagerContent>
+                </MudTable>
+            </MudTabPanel>
+        }
+    </MudTabs>
+</MudPaper>
+
+@code {
+    private List<EmailTemplate> _templates = new();
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private static readonly IReadOnlyList<TemplateCategory> TemplateCategories =
+    [
+        new("change", "Change", Color.Primary),
+        new("incident", "Incident", Color.Error),
+        new("request", "Request", Color.Info),
+        new("other", "Other", Color.Default)
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTemplates();
+    }
+
+    private async Task LoadTemplates()
+    {
+        _templates = await HelpdeskApi.GetFromJsonAsync<List<EmailTemplate>>("api/v1/email-templates") ?? new();
+    }
+
+    private async Task OpenEditDialog(EmailTemplate template)
+    {
+        var parameters = new DialogParameters<EmailTemplateDialog> { { x => x.Model, template } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+
+        var dialog = await DialogService.ShowAsync<EmailTemplateDialog>("Edit Template", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            await LoadTemplates(); // Reload the data after a change
+        }
+    }
+
+    private async Task OpenPreviewDialog(EmailTemplate template)
+    {
+        var parameters = new DialogParameters<EmailTemplatePreviewDialog>
+        {
+            { x => x.TemplateId, template.Id },
+            { x => x.TemplateName, template.Name },
+            { x => x.TenantId, string.Empty }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true };
+        await DialogService.ShowAsync<EmailTemplatePreviewDialog>("Template Preview", parameters, options);
+    }
+
+    private IEnumerable<EmailTemplate> GetTemplatesForCategory(string category) =>
+        _templates
+            .Where(template => GetTemplateCategory(template.Name) == category)
+            .OrderBy(template => template.Name);
+
+    private static string GetTemplateCategory(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "other";
+
+        if (name.StartsWith("Change", StringComparison.OrdinalIgnoreCase))
+            return "change";
+
+        if (name.Contains("Incident", StringComparison.OrdinalIgnoreCase))
+            return "incident";
+
+        if (name.Contains("Request", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Ticket", StringComparison.OrdinalIgnoreCase))
+            return "request";
+
+        return "other";
+    }
+
+    private sealed record TemplateCategory(string Key, string Label, Color Color);
+}

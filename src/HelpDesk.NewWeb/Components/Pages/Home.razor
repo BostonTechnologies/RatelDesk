@@ -1,0 +1,323 @@
+@page "/home"
+@attribute [Authorize]
+
+@using Helpdesk.Shared.DTOs.Dashboard
+@using Helpdesk.Shared.DTOs.Change
+@using Helpdesk.Shared.DTOs.Incident
+@using Helpdesk.Shared.DTOs.Request
+@using Helpdesk.Shared.Models
+
+@inject NavigationManager NavManager
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Home</PageTitle>
+
+<AuthorizeView Roles="HelpdeskAdmin">
+    <Authorized Context="homeAuth">
+
+@if (summary == null || recentIncidents == null || recentRequests == null || recentChanges == null)
+{
+    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-7" />
+}
+else
+{
+    <MudStack Spacing="3" Class="helpdesk-page home-dashboard">
+        <MudText Typo="Typo.h3" HtmlTag="h1" Class="helpdesk-page-title">Operations Dashboard</MudText>
+
+        <MudText Typo="Typo.subtitle2" Class="mb-4 mud-text-secondary">
+            Live operational overview of Incidents, Requests, and Changes
+        </MudText>
+
+        <MudGrid Spacing="3">
+            <MudItem xs="12" lg="5">
+                <MudPaper Class="helpdesk-content-surface dashboard-summary-panel pa-4" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">Incidents</MudText>
+
+                    <div class="dashboard-kpi-grid">
+                        @foreach (var (state, count) in summary.IncidentCountsByState.Where(x => x.Value > 0))
+                        {
+                            <MudPaper Class="dashboard-kpi-card"
+                                      Elevation="0"
+                                      @onclick='() => NavManager.NavigateTo($"/incidents?state={state}")'>
+                                <MudStack Class="dashboard-kpi-card-content" Spacing="1">
+                                    <MudText Typo="Typo.caption">@state</MudText>
+                                    <MudText Typo="Typo.h5">@count</MudText>
+                                </MudStack>
+                            </MudPaper>
+                        }
+                    </div>
+
+                    <MudText Typo="Typo.h6" Class="mt-4 mb-2">Requests</MudText>
+
+                    <div class="dashboard-kpi-grid">
+                        @foreach (var (state, count) in summary.RequestCountsByState.Where(x => x.Value > 0))
+                        {
+                            <MudPaper Class="dashboard-kpi-card"
+                                      Elevation="0"
+                                      @onclick='() => NavManager.NavigateTo($"/requests?state={state}")'>
+                                <MudStack Class="dashboard-kpi-card-content" Spacing="1">
+                                    <MudText Typo="Typo.caption">@state</MudText>
+                                    <MudText Typo="Typo.h5">@count</MudText>
+                                </MudStack>
+                            </MudPaper>
+                        }
+                    </div>
+
+                    <MudText Typo="Typo.h6" Class="mt-4 mb-2">Changes</MudText>
+
+                    <div class="dashboard-kpi-grid">
+                        @if (summary.PendingChanges > 0)
+                        {
+                            <MudPaper Class="dashboard-kpi-card"
+                                      Elevation="0"
+                                      @onclick='() => NavManager.NavigateTo("/changes")'>
+                                <MudStack Class="dashboard-kpi-card-content" Spacing="1">
+                                    <MudText Typo="Typo.caption">Pending Changes</MudText>
+                                    <MudText Typo="Typo.h5">@summary.PendingChanges</MudText>
+                                </MudStack>
+                            </MudPaper>
+                        }
+
+                        @foreach (var (state, count) in summary.ChangeCountsByState.Where(x => x.Value > 0))
+                        {
+                            <MudPaper Class="dashboard-kpi-card"
+                                      Elevation="0"
+                                      @onclick='() => NavManager.NavigateTo($"/changes?lifecycleState={state}")'>
+                                <MudStack Class="dashboard-kpi-card-content" Spacing="1">
+                                    <MudText Typo="Typo.caption">@GetChangeLifecycleLabel(ParseChangeLifecycleState(state))</MudText>
+                                    <MudText Typo="Typo.h5">@count</MudText>
+                                </MudStack>
+                            </MudPaper>
+                        }
+                    </div>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" lg="7">
+                <MudStack Spacing="2">
+                    <MudPaper Class="helpdesk-content-surface dashboard-recent-panel pa-3" Elevation="0">
+                        <MudText Typo="Typo.subtitle2" Class="mb-2">Recent Incidents</MudText>
+
+                        @if (recentIncidents.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="dashboard-empty-state">No recent incidents.</MudText>
+                        }
+                        else
+                        {
+                        <MudTable Items="recentIncidents"
+                                  Dense="true"
+                                  Hover="true"
+                                  Elevation="0"
+                                  OnRowClick="@((TableRowClickEventArgs<IncidentDto> x) => NavManager.NavigateTo($"/incidents/{x.Item.Id}"))">
+                            <HeaderContent>
+                                <MudTh>Tracking ID</MudTh>
+                                <MudTh>Subject</MudTh>
+                                <MudTh>State</MudTh>
+                                <MudTh>Updated</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Tracking ID">@context.TrackingId</MudTd>
+                                <MudTd DataLabel="Subject">@context.Subject</MudTd>
+                                <MudTd DataLabel="State">
+                                    <MudChip T="TicketState" Size="Size.Small" Variant="Variant.Outlined" Color="@GetStateColor(context.State)">
+                                        @context.State
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd DataLabel="Updated">@FormatUpdatedAt(context.UpdatedAt)</MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                        }
+                    </MudPaper>
+
+                    <MudPaper Class="helpdesk-content-surface dashboard-recent-panel pa-3" Elevation="0">
+                        <MudText Typo="Typo.subtitle2" Class="mb-2">Recent Requests</MudText>
+
+                        @if (recentRequests.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="dashboard-empty-state">No recent requests.</MudText>
+                        }
+                        else
+                        {
+                        <MudTable Items="recentRequests"
+                                  Dense="true"
+                                  Hover="true"
+                                  Elevation="0"
+                                  OnRowClick="@((TableRowClickEventArgs<RequestDto> x) => NavManager.NavigateTo($"/requests/{x.Item.Id}"))">
+                            <HeaderContent>
+                                <MudTh>Tracking ID</MudTh>
+                                <MudTh>Title</MudTh>
+                                <MudTh>State</MudTh>
+                                <MudTh>Updated</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Tracking ID">@context.TrackingId</MudTd>
+                                <MudTd DataLabel="Title">@context.Title</MudTd>
+                                <MudTd DataLabel="State">
+                                    <MudChip T="TicketState" Size="Size.Small" Variant="Variant.Outlined" Color="@GetStateColor(context.State)">
+                                        @context.State
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd DataLabel="Updated">@FormatUpdatedAt(context.UpdatedAt)</MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                        }
+                    </MudPaper>
+
+                    <MudPaper Class="helpdesk-content-surface dashboard-recent-panel pa-3" Elevation="0">
+                        <MudText Typo="Typo.subtitle2" Class="mb-2">Recent Changes</MudText>
+
+                        @if (recentChanges.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="dashboard-empty-state">No recent changes.</MudText>
+                        }
+                        else
+                        {
+                        <MudTable Items="recentChanges"
+                                  Dense="true"
+                                  Hover="true"
+                                  Elevation="0"
+                                  OnRowClick="@((TableRowClickEventArgs<ChangeDto> x) => NavManager.NavigateTo($"/changes/{x.Item.Id}"))">
+                            <HeaderContent>
+                                <MudTh>Tracking ID</MudTh>
+                                <MudTh>Title</MudTh>
+                                <MudTh>State</MudTh>
+                                <MudTh>Updated</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Tracking ID">@context.TrackingId</MudTd>
+                                <MudTd DataLabel="Title">@context.Title</MudTd>
+                                <MudTd DataLabel="State">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@GetChangeLifecycleColor(context.LifecycleState)">
+                                        @GetChangeLifecycleLabel(context.LifecycleState)
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd DataLabel="Updated">@FormatUpdatedAt(context.UpdatedAt)</MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                        }
+                    </MudPaper>
+                </MudStack>
+            </MudItem>
+        </MudGrid>
+
+    </MudStack>
+}
+    </Authorized>
+    <NotAuthorized>
+        <MudStack Spacing="3">
+            <MudText Typo="Typo.h4">Welcome to Helpdesk</MudText>
+            <MudText Typo="Typo.body1" Class="mud-text-secondary">
+                Use the portal to submit and review your own requests. Your access is scoped to your organization.
+            </MudText>
+            <MudStack Row="true" Spacing="2">
+                <MudButton Href="/self-service" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Storefront">Self Service</MudButton>
+                <MudButton Href="/self-service/my-requests" Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ReceiptLong">My Requests</MudButton>
+            </MudStack>
+        </MudStack>
+    </NotAuthorized>
+</AuthorizeView>
+
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
+    private AdminDashboardDto? summary;
+    private List<IncidentDto>? recentIncidents;
+    private List<RequestDto>? recentRequests;
+    private List<ChangeDto>? recentChanges;
+
+    private static Color GetStateColor(TicketState state) => state switch
+    {
+        TicketState.New => Color.Info,
+        TicketState.WaitingReply => Color.Warning,
+        TicketState.Resolved => Color.Success,
+        _ => Color.Default
+    };
+
+    private static Color GetChangeLifecycleColor(ChangeLifecycleState state) => state switch
+    {
+        ChangeLifecycleState.Submitted => Color.Info,
+        ChangeLifecycleState.PendingApproval => Color.Warning,
+        ChangeLifecycleState.ApprovedForImplementation => Color.Primary,
+        ChangeLifecycleState.ImplementationInProgress => Color.Secondary,
+        ChangeLifecycleState.ImplementedSuccess => Color.Success,
+        ChangeLifecycleState.ImplementedBackedOut => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static string GetChangeLifecycleLabel(ChangeLifecycleState state) => state switch
+    {
+        ChangeLifecycleState.Draft => "Draft",
+        ChangeLifecycleState.Submitted => "Submitted",
+        ChangeLifecycleState.PendingApproval => "Pending Approval",
+        ChangeLifecycleState.ApprovedForImplementation => "Approved For Implementation",
+        ChangeLifecycleState.ImplementationInProgress => "Implementation In Progress",
+        ChangeLifecycleState.ImplementedSuccess => "Implemented - Success",
+        ChangeLifecycleState.ImplementedBackedOut => "Implemented - Backed Out",
+        _ => state.ToString()
+    };
+
+    private static ChangeLifecycleState ParseChangeLifecycleState(string value) =>
+        Enum.TryParse<ChangeLifecycleState>(value, ignoreCase: true, out var state)
+            ? state
+            : ChangeLifecycleState.Draft;
+
+    private static string FormatUpdatedAt(DateTime? updatedAt) =>
+        updatedAt?.ToLocalTime().ToString("g") ?? "-";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = AuthenticationStateTask is not null
+            ? (await AuthenticationStateTask).User
+            : null;
+        if (user?.IsInRole("HelpdeskAdmin") != true)
+        {
+            summary = new AdminDashboardDto();
+            recentIncidents = new List<IncidentDto>();
+            recentRequests = new List<RequestDto>();
+            recentChanges = new List<ChangeDto>();
+            return;
+        }
+
+        try
+        {
+            var summaryTask = HelpdeskApi.GetFromJsonAsync<AdminDashboardDto>("api/v1/dashboard/admin-summary");
+            var incidentsTask = HelpdeskApi.GetFromJsonAsync<PagedResponse<IncidentDto>>("api/v1/incidents?page=1&pageSize=5");
+            var requestsTask = HelpdeskApi.GetFromJsonAsync<PagedResponse<RequestDto>>("api/v1/requests?page=1&pageSize=5");
+            var changesTask = LoadRecentChangesAsync();
+
+            await Task.WhenAll(summaryTask, incidentsTask, requestsTask, changesTask);
+
+            summary = await summaryTask;
+            recentIncidents = (await incidentsTask)?.Items ?? new List<IncidentDto>();
+            recentRequests = (await requestsTask)?.Items ?? new List<RequestDto>();
+            recentChanges = await changesTask;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading dashboard: {ex.Message}");
+            summary ??= new AdminDashboardDto();
+            recentIncidents ??= new List<IncidentDto>();
+            recentRequests ??= new List<RequestDto>();
+            recentChanges ??= new List<ChangeDto>();
+        }
+    }
+
+    private async Task<List<ChangeDto>> LoadRecentChangesAsync()
+    {
+        try
+        {
+            var response = await HelpdeskApi.GetFromJsonAsync<PagedResponse<ChangeDto>>("api/v1/changes?page=1&pageSize=5");
+            return response?.Items ?? new List<ChangeDto>();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading recent changes: {ex.Message}");
+            Snackbar.Add("Recent changes could not be loaded right now.", Severity.Warning);
+            return new List<ChangeDto>();
+        }
+    }
+}

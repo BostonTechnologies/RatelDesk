@@ -1,0 +1,164 @@
+@page "/ops/hangfire"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@using System.Net.Http.Json
+@using Helpdesk.Shared.DTOs.Ops
+
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Hangfire Ops</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudStack Spacing="3">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.h5">Hangfire Operations</MudText>
+                <MudText Typo="Typo.body2">Control the global runtime used for recurring Graph dataset sync and open the protected dashboard.</MudText>
+            </MudStack>
+            <MudStack Row="true" Spacing="2">
+                <MudButton Variant="Variant.Outlined" Disabled="@loading" OnClick="LoadAsync">Refresh</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="@DashboardUrl" Target="_blank">Open Dashboard</MudButton>
+            </MudStack>
+        </MudStack>
+
+        @if (!string.IsNullOrWhiteSpace(loadError))
+        {
+            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@loadError</MudAlert>
+        }
+
+        <MudGrid>
+            <MudItem xs="12" md="5">
+                <MudPaper Class="pa-3">
+                    <MudText Typo="Typo.subtitle1">Global Runtime</MudText>
+                    <MudText Typo="Typo.body2" Class="mb-2">Enable or disable recurring Hangfire execution for the whole app.</MudText>
+
+                    <MudChip T="string"
+                             Size="Size.Small"
+                             Variant="Variant.Outlined"
+                             Color="@(settings.Enabled ? Color.Success : Color.Warning)">
+                        @(settings.Enabled ? "Enabled" : "Disabled")
+                    </MudChip>
+
+                    <MudSwitch @bind-Value="settings.Enabled" Label="Enable global Hangfire runtime" Class="mt-3" />
+
+                    <MudStack Row="true" Spacing="2" Class="mt-3">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@saving" OnClick="SaveAsync">Save</MudButton>
+                        <MudButton Variant="Variant.Text" Disabled="@saving" OnClick="LoadAsync">Reset</MudButton>
+                    </MudStack>
+
+                    @if (!settings.Enabled)
+                    {
+                        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mt-3">
+                            Tenant Graph sync schedules remain saved, but no recurring jobs will be registered while the global runtime is disabled.
+                        </MudAlert>
+                    }
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="7">
+                <MudGrid>
+                    <MudItem xs="12" sm="6">
+                        <MudPaper Class="pa-3">
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">Recurring Jobs</MudText>
+                            <MudText Typo="Typo.h5">@settings.RecurringJobCount</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudPaper Class="pa-3">
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">Graph Sync Jobs</MudText>
+                            <MudText Typo="Typo.h5">@settings.GraphDatasetSyncJobCount</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudPaper Class="pa-3">
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">Queue</MudText>
+                            <MudText Typo="Typo.h6">@settings.QueueName</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudPaper Class="pa-3">
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">Dashboard Path</MudText>
+                            <MudText Typo="Typo.h6">@settings.DashboardPath</MudText>
+                        </MudPaper>
+                    </MudItem>
+                </MudGrid>
+
+                <MudPaper Class="pa-3 mt-3">
+                    <MudText Typo="Typo.subtitle1">Runtime Details</MudText>
+                    <MudText Typo="Typo.body2">Source: @settings.RuntimeSource</MudText>
+                    <MudText Typo="Typo.body2">Storage: @settings.StorageProvider</MudText>
+                    <MudText Typo="Typo.body2">Updated: @settings.UpdatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")</MudText>
+                    <MudText Typo="Typo.body2">Updated by: @(string.IsNullOrWhiteSpace(settings.UpdatedBy) ? "Unknown" : settings.UpdatedBy)</MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </MudStack>
+</MudPaper>
+
+@code {
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private bool loading;
+    private bool saving;
+    private string? loadError;
+    private HangfireRuntimeSettingsDto settings = new();
+
+    private string DashboardUrl => "/hangfire";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        loadError = null;
+
+        try
+        {
+            settings = await Api.GetFromJsonAsync<HangfireRuntimeSettingsDto>("api/v1/ops/hangfire/settings")
+                ?? new HangfireRuntimeSettingsDto();
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Could not load Hangfire settings: {ex.Message}";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        loadError = null;
+
+        try
+        {
+            var response = await Api.PutAsJsonAsync("api/v1/ops/hangfire/settings", new UpdateHangfireRuntimeSettingsDto
+            {
+                Enabled = settings.Enabled
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                loadError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            settings = await response.Content.ReadFromJsonAsync<HangfireRuntimeSettingsDto>()
+                ?? settings;
+            Snackbar.Add($"Hangfire runtime {(settings.Enabled ? "enabled" : "disabled")}.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Could not save Hangfire settings: {ex.Message}";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

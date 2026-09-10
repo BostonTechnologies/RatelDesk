@@ -1,0 +1,163 @@
+@page "/kb/health"
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@using Helpdesk.Shared.DTOs.Article
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Knowledge Base Health</PageTitle>
+
+@if (metrics is null)
+{
+    <MudPaper Class="pa-4 d-flex justify-center">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    </MudPaper>
+}
+else
+{
+    <MudStack Spacing="3">
+        <MudPaper Class="pa-4">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <MudText Typo="Typo.h6">Knowledge Base Index Health</MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@reindexing" OnClick="ReindexAsync">
+                    @(reindexing ? "Reindexing..." : "Reindex KB")
+                </MudButton>
+            </MudStack>
+        </MudPaper>
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4">
+                    <MudList T="string">
+                        <MudListItem T="string">Total Articles: @metrics.TotalArticles</MudListItem>
+                        <MudListItem T="string">Draft Articles: @metrics.DraftArticles</MudListItem>
+                        <MudListItem T="string">Published Articles: @metrics.PublishedArticles</MudListItem>
+                        <MudListItem T="string">Unresolved Tickets Without KB: @metrics.UnresolvedTicketsWithoutKb</MudListItem>
+                    </MudList>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4">
+                    <MudList T="string">
+                        <MudListItem T="string">Indexed Articles: @metrics.IndexedArticles</MudListItem>
+                        <MudListItem T="string">Indexed Chunks: @metrics.IndexedChunkCount</MudListItem>
+                        <MudListItem T="string">Orphaned Chunks: @metrics.OrphanedChunkCount</MudListItem>
+                        <MudListItem T="string">Email Chunks: @metrics.EmailChunkCount</MudListItem>
+                        <MudListItem T="string">Indexed Article Coverage: @metrics.IndexedArticleCoverage.ToString("P0")</MudListItem>
+                    </MudList>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">Suggestion Feedback</MudText>
+                    <MudList T="string">
+                        <MudListItem T="string">Total Suggestion Feedback: @metrics.SuggestionFeedbackCount</MudListItem>
+                        <MudListItem T="string">Helpful Suggestions: @metrics.HelpfulSuggestionCount</MudListItem>
+                        <MudListItem T="string">Not Helpful Suggestions: @metrics.NotHelpfulSuggestionCount</MudListItem>
+                        <MudListItem T="string">Suggestion Helpful Rate: @metrics.SuggestionHelpfulRate.ToString("P0")</MudListItem>
+                    </MudList>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">Automation Outcomes</MudText>
+                    <MudList T="string">
+                        <MudListItem T="string">Total Automation Feedback: @metrics.AutomationFeedbackCount</MudListItem>
+                        <MudListItem T="string">Resolved Outcomes: @metrics.AutomationResolvedCount</MudListItem>
+                        <MudListItem T="string">Not Resolved Outcomes: @metrics.AutomationNotResolvedCount</MudListItem>
+                        <MudListItem T="string">Automation Resolved Rate: @metrics.AutomationResolvedRate.ToString("P0")</MudListItem>
+                    </MudList>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">AI Audit Trail</MudText>
+                    <MudList T="string">
+                        <MudListItem T="string">Total AI Audit Records: @metrics.AiAuditCount</MudListItem>
+                        <MudListItem T="string">KB Build Operations: @metrics.KnowledgeBuildAuditCount</MudListItem>
+                        <MudListItem T="string">Resolved Ticket Drafts: @metrics.KnowledgeDraftFromTicketAuditCount</MudListItem>
+                        <MudListItem T="string">Requester Draft Generations: @metrics.RequesterReplyAuditCount</MudListItem>
+                        <MudListItem T="string">Requester Draft Approvals: @metrics.RequesterReplyApprovedAuditCount</MudListItem>
+                        <MudListItem T="string">Automation Approvals: @metrics.AutomationApprovedAuditCount</MudListItem>
+                        <MudListItem T="string">Last AI Audit Activity: @(metrics.LastAiAuditAt?.ToLocalTime().ToString("g") ?? "None")</MudListItem>
+                    </MudList>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">AI Runtime Health</MudText>
+                    <MudList T="string">
+                        <MudListItem T="string">Runtime Fallback Events: @metrics.RuntimeFallbackAuditCount</MudListItem>
+                        <MudListItem T="string">Runtime Failure Events: @metrics.RuntimeFailureAuditCount</MudListItem>
+                        <MudListItem T="string">Last Runtime Event: @(metrics.LastRuntimeAuditAt?.ToLocalTime().ToString("g") ?? "None")</MudListItem>
+                        <MudListItem T="string">
+                            Top Fallback Provider: @(string.IsNullOrWhiteSpace(metrics.TopRuntimeFallbackProvider)
+                                ? "None"
+                                : $"{metrics.TopRuntimeFallbackProvider} ({metrics.TopRuntimeFallbackCount})")
+                        </MudListItem>
+                        <MudListItem T="string">
+                            Top Failure Path: @(string.IsNullOrWhiteSpace(metrics.TopRuntimeFailureProvider)
+                                ? "None"
+                                : $"{metrics.TopRuntimeFailureProvider} ({metrics.TopRuntimeFailureCount})")
+                        </MudListItem>
+                    </MudList>
+                    @if (metrics.RecentRuntimeEvidence.Count > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="d-block mt-2 mb-1">Recent Runtime Evidence</MudText>
+                        <MudList T="string" Dense="true">
+                            @foreach (var evidence in metrics.RecentRuntimeEvidence)
+                            {
+                                <MudListItem T="string">@evidence</MudListItem>
+                            }
+                        </MudList>
+                    }
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        @if (lastReindexResult is not null)
+        {
+            <MudAlert Severity="Severity.Success" Variant="Variant.Outlined">
+                Reindex complete. Requested: @lastReindexResult.RequestedArticles, reindexed: @lastReindexResult.ReindexedArticles, skipped: @lastReindexResult.SkippedArticles.
+            </MudAlert>
+        }
+    </MudStack>
+}
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private KnowledgeBaseHealthDto? metrics;
+    private KnowledgeBaseReindexResultDto? lastReindexResult;
+    private bool reindexing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMetricsAsync();
+    }
+
+    private async Task LoadMetricsAsync()
+    {
+        metrics = await HelpdeskApi.GetFromJsonAsync<KnowledgeBaseHealthDto>("api/v1/kb/health");
+    }
+
+    private async Task ReindexAsync()
+    {
+        try
+        {
+            reindexing = true;
+            var response = await HelpdeskApi.PostAsJsonAsync("api/v1/kb/reindex", new { });
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add("KB reindex failed.", Severity.Error);
+                return;
+            }
+
+            lastReindexResult = await response.Content.ReadFromJsonAsync<KnowledgeBaseReindexResultDto>();
+            await LoadMetricsAsync();
+            Snackbar.Add("KB reindex completed.", Severity.Success);
+        }
+        finally
+        {
+            reindexing = false;
+        }
+    }
+}

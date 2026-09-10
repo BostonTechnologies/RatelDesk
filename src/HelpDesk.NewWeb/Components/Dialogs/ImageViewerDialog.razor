@@ -1,0 +1,57 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@Title</MudText>
+    </TitleContent>
+
+    <DialogContent>
+        <div style="width:100%;height:70vh;display:flex;align-items:center;justify-content:center;overflow:auto">
+            <img src="@Src" alt="@Title" style="max-width:100%;max-height:100%;object-fit:contain" />
+        </div>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="() => Mud.Close()">Close</MudButton>
+        @if (!string.IsNullOrWhiteSpace(DownloadName))
+        {
+            <MudButton StartIcon="@Icons.Material.Filled.Download"
+                       OnClick="Download">Download</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Mud { get; set; } = default!;
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+    private IJSObjectReference? _siteModule;
+
+    [Parameter] public string Src { get; set; } = default!;     // data URI
+    [Parameter] public string Title { get; set; } = "Image";
+    [Parameter] public string? DownloadName { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Path is relative to wwwroot
+            _siteModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/site.js");
+        }
+    }
+
+    private async Task Download()
+    {
+        if (_siteModule is null)
+        {
+            // module not yet loaded; load (defensive)
+            _siteModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/site.js");
+        }
+
+        await _siteModule.InvokeVoidAsync("downloadDataUrl", Src, DownloadName ?? "image");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_siteModule is not null)
+            await _siteModule.DisposeAsync();
+    }
+}

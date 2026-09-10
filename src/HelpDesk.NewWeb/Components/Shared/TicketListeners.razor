@@ -1,0 +1,239 @@
+@using Helpdesk.Shared.DTOs.Incident
+@using Helpdesk.Shared.DTOs.Change
+@using HelpDesk.NewWeb.Components.Dialogs
+
+@inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<MudStack Spacing="1">
+    @if (loading)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else if (!IsSupportedType)
+    {
+        <MudText Typo="Typo.body2">Listeners are currently available for incidents and changes.</MudText>
+    }
+    else if (incident is null && change is null)
+    {
+        <MudText Typo="Typo.body2">Unable to load listeners.</MudText>
+    }
+    else if (IsChangeType && change is not null)
+    {
+        <MudChipSet T="string">
+            @foreach (var listener in GetChangeListeners())
+            {
+                <MudChip T="string" Closeable="false">@listener</MudChip>
+            }
+        </MudChipSet>
+    }
+    else
+    {
+        <MudChipSet T="string">
+            @if (!string.IsNullOrWhiteSpace(incident.RequesterEmail))
+            {
+                <MudChip T="string" Closeable="false">@incident.RequesterEmail</MudChip>
+            }
+            @foreach (var cc in incident.CcRecipients)
+            {
+                <MudChip T="string" Closeable="true" OnClose="() => RemoveCc(cc)">@cc</MudChip>
+            }
+        </MudChipSet>
+
+        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddCcDialog">
+            Add Listener
+        </MudButton>
+    }
+</MudStack>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    [Parameter] public string TicketId { get; set; } = string.Empty;
+    [Parameter] public string TicketType { get; set; } = "incidents";
+    [Parameter] public EventCallback<int> OnListenersLoaded { get; set; }
+
+    private IncidentDto? incident;
+    private ChangeDto? change;
+    private bool loading = true;
+    private bool _loaded;
+
+    private bool IsIncidentType => string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase);
+    private bool IsChangeType => string.Equals(TicketType, "changes", StringComparison.OrdinalIgnoreCase);
+    private bool IsSupportedType => IsIncidentType || IsChangeType;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (_loaded)
+            return;
+
+        _loaded = true;
+        await LoadListeners();
+    }
+
+    private async Task LoadListeners()
+    {
+        loading = true;
+
+        try
+        {
+            if (!IsSupportedType || string.IsNullOrWhiteSpace(TicketId))
+            {
+                incident = null;
+                change = null;
+                await OnListenersLoaded.InvokeAsync(0);
+                return;
+            }
+
+            if (IsIncidentType)
+            {
+                incident = await HelpdeskApi.GetFromJsonAsync<IncidentDto>($"api/v1/incidents/{TicketId}");
+                change = null;
+            }
+            else
+            {
+                change = await HelpdeskApi.GetFromJsonAsync<ChangeDto>($"api/v1/changes/{TicketId}");
+                incident = null;
+            }
+            await OnListenersLoaded.InvokeAsync(GetListenerCount());
+        }
+        catch (Exception ex)
+        {
+            incident = null;
+            change = null;
+            await OnListenersLoaded.InvokeAsync(0);
+            Snackbar.Add($"Error loading listeners: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task OpenAddCcDialog()
+    {
+        if (!IsIncidentType || incident is null)
+            return;
+
+        const string dialogTitle = "Add Listener";
+        var options = new DialogOptions
+        {
+            CloseOnEscapeKey = true,
+            FullWidth = true,
+            MaxWidth = MaxWidth.Small
+        };
+
+        var dialog = await DialogService.ShowAsync<AddCcDialog>(dialogTitle, options);
+        var result = await dialog.Result;
+        if (!result.Canceled && result.Data is string email && !string.IsNullOrWhiteSpace(email))
+        {
+            await AddCc(email.Trim());
+        }
+    }
+
+    private async Task AddCc(string email)
+    {
+        if (incident is null || string.IsNullOrWhiteSpace(email))
+            return;
+
+        var updatedList = new List<string>(incident.CcRecipients) { email };
+        var dto = new UpdateIncidentDto { CcRecipients = updatedList };
+
+        try
+        {
+            var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/incidents/{TicketId}", dto);
+            if (response.IsSuccessStatusCode)
+            {
+                incident.CcRecipients = updatedList;
+                await OnListenersLoaded.InvokeAsync(GetListenerCount());
+            }
+            else
+            {
+                Snackbar.Add("Failed to add listener.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error adding listener: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task RemoveCc(string email)
+    {
+        if (incident is null || string.IsNullOrWhiteSpace(email))
+            return;
+
+        var updatedList = incident.CcRecipients
+            .Where(c => !string.Equals(c, email, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var dto = new UpdateIncidentDto { CcRecipients = updatedList };
+
+        try
+        {
+            var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/incidents/{TicketId}", dto);
+            if (response.IsSuccessStatusCode)
+            {
+                incident.CcRecipients = updatedList;
+                await OnListenersLoaded.InvokeAsync(GetListenerCount());
+            }
+            else
+            {
+                Snackbar.Add("Failed to remove listener.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error removing listener: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private int GetListenerCount()
+    {
+        if (IsChangeType)
+        {
+            return GetChangeListenerCount();
+        }
+
+        if (incident is null)
+            return 0;
+
+        var count = incident.CcRecipients.Count;
+        if (!string.IsNullOrWhiteSpace(incident.RequesterEmail))
+            count += 1;
+
+        return count;
+    }
+
+    private IEnumerable<string> GetChangeListeners()
+    {
+        if (change is null)
+        {
+            return Enumerable.Empty<string>();
+        }
+
+        var listeners = new List<string>();
+        if (!string.IsNullOrWhiteSpace(change.RequestedForUserEmail))
+        {
+            listeners.Add(FormatPerson(change.RequestedForUserName, change.RequestedForUserEmail));
+        }
+        if (!string.IsNullOrWhiteSpace(change.ImplementorUserEmail))
+        {
+            listeners.Add(FormatPerson(change.ImplementorUserName, change.ImplementorUserEmail));
+        }
+        listeners.AddRange(change.Approvals
+            .Where(x => !string.IsNullOrWhiteSpace(x.ApproverEmail))
+            .Select(x => FormatPerson(x.ApproverName, x.ApproverEmail)));
+        listeners.AddRange(change.CcRecipients);
+
+        return listeners
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x);
+    }
+
+    private int GetChangeListenerCount() => GetChangeListeners().Count();
+
+    private static string FormatPerson(string? name, string email) =>
+        string.IsNullOrWhiteSpace(name) ? email : $"{name} ({email})";
+}

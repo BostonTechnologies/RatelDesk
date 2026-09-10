@@ -1,0 +1,123 @@
+﻿@using Helpdesk.Shared.DTOs.Organization
+@using Helpdesk.Shared.DTOs.Service
+@using Helpdesk.Shared.DTOs.RequestForm
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Manage access – @Item.Name</MudText>
+    </TitleContent>
+
+    <DialogContent>
+        @if (selectedOrgIds.Count > 0)
+        {
+            <MudChipSet T="string"
+                        AllClosable="true"
+                        Filter="false"
+                        Class="mb-4">
+                @foreach (var orgId in selectedOrgIds.OrderBy(GetOrganizationName))
+                {
+                    <MudChip T="string"
+                             Value="@orgId"
+                             Color="Color.Primary"
+                             Variant="Variant.Outlined"
+                             OnClose="@(() => RemoveOrganization(orgId))">
+                        @GetOrganizationName(orgId)
+                    </MudChip>
+                }
+            </MudChipSet>
+        }
+
+        <MudSelect T="string"
+                   Label="Permitted organizations"
+                   MultiSelection="true"
+                   Dense="true"
+                   MultiSelectionTextFunc="GetSelectionText"
+                   SelectedValues="@selectedOrgIds"
+                   SelectedValuesChanged="@(v => selectedOrgIds = v?.ToHashSet() ?? new())">
+            @foreach (var org in Organizations)
+            {
+                <MudSelectItem T="string" Value="@org.Id">@org.Name</MudSelectItem>
+            }
+        </MudSelect>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@saving" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public ServiceItemDto Item { get; set; } = default!;
+    [Parameter] public List<OrganizationDto> Organizations { get; set; } = new();
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+
+    private HashSet<string> selectedOrgIds = new(StringComparer.OrdinalIgnoreCase);
+    private bool saving;
+
+    protected override void OnInitialized()
+    {
+        selectedOrgIds = new HashSet<string>(Item.AllowedOrganizationIds ?? new(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void RemoveOrganization(string organizationId)
+    {
+        selectedOrgIds.Remove(organizationId);
+    }
+
+    private string GetOrganizationName(string organizationId) =>
+        Organizations.FirstOrDefault(org => string.Equals(org.Id, organizationId, StringComparison.OrdinalIgnoreCase))?.Name
+        ?? organizationId;
+
+    private string GetSelectionText(List<string> selectedValues)
+    {
+        if (selectedValues.Count == 0)
+        {
+            return "No organizations selected";
+        }
+
+        return string.Join(", ", selectedValues.Select(GetOrganizationName).Order(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            HttpResponseMessage resp;
+            if (Item.ItemType == ServiceItemType.Service)
+            {
+                var svc = await Api.GetFromJsonAsync<ServiceDto>($"api/v1/services/{Item.Id}");
+                if (svc is null) { Snackbar.Add("Service not found.", Severity.Error); return; }
+                var dto = new UpdateServiceDto { Name = svc.Name, Description = svc.Description, AllowedOrganizationIds = selectedOrgIds.ToList() };
+                resp = await Api.PutAsJsonAsync($"api/v1/services/{Item.Id}", dto);
+            }
+            else
+            {
+                var rf = await Api.GetFromJsonAsync<RequestFormDto>($"api/v1/request-forms/{Item.Id}");
+                if (rf is null) { Snackbar.Add("Form not found.", Severity.Error); return; }
+                var dto = new UpdateRequestFormDto
+                {
+                    Title = rf.Title,
+                    Description = rf.Description,
+                    JsonSchema = rf.JsonSchema,
+                    AllowedOrganizationIds = selectedOrgIds.ToList(),
+                    ReleaseStatus = rf.ReleaseStatus
+                };
+                resp = await Api.PutAsJsonAsync($"api/v1/request-forms/{Item.Id}", dto);
+            }
+
+            if (resp.IsSuccessStatusCode) MudDialog.Close(DialogResult.Ok(true));
+            else Snackbar.Add($"Save failed: {(int)resp.StatusCode} {await resp.Content.ReadAsStringAsync()}", Severity.Error);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { saving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}
