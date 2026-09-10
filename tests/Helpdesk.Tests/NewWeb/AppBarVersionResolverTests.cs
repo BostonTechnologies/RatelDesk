@@ -1,7 +1,6 @@
 extern alias NewWeb;
 
 using NewWeb::HelpDesk.NewWeb.Components.Layout;
-using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace Helpdesk.Tests.NewWeb;
@@ -9,20 +8,14 @@ namespace Helpdesk.Tests.NewWeb;
 public class AppBarVersionResolverTests
 {
     [Fact]
-    public void ResolveDetails_PrefersConfiguredAppBarVersion()
+    public void ResolveDetails_UsesAssemblyMetadataInsteadOfDeploymentConfiguration()
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["AppBar:BuildVersion"] = "0.0.148",
-                ["OTEL_SERVICE_VERSION"] = "9.0.13"
-            })
-            .Build();
+        var details = AppBarVersionResolver.ResolveDetails(typeof(AppBarVersionResolver).Assembly, "Production");
 
-        var details = AppBarVersionResolver.ResolveDetails(configuration, typeof(AppBarVersionResolver).Assembly);
-
-        Assert.Equal("v0.0.148", details.DisplayVersion);
-        Assert.Equal("0.0.148", details.FullVersion);
-        Assert.Equal("AppBar:BuildVersion", details.Source);
+        Assert.Equal("v0.1.0", details.DisplayVersion);
+        Assert.Equal("0.1.0", details.Version);
+        Assert.Equal("HelpDesk.NewWeb", details.AssemblyName);
+        Assert.Equal("Production", details.Environment);
+        Assert.NotEqual("unknown", details.BuildTimestamp);
     }
 }

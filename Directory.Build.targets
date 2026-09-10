@@ -1,0 +1,12 @@
+<Project>
+  <Target Name="AddBuildMetadata" BeforeTargets="GetAssemblyAttributes">
+    <PropertyGroup>
+      <BuildTimestamp Condition="'$(BuildTimestamp)' == ''">$([System.DateTime]::UtcNow.ToString(&quot;o&quot;))</BuildTimestamp>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <AssemblyMetadata Include="BuildTimestamp" Value="$(BuildTimestamp)" />
+      <AssemblyMetadata Include="SourceRevisionId" Value="$(SourceRevisionId)" Condition="'$(SourceRevisionId)' != ''" />
+    </ItemGroup>
+  </Target>
+</Project>

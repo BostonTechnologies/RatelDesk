@@ -47,7 +47,7 @@ if find src -type f -name Dockerfile -print -quit | rg -q '.'; then
   fail 'project-local Dockerfiles must not exist below src/'
 fi
 
-active_paths=(.github .aspire .vscode docker tools package.json package-lock.json playwright.config.ts setup.sh setup-dotnet9.sh Helpdesk.sln)
+active_paths=(.github .aspire .vscode docker tools package.json package-lock.json playwright.config.ts setup.sh Helpdesk.sln)
 # A leading slash means the current docker/ paths are valid. Only a root-relative
 # filename (or an old project-local Dockerfile) is stale.
 stale_pattern='Helpdesk\.API/Dockerfile|HelpDesk\.NewWeb/Dockerfile|Helpdesk\.Mcp\.Http/Dockerfile|(^|[^A-Za-z0-9_/])stack-helpdesk\.yml|(^|[^A-Za-z0-9_/])traefik-rp-(dev|prod)\.yml'

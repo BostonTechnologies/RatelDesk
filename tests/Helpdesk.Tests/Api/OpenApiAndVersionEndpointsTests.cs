@@ -24,7 +24,8 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
                 {
                     ["Jwt:Issuer"] = "test",
                     ["Jwt:Audience"] = "test",
-                    ["Jwt:Key"] = "test-key-123456789012345678901234"
+                    ["Jwt:Key"] = "test-key-123456789012345678901234",
+                    ["AppBar:BuildVersion"] = "0.0.148"
                 });
             });
         });
@@ -48,20 +49,25 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
     {
         using var client = _factory.CreateClient();
 
-        var response = await client.GetFromJsonAsync<SystemVersionResponse>("/api/v1/system/version");
+        var httpResponse = await client.GetAsync("/api/v1/system/version");
+        var content = await httpResponse.Content.ReadAsStringAsync();
+        var response = await httpResponse.Content.ReadFromJsonAsync<SystemVersionResponse>();
 
+        Assert.Equal(HttpStatusCode.OK, httpResponse.StatusCode);
         Assert.NotNull(response);
-        Assert.Equal("Helpdesk.API", response!.ServiceName);
-        Assert.Equal("v0.1.0", response.DisplayVersion);
-        Assert.Equal("0.1.0", response.InformationalVersion);
-        Assert.False(string.IsNullOrWhiteSpace(response.AssemblyVersion));
+        Assert.Equal("0.1.0", response!.Version);
+        Assert.Equal("Helpdesk.API", response.AssemblyName);
+        Assert.False(string.IsNullOrWhiteSpace(response.CommitHash));
+        Assert.NotEqual("unknown", response.BuildTimestamp);
         Assert.Equal("Development", response.Environment);
+        Assert.DoesNotContain("displayVersion", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("informationalVersion", content, StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record SystemVersionResponse(
-        string ServiceName,
-        string DisplayVersion,
-        string InformationalVersion,
-        string AssemblyVersion,
+        string Version,
+        string CommitHash,
+        string BuildTimestamp,
+        string AssemblyName,
         string Environment);
 }

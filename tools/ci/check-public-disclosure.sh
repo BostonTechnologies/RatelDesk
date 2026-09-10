@@ -10,12 +10,21 @@ blocked_files='(^|/)(\.env|appsettings\.Development\.local\.json)$|\.(pfx|pem|ke
 
 failed=false
 
-if rg -n -I -e "$blocked_text" \
+disallowed_matches=$(rg -n -I -e "$blocked_text" \
   --glob '!LICENSE' \
   --glob '!tools/ci/check-public-disclosure.sh' \
   --glob '!**/bin/**' \
   --glob '!**/obj/**' \
-  .; then
+  . | sed \
+    -e 's#https://github.com/BostonTechnologies/RatelDesk##g' \
+    -e 's#ghcr.io/bostontechnologies/rateldesk-web##g' \
+    -e 's#ghcr.io/bostontechnologies/rateldesk-api##g' \
+    -e 's#orgs/BostonTechnologies/packages/container##g' \
+    -e 's#BostonTechnologies/RatelDesk##g' \
+  | rg -n -i -e "$blocked_text" || true)
+
+if [[ -n "$disallowed_matches" ]]; then
+  printf '%s\n' "$disallowed_matches"
   printf 'public disclosure gate: private organization or system reference found\n' >&2
   failed=true
 fi

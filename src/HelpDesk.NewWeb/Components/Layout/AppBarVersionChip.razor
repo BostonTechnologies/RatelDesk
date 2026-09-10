@@ -1,6 +1,6 @@
 @using HelpDesk.NewWeb.Services
+@using Helpdesk.Shared.Build
 @inject IAppBarVersionApiClient ApiVersionClient
-@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
 
 <div class="helpdesk-appbar-version-anchor">
     <MudChip T="string"
@@ -31,10 +31,11 @@
                 <MudDivider />
                 <div class="helpdesk-version-content">
                     <div class="helpdesk-version-section">
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Version.ServiceName</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Web</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Version.AssemblyName</MudText>
                         <MudText Typo="Typo.body2">@Version.DisplayVersion</MudText>
-                        <MudText Typo="Typo.caption">@Version.FullVersion</MudText>
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Version.Source · @HostEnvironment.EnvironmentName</MudText>
+                        <MudText Typo="Typo.caption">commit @Version.ShortCommitHash · built @Version.BuildTimestampDisplay</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Version.Environment</MudText>
                     </div>
                     <MudDivider />
                     <div class="helpdesk-version-section">
@@ -49,9 +50,9 @@
                         }
                         else
                         {
-                            <MudText Typo="Typo.caption" Color="Color.Secondary">@_apiVersion.ServiceName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@_apiVersion.AssemblyName</MudText>
                             <MudText Typo="Typo.body2">@_apiVersion.DisplayVersion</MudText>
-                            <MudText Typo="Typo.caption">@_apiVersion.InformationalVersion</MudText>
+                            <MudText Typo="Typo.caption">commit @_apiVersion.ShortCommitHash · built @_apiVersion.BuildTimestampDisplay</MudText>
                             <MudText Typo="Typo.caption" Color="Color.Secondary">@_apiVersion.Environment</MudText>
                         }
                     </div>
@@ -63,11 +64,11 @@
 
 @code {
     [Parameter, EditorRequired]
-    public AppBarVersionDetails Version { get; set; } = default!;
+    public BuildInfo Version { get; set; } = default!;
 
     private bool _isOpen;
     private bool _loading;
-    private AppBarApiVersionInfo? _apiVersion;
+    private BuildInfo? _apiVersion;
 
     private async Task TogglePopover()
     {
