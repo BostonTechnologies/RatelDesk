@@ -41,7 +41,7 @@
             <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("g")</MudTd>
             <MudTd>
                 <MudMenu>
-                    <ActivatorContent>
+                    <ActivatorContent Context="menuContext">
                         <MudIconButton Icon="@Icons.Material.Filled.MoreVert" />
                     </ActivatorContent>
                     <ChildContent>

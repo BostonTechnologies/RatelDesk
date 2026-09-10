@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -30,19 +29,19 @@ internal static partial class HelpdeskCli
     private static Command BuildNotificationsCommand(CliRuntime runtime, GlobalOptions globals)
     {
         var notifications = new Command("notifications", "Inspect notifications.");
-        var page = new Option<int?>("--page", "Page number.");
-        var pageSize = new Option<int?>("--page-size", "Page size.");
-        var limit = new Option<int?>("--limit", "Alias for --page-size.");
-        var take = new Option<int?>("--take", "Alias for --page-size.");
-        var query = new Option<string?>("--query", "Search query.");
-        var severity = new Option<string?>("--severity", "Notification severity.");
-        var source = new Option<string?>("--source", "Notification source.");
-        var category = new Option<string?>("--category", "Notification category.");
+        var page = new Option<int?>("--page") { Description = "Page number." };
+        var pageSize = new Option<int?>("--page-size") { Description = "Page size." };
+        var limit = new Option<int?>("--limit") { Description = "Alias for --page-size." };
+        var take = new Option<int?>("--take") { Description = "Alias for --page-size." };
+        var query = new Option<string?>("--query") { Description = "Search query." };
+        var severity = new Option<string?>("--severity") { Description = "Notification severity." };
+        var source = new Option<string?>("--source") { Description = "Notification source." };
+        var category = new Option<string?>("--category") { Description = "Notification category." };
         notifications.AddCommand(GetProjectedListCommand(runtime, globals, "list", "notifications", "/api/v1/notifications", null, (page, "page"), (pageSize, "pageSize"), (limit, "pageSize"), (take, "pageSize"), (query, "search"), (severity, "severity"), (source, "source"), (category, "category")));
         notifications.AddCommand(GetProjectedByStringIdCommand(runtime, globals, "get", "/api/v1/notifications/{id}", "id", "notification"));
         notifications.AddCommand(GetListCommand(runtime, globals, "summary", "/api/v1/notifications/error-summary"));
-        var unreadTake = new Option<int?>("--take", "Maximum unread error notifications to return.");
-        var unreadLimit = new Option<int?>("--limit", "Alias for --take.");
+        var unreadTake = new Option<int?>("--take") { Description = "Maximum unread error notifications to return." };
+        var unreadLimit = new Option<int?>("--limit") { Description = "Alias for --take." };
         notifications.AddCommand(GetProjectedListCommand(runtime, globals, "unread-errors", "notifications", "/api/v1/notifications/unread-errors", ctx => Query(("take", ValueToString(ResolvePageSize(null, ctx.ParseResult.GetValueForOption(unreadLimit), ctx.ParseResult.GetValueForOption(unreadTake), null)))), (unreadTake, "take"), (unreadLimit, "take")));
         notifications.AddCommand(BodyCommand(runtime, globals, "mark-read", HttpMethod.Post, "/api/v1/notifications/mark-read", ("--ids", "ids")));
         return notifications;

@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -31,17 +30,13 @@ internal static partial class HelpdeskCli
     {
         try
         {
-            var parser = new CommandLineBuilder(BuildRoot(runtime))
-                .UseDefaults()
-                .UseExceptionHandler((exception, context) =>
-                {
-                    var (code, message, exitCode, responseBody, details) = MapException(exception);
-                    runtime.Error.WriteLine(JsonSerializer.Serialize(new { ok = false, error = new { code, message, exitCode, responseBody, details } }, JsonOptions));
-                    context.ExitCode = exitCode;
-                })
-                .Build();
-
-            return await parser.InvokeAsync(args).ConfigureAwait(false);
+            var parseResult = BuildRoot(runtime).Parse(args);
+            return await parseResult.InvokeAsync(new InvocationConfiguration
+            {
+                EnableDefaultExceptionHandler = false,
+                Output = runtime.Out,
+                Error = runtime.Error
+            }).ConfigureAwait(false);
         }
         catch (CliValidationException ex)
         {

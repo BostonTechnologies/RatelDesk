@@ -400,8 +400,10 @@ public sealed class AiAssistantChatSessionManager(IServiceScopeFactory scopes, I
             var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
             // Session-level advisory ownership must end when this socket is disposed,
             // rather than survive on an idle pooled PostgreSQL connection.
-            var ownershipConnection = new NpgsqlConnectionStringBuilder(db.Database.GetConnectionString()) { Pooling = false };
-            singleOwner = new NpgsqlConnection(ownershipConnection.ConnectionString);
+            var providerConnection = db.Database.GetDbConnection() as NpgsqlConnection
+                ?? throw new InvalidOperationException("AiAssistant chat ownership requires an Npgsql database connection.");
+            var ownershipConnection = new NpgsqlConnectionStringBuilder(providerConnection.ConnectionString) { Pooling = false };
+            singleOwner = providerConnection.CloneWith(ownershipConnection.ConnectionString);
             await singleOwner.OpenAsync(cancellationToken);
             await using var claim = new NpgsqlCommand("SELECT pg_try_advisory_lock(794, 1)", singleOwner);
             if (await claim.ExecuteScalarAsync(cancellationToken) is not true)

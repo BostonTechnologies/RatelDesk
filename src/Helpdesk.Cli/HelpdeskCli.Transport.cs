@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -176,8 +175,8 @@ internal static partial class HelpdeskCli
     private static string Query(InvocationContext ctx, params (Option option, string queryName)[] options)
         => Query(options.Select(option => (option.queryName, ValueToString(ctx.ParseResult.GetValueForOption(option.option)))).ToArray());
 
-    private static bool WasSpecified(ParseResult parseResult, Option option)
-        => parseResult.FindResultFor(option)?.Tokens.Count > 0;
+    private static bool WasSpecified(CliParseResult parseResult, Option option)
+        => parseResult.WasSpecified(option);
 
     private static string Query(params (string name, string? value)[] values)
     {
@@ -854,25 +853,25 @@ internal static partial class HelpdeskCli
 
     private sealed class GlobalOptions
     {
-        public Option<string?> ApiBaseUrl { get; } = new("--api-base-url", "Helpdesk API base URL.");
-        public Option<string?> TokenUrl { get; } = new("--token-url", "Authentik token URL.");
-        public Option<string?> ClientId { get; } = new("--client-id", "Authentik client id.");
-        public Option<string?> Username { get; } = new("--username", "Authentik service username.");
-        public Option<string?> AppPassword { get; } = new("--app-password", "Authentik service-user app password.");
-        public Option<string?> Scope { get; } = new("--scope", "Authentik OAuth scope.");
-        public Option<string?> AgentUserEmail { get; } = new("--agent-user-email", "Helpdesk user email for assign-self.");
-        public Option<string?> ConfigPath { get; } = new("--config", "CLI config file path.");
-        public Option<string> Output { get; } = new("--output", () => "text", "Output format: text or json.");
-        public Option<bool> Json { get; } = new("--json", "Alias for --output json --view raw unless --view is supplied.");
-        public Option<string?> View { get; } = new("--view", "Output view: summary, detail, raw, or aggregate.");
-        public Option<string?> Fields { get; } = new("--fields", "Comma-separated projected fields for summary/detail views.");
-        public Option<bool> IncludeBody { get; } = new("--include-body", "Include long plain-text body fields in projected detail output.");
-        public Option<bool> IncludeHtml { get; } = new("--include-html", "Include HTML fields in projected detail output.");
-        public Option<string?> BodyFormat { get; } = new("--body-format", "Body format: none, text, or html.");
-        public Option<int?> BodyLines { get; } = new("--body-lines", "Maximum body lines for projected text output.");
-        public Option<int?> Truncate { get; } = new("--truncate", "Maximum characters for projected long fields.");
-        public Option<bool> Pretty { get; } = new("--pretty", "Pretty-print JSON output.");
-        public Option<bool> Quiet { get; } = new("--quiet", "Suppress normal output.");
+        public Option<string?> ApiBaseUrl { get; } = new("--api-base-url") { Description = "Helpdesk API base URL." };
+        public Option<string?> TokenUrl { get; } = new("--token-url") { Description = "Authentik token URL." };
+        public Option<string?> ClientId { get; } = new("--client-id") { Description = "Authentik client id." };
+        public Option<string?> Username { get; } = new("--username") { Description = "Authentik service username." };
+        public Option<string?> AppPassword { get; } = new("--app-password") { Description = "Authentik service-user app password." };
+        public Option<string?> Scope { get; } = new("--scope") { Description = "Authentik OAuth scope." };
+        public Option<string?> AgentUserEmail { get; } = new("--agent-user-email") { Description = "Helpdesk user email for assign-self." };
+        public Option<string?> ConfigPath { get; } = new("--config") { Description = "CLI config file path." };
+        public Option<string> Output { get; } = new("--output") { Description = "Output format: text or json.", DefaultValueFactory = _ => "text" };
+        public Option<bool> Json { get; } = new("--json") { Description = "Alias for --output json --view raw unless --view is supplied." };
+        public Option<string?> View { get; } = new("--view") { Description = "Output view: summary, detail, raw, or aggregate." };
+        public Option<string?> Fields { get; } = new("--fields") { Description = "Comma-separated projected fields for summary/detail views." };
+        public Option<bool> IncludeBody { get; } = new("--include-body") { Description = "Include long plain-text body fields in projected detail output." };
+        public Option<bool> IncludeHtml { get; } = new("--include-html") { Description = "Include HTML fields in projected detail output." };
+        public Option<string?> BodyFormat { get; } = new("--body-format") { Description = "Body format: none, text, or html." };
+        public Option<int?> BodyLines { get; } = new("--body-lines") { Description = "Maximum body lines for projected text output." };
+        public Option<int?> Truncate { get; } = new("--truncate") { Description = "Maximum characters for projected long fields." };
+        public Option<bool> Pretty { get; } = new("--pretty") { Description = "Pretty-print JSON output." };
+        public Option<bool> Quiet { get; } = new("--quiet") { Description = "Suppress normal output." };
 
         public void AddTo(Command command)
         {

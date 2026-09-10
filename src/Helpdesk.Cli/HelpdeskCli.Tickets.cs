@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -36,20 +35,20 @@ internal static partial class HelpdeskCli
     private static Command BuildTicketCollectionCommand(CliRuntime runtime, GlobalOptions globals, string name, string description, string basePath)
     {
         var command = new Command(name, description);
-        var page = new Option<int?>("--page", "Page number.");
-        var pageSize = new Option<int?>("--page-size", "Page size.");
-        var limit = new Option<int?>("--limit", "Alias for --page-size.");
-        var take = new Option<int?>("--take", "Alias for --page-size.");
-        var state = new Option<string?>("--state", "Ticket state.");
-        var q = new Option<string?>("--query", "Search query.");
-        var activeOnly = new Option<bool?>("--active-only", "Return active items only.");
-        var historicOnly = new Option<bool?>("--historic-only", "Return historic items only.");
-        var aiInvolved = new Option<bool?>("--ai-involved", "Return AI-involved items only.");
-        var includeTotal = new Option<bool?>("--include-total", "Include total count.");
-        var summaryOnly = new Option<bool?>("--summary-only", "Return summary rows only.");
-        var maxItems = new Option<int?>("--max-items", () => DefaultAggregateMaxItems, "Maximum items to scan for aggregate summaries.");
+        var page = new Option<int?>("--page") { Description = "Page number." };
+        var pageSize = new Option<int?>("--page-size") { Description = "Page size." };
+        var limit = new Option<int?>("--limit") { Description = "Alias for --page-size." };
+        var take = new Option<int?>("--take") { Description = "Alias for --page-size." };
+        var state = new Option<string?>("--state") { Description = "Ticket state." };
+        var q = new Option<string?>("--query") { Description = "Search query." };
+        var activeOnly = new Option<bool?>("--active-only") { Description = "Return active items only." };
+        var historicOnly = new Option<bool?>("--historic-only") { Description = "Return historic items only." };
+        var aiInvolved = new Option<bool?>("--ai-involved") { Description = "Return AI-involved items only." };
+        var includeTotal = new Option<bool?>("--include-total") { Description = "Include total count." };
+        var summaryOnly = new Option<bool?>("--summary-only") { Description = "Return summary rows only." };
+        var maxItems = new Option<int?>("--max-items") { Description = "Maximum items to scan for aggregate summaries.", DefaultValueFactory = _ => DefaultAggregateMaxItems };
         var requesterEmail = name == "incidents"
-            ? new Option<string?>("--requester-email", "Filter incidents by requester/customer email.")
+            ? new Option<string?>("--requester-email") { Description = "Filter incidents by requester/customer email." }
             : null;
         command.AddCommand(GetTicketListCommand(runtime, globals, name, basePath + "/", page, pageSize, limit, take, state, q, activeOnly, historicOnly, aiInvolved, includeTotal, summaryOnly, maxItems, requesterEmail));
         command.AddCommand(GetTicketSummaryCommand(runtime, globals, name, basePath + "/", pageSize, activeOnly, includeTotal, maxItems));
@@ -115,12 +114,12 @@ internal static partial class HelpdeskCli
 
     private static Command BuildIncidentCreateCommand(CliRuntime runtime, GlobalOptions globals, string path)
     {
-        var body = new Option<string?>("--body", "JSON request body. Overrides field flags.");
-        var bodyFile = new Option<string?>("--body-file", "Path to JSON request body file. Overrides field flags.");
-        var forEmail = new Option<string?>("--for-email", "Resolve a unique enabled customer by email and fill customerId, organizationId, and requesterEmail.");
-        var customerEmail = new Option<string?>("--customer-email", "Alias for --for-email.");
-        var dryRun = new Option<bool>("--dry-run", "Resolve and validate the create body without POSTing.");
-        var validateOnly = new Option<bool>("--validate-only", "Alias for --dry-run.");
+        var body = new Option<string?>("--body") { Description = "JSON request body. Overrides field flags." };
+        var bodyFile = new Option<string?>("--body-file") { Description = "Path to JSON request body file. Overrides field flags." };
+        var forEmail = new Option<string?>("--for-email") { Description = "Resolve a unique enabled customer by email and fill customerId, organizationId, and requesterEmail." };
+        var customerEmail = new Option<string?>("--customer-email") { Description = "Alias for --for-email." };
+        var dryRun = new Option<bool>("--dry-run") { Description = "Resolve and validate the create body without POSTing." };
+        var validateOnly = new Option<bool>("--validate-only") { Description = "Alias for --dry-run." };
         var command = new Command("create",
             "Create an incident. Required: --title or --subject, --description, and either --for-email or both --customer-id and --organization-id. " +
             "Examples: helpdesk incidents create --for-email person@example.com --title \"VPN down\" --description \"Cannot connect\" --priority Medium; " +
@@ -139,7 +138,7 @@ internal static partial class HelpdeskCli
         var fields = new List<(Option<string?> option, string jsonName)>();
         foreach (var (optionName, jsonName) in IncidentCreateBodyFields)
         {
-            var option = new Option<string?>(optionName, IncidentCreateOptionDescription(optionName, jsonName));
+            var option = new Option<string?>(optionName) { Description = IncidentCreateOptionDescription(optionName, jsonName) };
             command.AddOption(option);
             fields.Add((option, jsonName));
         }
@@ -176,10 +175,10 @@ internal static partial class HelpdeskCli
 
     private static Command BuildIncidentBulkCreateCommand(CliRuntime runtime, GlobalOptions globals, string path)
     {
-        var bodyFile = new Option<string>("--body-file", "Path to a JSON array, or an object with an items array.") { IsRequired = true };
-        var dryRun = new Option<bool>("--dry-run", "Resolve and validate all create bodies without POSTing.");
-        var validateOnly = new Option<bool>("--validate-only", "Alias for --dry-run.");
-        var continueOnError = new Option<bool>("--continue-on-error", "Continue after per-item validation or API failures.");
+        var bodyFile = new Option<string>("--body-file") { Description = "Path to a JSON array, or an object with an items array.", Required = true };
+        var dryRun = new Option<bool>("--dry-run") { Description = "Resolve and validate all create bodies without POSTing." };
+        var validateOnly = new Option<bool>("--validate-only") { Description = "Alias for --dry-run." };
+        var continueOnError = new Option<bool>("--continue-on-error") { Description = "Continue after per-item validation or API failures." };
         var command = new Command("bulk-create", "Create incidents from a body file containing a JSON array or { items: [...] }.") { bodyFile, dryRun, validateOnly, continueOnError };
         command.SetHandler(async ctx =>
         {
@@ -449,8 +448,8 @@ internal static partial class HelpdeskCli
 
     private static Command BuildAssignSelfCommand(CliRuntime runtime, GlobalOptions globals, string resourceName, string assignPath)
     {
-        var ids = new Option<string>("--ids", "JSON array of ids, or a comma-separated list.") { IsRequired = true };
-        var email = new Option<string?>("--agent-user-email", "Agent user email for self-assignment.");
+        var ids = new Option<string>("--ids") { Description = "JSON array of ids, or a comma-separated list.", Required = true };
+        var email = new Option<string?>("--agent-user-email") { Description = "Agent user email for self-assignment." };
         var command = new Command("assign-self", $"Assign {resourceName} to the configured agent user.") { ids, email };
         command.SetHandler(async ctx =>
         {

@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -101,11 +100,11 @@ internal static partial class HelpdeskCli
             ("--parent-service-id", "parentServiceId"),
             ("--allowed-organization-ids", "allowedOrganizationIds"),
             ("--is-enabled", "isEnabled"));
-        var parent = new Option<string?>("--parent-service-id", "Parent service id.");
-        var q = new Option<string?>("--query", "Search query.");
-        var pageSize = new Option<int?>("--page-size", "Page size.");
-        var limit = new Option<int?>("--limit", "Alias for --page-size.");
-        var take = new Option<int?>("--take", "Alias for --page-size.");
+        var parent = new Option<string?>("--parent-service-id") { Description = "Parent service id." };
+        var q = new Option<string?>("--query") { Description = "Search query." };
+        var pageSize = new Option<int?>("--page-size") { Description = "Page size." };
+        var limit = new Option<int?>("--limit") { Description = "Alias for --page-size." };
+        var take = new Option<int?>("--take") { Description = "Alias for --page-size." };
         services.AddCommand(GetProjectedListCommand(runtime, globals, "items", "service-items", "/api/v1/service-items", null, (parent, "parentServiceId")));
         services.AddCommand(GetProjectedListCommand(runtime, globals, "search-items", "service-items", "/api/v1/service-items/search", null, (q, "q"), (pageSize, "pageSize"), (limit, "pageSize"), (take, "pageSize")));
         services.AddCommand(GetProjectedByStringIdCommand(runtime, globals, "breadcrumb", "/api/v1/services/{id}/breadcrumb", "id", "service-breadcrumb"));
@@ -144,8 +143,8 @@ internal static partial class HelpdeskCli
             ("--description", "description"),
             ("--payload-json", "payloadJson"),
             ("--requester-email", "requesterEmail")));
-        var query = new Option<string?>("--query", "User search query.");
-        var pageSize = new Option<int?>("--page-size", "Page size.");
+        var query = new Option<string?>("--query") { Description = "User search query." };
+        var pageSize = new Option<int?>("--page-size") { Description = "Page size." };
         self.AddCommand(GetListCommand(runtime, globals, "request-users", "/api/v1/self-service/request-users", (query, "query"), (pageSize, "pageSize")));
         return self;
     }
@@ -168,8 +167,8 @@ internal static partial class HelpdeskCli
     private static Command BuildSearchCommand(CliRuntime runtime, GlobalOptions globals)
     {
         var search = new Command("search", "Search Helpdesk lookup data.");
-        var q = new Option<string?>("--query", "Search query.");
-        var org = new Option<string?>("--organization-id", "Organization id.");
+        var q = new Option<string?>("--query") { Description = "Search query." };
+        var org = new Option<string?>("--organization-id") { Description = "Organization id." };
         search.AddCommand(GetListCommand(runtime, globals, "users", "/api/v1/global-search/users", (q, "q"), (org, "organizationId")));
         search.AddCommand(GetListCommand(runtime, globals, "customers", "/api/v1/global-search/customers", (q, "q"), (org, "organizationId")));
         search.AddCommand(GetListCommand(runtime, globals, "organizations", "/api/v1/global-search/organizations", (q, "q")));
@@ -183,10 +182,10 @@ internal static partial class HelpdeskCli
             return GetListCommand(runtime, globals, "list", path);
         }
 
-        var query = new Option<string?>("--query", "Client-side search query for array responses.");
-        var enabledOnly = new Option<bool?>("--enabled-only", "Client-side filter for enabled resources.");
-        var limit = new Option<int?>("--limit", "Client-side display cap for array responses.");
-        var take = new Option<int?>("--take", "Alias for --limit.");
+        var query = new Option<string?>("--query") { Description = "Client-side search query for array responses." };
+        var enabledOnly = new Option<bool?>("--enabled-only") { Description = "Client-side filter for enabled resources." };
+        var limit = new Option<int?>("--limit") { Description = "Client-side display cap for array responses." };
+        var take = new Option<int?>("--take") { Description = "Alias for --limit." };
         return GetProjectedListCommand(runtime, globals, "list", resource, path, null, (query, "clientQuery"), (enabledOnly, "clientEnabledOnly"), (limit, "clientLimit"), (take, "clientTake"));
     }
 
@@ -195,7 +194,7 @@ internal static partial class HelpdeskCli
 
     private static Command BuildRequestFormsListCommand(CliRuntime runtime, GlobalOptions globals)
     {
-        var serviceId = new Option<string?>("--service-id", "Service id for service-scoped request forms.");
+        var serviceId = new Option<string?>("--service-id") { Description = "Service id for service-scoped request forms." };
         var command = GetProjectedListCommand(
             runtime,
             globals,

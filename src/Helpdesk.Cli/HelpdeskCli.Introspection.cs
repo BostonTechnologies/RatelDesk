@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -51,8 +50,8 @@ internal static partial class HelpdeskCli
 
     private static Command BuildSchemaCommand(CliRuntime runtime, GlobalOptions globals)
     {
-        var group = new Argument<string?>("group", () => null, "Command group.");
-        var commandName = new Argument<string?>("command", () => null, "Command name.");
+        var group = new Argument<string?>("group") { Description = "Command group.", Arity = ArgumentArity.ZeroOrOne };
+        var commandName = new Argument<string?>("command") { Description = "Command name.", Arity = ArgumentArity.ZeroOrOne };
         var command = new Command("schema", "Inspect deterministic Helpdesk CLI command metadata.") { group, commandName };
         command.SetHandler(ctx =>
         {
@@ -106,7 +105,7 @@ internal static partial class HelpdeskCli
 
     private static Command BuildEnumsCommand(CliRuntime runtime, GlobalOptions globals)
     {
-        var name = new Argument<string?>("name", () => null, "Enum name.");
+        var name = new Argument<string?>("name") { Description = "Enum name.", Arity = ArgumentArity.ZeroOrOne };
         var command = new Command("enums", "List Helpdesk.Shared enum values used by projected CLI output.") { name };
         command.SetHandler(ctx =>
         {
@@ -137,7 +136,7 @@ internal static partial class HelpdeskCli
 
     private static Command BuildExamplesCommand(CliRuntime runtime, GlobalOptions globals)
     {
-        var topic = new Argument<string?>("topic", () => null, "Example topic: incident-create, triage, lookups, connectivity.");
+        var topic = new Argument<string?>("topic") { Description = "Example topic: incident-create, triage, lookups, connectivity.", Arity = ArgumentArity.ZeroOrOne };
         var command = new Command("examples", "Show short AI/operator workflow recipes.") { topic };
         command.SetHandler(async ctx =>
         {

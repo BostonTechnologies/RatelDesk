@@ -158,7 +158,7 @@
 
     private async Task DeleteAsync(OrganizationSupportCoverageDto row)
     {
-        var confirm = await DialogService.ShowMessageBox(
+        var confirm = await DialogService.ShowMessageBoxAsync(
             "Delete Coverage Route",
             $"Delete the route to {SupportGroupName(row.SupportGroupId)}?",
             yesText: "Delete",

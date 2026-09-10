@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -18,10 +17,10 @@ internal static partial class HelpdeskCli
     private static Command BuildRawCommand(CliRuntime runtime, GlobalOptions globals)
     {
         var raw = new Command("raw", "Call an operator-safe API path directly.");
-        var method = new Argument<string>("method", "HTTP method: get, post, put, delete.");
-        var path = new Option<string>("--path", "Operator-safe /api/v1 path.") { IsRequired = true };
-        var body = new Option<string?>("--body", "JSON request body.");
-        var bodyFile = new Option<string?>("--body-file", "Path to JSON request body file.");
+        var method = new Argument<string>("method") { Description = "HTTP method: get, post, put, delete." };
+        var path = new Option<string>("--path") { Description = "Operator-safe /api/v1 path.", Required = true };
+        var body = new Option<string?>("--body") { Description = "JSON request body." };
+        var bodyFile = new Option<string?>("--body-file") { Description = "Path to JSON request body file." };
         raw.AddArgument(method);
         raw.AddOption(path);
         raw.AddOption(body);
@@ -104,14 +103,14 @@ internal static partial class HelpdeskCli
         if (idArg is not null) command.AddArgument(idArg);
         if (identityArg is not null) command.AddArgument(identityArg);
 
-        var body = new Option<string?>("--body", "JSON request body. Overrides field flags.");
-        var bodyFile = new Option<string?>("--body-file", "Path to JSON request body file. Overrides field flags.");
+        var body = new Option<string?>("--body") { Description = "JSON request body. Overrides field flags." };
+        var bodyFile = new Option<string?>("--body-file") { Description = "Path to JSON request body file. Overrides field flags." };
         command.AddOption(body);
         command.AddOption(bodyFile);
         var fields = new List<(Option<string?> option, string jsonName)>();
         foreach (var (optionName, jsonName) in bodyOptions)
         {
-            var option = new Option<string?>(optionName, $"JSON field '{jsonName}'.");
+            var option = new Option<string?>(optionName) { Description = $"JSON field '{jsonName}'." };
             command.AddOption(option);
             fields.Add((option, jsonName));
         }

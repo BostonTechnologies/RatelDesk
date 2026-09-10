@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -18,19 +17,19 @@ internal static partial class HelpdeskCli
     private static Command BuildRequestTasksCommand(CliRuntime runtime, GlobalOptions globals)
     {
         var tasks = new Command("request-tasks", "Manage request tasks.");
-        var page = new Option<int?>("--page", "Page number.");
-        var pageSize = new Option<int?>("--page-size", "Page size.");
-        var limit = new Option<int?>("--limit", "Alias for --page-size.");
-        var take = new Option<int?>("--take", "Alias for --page-size.");
-        var assignedToMe = new Option<bool?>("--assigned-to-me", "Filter to tasks assigned to the authenticated user.");
-        var assignedToId = new Option<string?>("--assigned-to-id", "Filter by assignee id.");
-        var status = new Option<string?>("--status", "Task status.");
-        var type = new Option<string?>("--type", "Task type.");
-        var requestId = new Option<string?>("--request-id", "Request id.");
-        var serviceId = new Option<string?>("--service-id", "Service id.");
-        var q = new Option<string?>("--query", "Search query.");
-        var historicOnly = new Option<bool?>("--historic-only", "Return completed/skipped/cancelled tasks.");
-        var includeTotal = new Option<bool?>("--include-total", "Include total count.");
+        var page = new Option<int?>("--page") { Description = "Page number." };
+        var pageSize = new Option<int?>("--page-size") { Description = "Page size." };
+        var limit = new Option<int?>("--limit") { Description = "Alias for --page-size." };
+        var take = new Option<int?>("--take") { Description = "Alias for --page-size." };
+        var assignedToMe = new Option<bool?>("--assigned-to-me") { Description = "Filter to tasks assigned to the authenticated user." };
+        var assignedToId = new Option<string?>("--assigned-to-id") { Description = "Filter by assignee id." };
+        var status = new Option<string?>("--status") { Description = "Task status." };
+        var type = new Option<string?>("--type") { Description = "Task type." };
+        var requestId = new Option<string?>("--request-id") { Description = "Request id." };
+        var serviceId = new Option<string?>("--service-id") { Description = "Service id." };
+        var q = new Option<string?>("--query") { Description = "Search query." };
+        var historicOnly = new Option<bool?>("--historic-only") { Description = "Return completed/skipped/cancelled tasks." };
+        var includeTotal = new Option<bool?>("--include-total") { Description = "Include total count." };
         tasks.AddCommand(GetProjectedListCommand(runtime, globals, "list", "request-tasks", "/api/v1/request-tasks/", null, (page, "page"), (pageSize, "pageSize"), (limit, "pageSize"), (take, "pageSize"), (assignedToMe, "assignedToMe"), (assignedToId, "assignedToId"), (status, "status"), (type, "type"), (requestId, "requestId"), (serviceId, "serviceId"), (q, "q"), (historicOnly, "historicOnly"), (includeTotal, "includeTotal")));
         tasks.AddCommand(GetProjectedByIdCommand(runtime, globals, "get", "/api/v1/request-tasks/{id}", "request-task"));
         tasks.AddCommand(BodyCommand(runtime, globals, "create", HttpMethod.Post, "/api/v1/request-tasks/", RequestTaskBodyFields));
@@ -63,8 +62,8 @@ internal static partial class HelpdeskCli
 
     private static Command BuildTaskAssignSelfCommand(CliRuntime runtime, GlobalOptions globals)
     {
-        var ids = new Option<string>("--ids", "JSON array of task ids, or a comma-separated list.") { IsRequired = true };
-        var email = new Option<string?>("--agent-user-email", "Agent user email for self-assignment.");
+        var ids = new Option<string>("--ids") { Description = "JSON array of task ids, or a comma-separated list.", Required = true };
+        var email = new Option<string?>("--agent-user-email") { Description = "Agent user email for self-assignment." };
         var command = new Command("assign-self", "Assign request tasks to the configured agent user.") { ids, email };
         command.SetHandler(async ctx =>
         {
