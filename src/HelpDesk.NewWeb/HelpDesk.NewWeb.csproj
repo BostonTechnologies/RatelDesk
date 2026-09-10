@@ -29,9 +29,9 @@
     <PackageReference Include="FormCraft.ForMudBlazor" Version="2.5.0" />
     <PackageReference Include="Gotho.BlazorPdf.MudBlazor" Version="2.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.11" />
-    <PackageReference Include="MudBlazor" Version="8.12.0" />
+    <PackageReference Include="MudBlazor" Version="9.1.0" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.8.8" />
-    <PackageReference Include="Extensions.MudBlazor.StaticInput" Version="3.2.1" />
+    <PackageReference Include="Extensions.MudBlazor.StaticInput" Version="4.1.0" />
     <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
   </ItemGroup>
 
