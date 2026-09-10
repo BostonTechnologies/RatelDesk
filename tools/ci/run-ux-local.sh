@@ -35,8 +35,8 @@ cleanup() {
   done
 
   if [[ "$compose_started" == true ]]; then
-    HELPDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" logs --no-color >"$database_log" 2>&1 || true
-    HELPDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" logs --no-color >"$database_log" 2>&1 || true
+    RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" down --volumes --remove-orphans >/dev/null 2>&1 || true
   fi
 
   exit "$status"
@@ -47,10 +47,11 @@ wait_for_health() {
   local name=$1
   local pid=$2
   local url=$3
-  local log=$4
+  local readiness_path=$4
+  local log=$5
 
   for _ in $(seq 1 90); do
-    if curl --insecure --fail --silent --show-error --max-time 2 "$url/health" >/dev/null 2>&1; then
+    if curl --insecure --fail --silent --show-error --max-time 2 "$url$readiness_path" >/dev/null 2>&1; then
       return 0
     fi
 
@@ -63,14 +64,14 @@ wait_for_health() {
     sleep 1
   done
 
-  echo "$name did not become healthy at $url/health."
+  echo "$name did not become ready at $url$readiness_path."
   sed -n '1,240p' "$log"
   return 1
 }
 
 wait_for_database() {
   for _ in $(seq 1 90); do
-    if HELPDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" exec -T postgres pg_isready --username postgres --dbname helpdesk >/dev/null 2>&1; then
+    if RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" exec -T postgres pg_isready --username rateldesk --dbname rateldesk >/dev/null 2>&1; then
       return 0
     fi
 
@@ -78,17 +79,17 @@ wait_for_database() {
   done
 
   echo "PostgreSQL did not become ready."
-  HELPDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" logs --no-color || true
+  RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" logs --no-color || true
   return 1
 }
 
 compose_started=true
-HELPDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" up --detach
+RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" up --detach
 wait_for_database
 
 ASPNETCORE_ENVIRONMENT=Development \
 ASPNETCORE_URLS="$api_url" \
-ConnectionStrings__HelpdeskDb="Host=127.0.0.1;Port=${database_port};Database=helpdesk;Username=postgres;Password=postgres" \
+ConnectionStrings__HelpdeskDb="Host=127.0.0.1;Port=${database_port};Database=rateldesk;Username=rateldesk;Password=rateldesk" \
 EmailIngestion__Enabled=false \
 Helpdesk__E2eSeedData=true \
 StorageOptions__ImageSigningSecret="$e2e_system_secret" \
@@ -99,7 +100,7 @@ ExchangeEmail__MailboxAddress=helpdesk-e2e@example.invalid \
 SYSTEM_TOKEN_SECRET="$e2e_system_secret" \
 dotnet run --project src/Helpdesk.API/Helpdesk.API.csproj --configuration Release --no-build --no-launch-profile >"$api_log" 2>&1 &
 api_pid=$!
-wait_for_health 'Helpdesk API' "$api_pid" "$api_url" "$api_log"
+wait_for_health 'Helpdesk API' "$api_pid" "$api_url" '/health/live' "$api_log"
 
 ASPNETCORE_ENVIRONMENT=Development \
 ASPNETCORE_URLS="$web_url" \
@@ -111,7 +112,7 @@ Authentication__Authentik__ApiScope=helpdesk-api \
 SYSTEM_TOKEN_SECRET="$e2e_system_secret" \
 dotnet run --project src/HelpDesk.NewWeb/HelpDesk.NewWeb.csproj --configuration Release --no-build --no-launch-profile >"$web_log" 2>&1 &
 web_pid=$!
-wait_for_health 'Helpdesk web' "$web_pid" "$web_url" "$web_log"
+wait_for_health 'Helpdesk web' "$web_pid" "$web_url" '/' "$web_log"
 
 HELPDESK_E2E_AUTH_MODE=development \
 HELPDESK_E2E_BASE_URL="$web_url" \

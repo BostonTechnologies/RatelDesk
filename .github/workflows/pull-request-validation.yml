@@ -180,7 +180,7 @@ jobs:
         run: |
           docker compose -f docker/docker-compose.yml config --quiet
           docker compose -f docker/docker-compose.yml up --build --detach --wait
-          curl --fail --show-error --silent http://127.0.0.1:8111/ > /dev/null
+          curl --retry 6 --retry-all-errors --retry-delay 2 --fail --show-error --silent http://127.0.0.1:8111/ > /dev/null
 
       - name: Collect Compose logs
         if: always()
