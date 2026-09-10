@@ -197,10 +197,15 @@ public sealed class AiAssistantChatStore(HelpdeskDbContext db, ITenantContext te
         var interaction = await db.Set<AiAssistantChatInteraction>().SingleOrDefaultAsync(x => x.ConversationId == conversation.Id && x.CallId == callId, ct)
             ?? throw new KeyNotFoundException("Approval not found.");
         ChatRules.ValidateApproval(interaction, request.SelectedKey, JsonSerializer.Deserialize<List<ChatOption>>(interaction.OptionsJson)!);
+        var now = Now;
         interaction.SelectedKey = request.SelectedKey;
         interaction.AnsweredByUserId = actor;
         conversation.State = await db.Set<AiAssistantChatInteraction>().AnyAsync(x => x.ConversationId == conversation.Id && x.CallId != callId && x.SelectedKey == null, ct) ? ChatState.AwaitingApproval : ChatState.Processing;
-        Append(db, conversation, "approval_response", request.SelectedKey, actor, callId: callId, atUtc: Now);
+        // A final human decision starts a new provider-processing lease for the
+        // existing turn. TurnStartedAtUtc deliberately remains its original value.
+        if (conversation.State == ChatState.Processing)
+            conversation.LastTransportActivityAtUtc = now;
+        Append(db, conversation, "approval_response", request.SelectedKey, actor, callId: callId, atUtc: now);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         await PublishAsync(conversation, "ApprovalSelected", ct);

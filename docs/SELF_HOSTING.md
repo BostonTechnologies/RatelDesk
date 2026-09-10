@@ -30,6 +30,8 @@ An AI Assistant turn is `Processing` only while RatelDesk has recent, durable pr
 
 When no activity is checkpointed before the timeout, RatelDesk changes the turn to `DeliveryUnknown`. This is intentionally not a retry state: the provider could have admitted the message or already executed a tool, so RatelDesk never resends it automatically. Operators can choose **Stop waiting** while a turn is processing and confirm the same safe local transition. They can then check/reconcile the saved remote session, or acknowledge the uncertainty and archive the transcript to start a blank conversation.
 
+An API restart is different from a silent live connection: RatelDesk immediately marks any persisted `Processing` turn as `DeliveryUnknown`, because the prior in-memory transport owner no longer exists. It records that restart boundary and never resends the turn.
+
 ## Observability
 
 OpenTelemetry is enabled through standard `OTEL_*` settings. Export to an OTLP endpoint you operate and avoid placing user, ticket, or credential data in telemetry attributes.

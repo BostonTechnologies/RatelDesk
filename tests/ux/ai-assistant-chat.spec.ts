@@ -68,6 +68,20 @@ for (const mode of ['empty', 'processing', 'approval', 'failed', 'archived']) {
   });
 }
 
+test('stop waiting shows authoritative uncertain-delivery recovery controls', async ({ page, request }) => {
+  await request.get('http://127.0.0.1:18299/fixture/reset?mode=processing');
+  await openChat(page);
+  await page.getByRole('checkbox', { name: 'The remote assistant may still be processing. RatelDesk will stop waiting locally and will not resend this request automatically.' }).check();
+  const stopWaiting = page.getByRole('button', { name: 'Stop waiting' });
+  await expect(stopWaiting).toBeEnabled();
+  await stopWaiting.click();
+  await expect(page.getByText('Delivery or completion could not be confirmed.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check saved session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Abandon unresolved turn and start blank' })).toBeVisible();
+  await expect(page.getByText('Working…', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Stop waiting' })).toHaveCount(0);
+});
+
 test('desktop Enter admission lock, Shift+Enter and IME', async ({ page, request }) => {
   await request.get('http://127.0.0.1:18299/fixture/reset?mode=empty');
   await openChat(page);

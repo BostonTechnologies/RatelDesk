@@ -131,6 +131,9 @@ public sealed class AiAssistantChatSessionManager(IServiceScopeFactory scopes, I
             // Approval decisions are committed by the store, outside the output
             // consumer. Tag immediate response deltas with that durable boundary.
             owner.AdvanceSequence(active.LastSequence);
+            // This is a fresh provider-processing lease after the human decision.
+            // Initialize it only after the active turn has been revalidated.
+            owner.InitializeActivity(Now);
             await owner.Client.RespondAsync(owner.SessionId, callId, key, ct);
         }
         catch (Exception ex)
@@ -488,8 +491,11 @@ public sealed class AiAssistantChatSessionManager(IServiceScopeFactory scopes, I
             await using var claim = new NpgsqlCommand("SELECT pg_try_advisory_lock(794, 1)", singleOwner);
             if (await claim.ExecuteScalarAsync(cancellationToken) is not true)
                 throw new InvalidOperationException("Only one enabled AiAssistant chat API instance may own this database.");
+            // This process cannot own any transports left by a prior API process.
+            // Resolve those turns before accepting new transport work; the periodic
+            // sweep remains solely the silent-live-transport watchdog.
+            await RecoverInterruptedProcessingAsync(cancellationToken);
             ready = true;
-            await SweepStaleProcessingAsync(cancellationToken);
             await base.StartAsync(cancellationToken);
         }
         catch
@@ -502,6 +508,26 @@ public sealed class AiAssistantChatSessionManager(IServiceScopeFactory scopes, I
             }
             throw;
         }
+    }
+
+    private async Task RecoverInterruptedProcessingAsync(CancellationToken ct)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var interrupted = await db.Set<AiAssistantChatConversation>()
+            .FromSqlInterpolated($"SELECT * FROM \"AiAssistantChatConversations\" WHERE \"State\" = {(int)ChatState.Processing} FOR UPDATE")
+            .ToListAsync(ct);
+        foreach (var conversation in interrupted)
+        {
+            conversation.State = ChatState.DeliveryUnknown;
+            AiAssistantChatStore.Append(db, conversation, "transport_restarted",
+                "The API restarted while this turn was processing. Its prior transport is gone; the request will not be resent automatically.", atUtc: Now);
+        }
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        foreach (var conversation in interrupted)
+            feed.Publish(new(conversation.Id, null));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -81,13 +81,53 @@ public sealed class ChatPostgresTests(ChatPostgresFixture fixture) : IClassFixtu
             await manager.SendAsync(conversation, request.ClientMessageId, request.Text, default);
             clock.Advance(TimeSpan.FromMinutes(6));
             await manager.SweepStaleProcessingAsync(default);
-            await using var check = fixture.Context();
-            var current = await check.Set<AiAssistantChatConversation>().SingleAsync(x => x.Id == conversation);
-            Assert.Equal(ChatState.DeliveryUnknown, current.State);
-            Assert.Contains(await check.Set<AiAssistantChatEvent>().Where(x => x.ConversationId == conversation).ToListAsync(), x => x.Type == "delivery_unknown");
+            long uncertainSequence;
+            await using (var check = fixture.Context())
+            {
+                var current = await check.Set<AiAssistantChatConversation>().AsNoTracking().SingleAsync(x => x.Id == conversation);
+                Assert.Equal(ChatState.DeliveryUnknown, current.State);
+                uncertainSequence = current.LastSequence;
+                Assert.Contains(await check.Set<AiAssistantChatEvent>().AsNoTracking().Where(x => x.ConversationId == conversation).ToListAsync(), x => x.Type == "delivery_unknown");
+            }
             Assert.True(client.Disposed);
             await client.EmitAsync(new { type = "turn_completed", sessionId = "signalr/test" });
-            Assert.Equal(ChatState.DeliveryUnknown, (await check.Set<AiAssistantChatConversation>().SingleAsync(x => x.Id == conversation)).State);
+            await using var fresh = fixture.Context();
+            var unchanged = await fresh.Set<AiAssistantChatConversation>().AsNoTracking().SingleAsync(x => x.Id == conversation);
+            Assert.Equal(ChatState.DeliveryUnknown, unchanged.State);
+            Assert.Equal(uncertainSequence, unchanged.LastSequence);
+        }
+        finally { await manager.StopAsync(default); }
+    }
+
+    [Fact]
+    public async Task StartupImmediatelyMarksPersistedProcessingTurnAsUncertainWithoutResending()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 9, 10, 12, 0, 0, TimeSpan.Zero));
+        var (ticket, conversation) = await fixture.CreateAsync();
+        var request = new ChatMessageRequest(conversation, Guid.NewGuid(), "Interrupted by restart");
+        await using (var db = fixture.Context())
+            Assert.True(await fixture.Store(db, timeProvider: clock).AcceptMessageAsync("incidents", ticket, request, "operator", default));
+
+        await using var services = new ServiceCollection().AddScoped(_ => fixture.Context()).BuildServiceProvider();
+        var client = new FailingChatClient { FailSend = false };
+        var factory = Substitute.For<IAiAssistantChatClientFactory>();
+        factory.Create().Returns(client);
+        using var manager = new AiAssistantChatSessionManager(
+            services.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new AiAssistantChatOptions { Enabled = true }),
+            new ChatLiveFeed(),
+            NullLogger<AiAssistantChatSessionManager>.Instance,
+            factory,
+            clock);
+
+        await manager.StartAsync(default);
+        try
+        {
+            await using var check = fixture.Context();
+            var recovered = await check.Set<AiAssistantChatConversation>().AsNoTracking().SingleAsync(x => x.Id == conversation);
+            Assert.Equal(ChatState.DeliveryUnknown, recovered.State);
+            Assert.Contains(await check.Set<AiAssistantChatEvent>().AsNoTracking().Where(x => x.ConversationId == conversation).ToListAsync(), x => x.Type == "transport_restarted");
+            Assert.Equal(0, client.SendCount);
         }
         finally { await manager.StopAsync(default); }
     }

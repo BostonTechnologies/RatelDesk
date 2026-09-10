@@ -16,7 +16,7 @@ function reset(mode = 'completed') {
   events = []; state = mode === 'processing' ? 1 : mode === 'approval' ? 2 : mode === 'archived' ? 4 : 0;
   event('created', 'Conversation created.');
   if (mode === 'empty') return;
-  event('operator', 'Investigate the Helpdesk integration and explain the result.', { CreatedByUserId: actor });
+  event('operator', 'Investigate the Helpdesk integration and explain the result.', { CreatedByUserId: actor, ClientMessageId: crypto.randomUUID() });
   for (let i = 0; i < 14; i++) {
     const metadata = { DisplayName: i === 12 ? 'terminal_execute_12_with_a_long_tool_identifier_that_must_wrap_inside_the_activity_panel'
       : `terminal_execute_${i}`, ToolKind: 'mcp', ProviderName: 'Example Provider', Outcome: 'running' };
@@ -53,6 +53,7 @@ http.createServer(async (req, res) => {
     const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
     return reply({ token: `${encode({ alg: 'none' })}.${encode({ sub: actor, auth_mode: 'development', preferred_username: 'UX Test Operator', roles: ['HelpdeskAdmin', 'Incident.User'], exp: Math.floor(Date.now()/1000)+3600 })}.fixture` });
   }
+  if (url.pathname === '/api/v1/branding') return reply({ applicationName: 'RatelDesk', faviconUrl: '/favicon.ico' });
   if (url.pathname.endsWith('/chat/stream')) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     for (const item of events.filter(x => x.Sequence > Number(url.searchParams.get('cursor') ?? 0))) res.write(`id: ${item.Sequence}\nevent: chat\ndata: ${JSON.stringify(item)}\n\n`);
@@ -60,6 +61,11 @@ http.createServer(async (req, res) => {
     streams.add(res); req.on('close', () => streams.delete(res)); return;
   }
   if (url.pathname.endsWith('/chat/history')) return reply([{ conversationId: conversation, state, lastActivityUtc: new Date().toISOString(), createdByUserId: actor }]);
+  if (url.pathname.endsWith('/chat/stop-waiting')) {
+    state = 3; event('delivery_unknown', 'Operator stopped waiting locally.');
+    for (const stream of streams) stream.write('event: state\ndata: 3\n\n');
+    return reply({ accepted: true });
+  }
   if (url.pathname.endsWith('/chat/messages')) {
     let body = ''; for await (const part of req) body += part;
     const message = JSON.parse(body);
