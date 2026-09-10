@@ -18,22 +18,20 @@
             @* --- No changes in this loop, just uses the new property names below --- *@
             @foreach (var log in worklogs.OrderBy(w => w.LoggedAt))
             {
-                <MudChat Dense="true" Elevation="2" Square="true"
-                         Color="@(log.TechnicianId == currentUserId ? Color.Primary : Color.Default)"
-                         Variant="@(log.TechnicianId == currentUserId ? Variant.Filled : Variant.Outlined)"
-                         ChatPosition="@(log.TechnicianId == currentUserId ? ChatBubblePosition.End : ChatBubblePosition.Start)">
-                    <MudChatHeader Name="@log.TechnicianName" Time="@log.LoggedAt.ToString("g")"/>
-                    <MudAvatar Color="Color.Primary" Size="Size.Small" Variant="Variant.Outlined">@GetInitials(log.TechnicianName)</MudAvatar>
-                    <MudChatBubble>
-                        @((MarkupString)(log.Notes ?? "").Replace("\n", "<br/>"))
-                    </MudChatBubble>
-                    <MudChatFooter>
-                        @if (log.Hours > 0)
-                        {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Text" Icon="@Icons.Material.Filled.Timer">@log.Hours.ToString("F1")h</MudChip>
-                        }
-                    </MudChatFooter>
-                </MudChat>
+                <MudPaper Class="pa-3" Elevation="2" Outlined="@(log.TechnicianId != currentUserId)">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudAvatar Color="Color.Primary" Size="Size.Small" Variant="Variant.Outlined">@GetInitials(log.TechnicianName)</MudAvatar>
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.subtitle2">@log.TechnicianName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@log.LoggedAt.ToString("g")</MudText>
+                        </MudStack>
+                    </MudStack>
+                    <MudText Typo="Typo.body2" Class="mt-2">@((MarkupString)(log.Notes ?? "").Replace("\n", "<br/>"))</MudText>
+                    @if (log.Hours > 0)
+                    {
+                        <MudChip T="string" Class="mt-2" Size="Size.Small" Color="Color.Info" Variant="Variant.Text" Icon="@Icons.Material.Filled.Timer">@log.Hours.ToString("F1")h</MudChip>
+                    }
+                </MudPaper>
             }
         </div>
     }

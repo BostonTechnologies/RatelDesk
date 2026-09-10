@@ -74,7 +74,7 @@
         Organizations.FirstOrDefault(org => string.Equals(org.Id, organizationId, StringComparison.OrdinalIgnoreCase))?.Name
         ?? organizationId;
 
-    private string GetSelectionText(List<string> selectedValues)
+    private string GetSelectionText(IReadOnlyList<string> selectedValues)
     {
         if (selectedValues.Count == 0)
         {

@@ -266,7 +266,7 @@
     {
         if (_selected.Count == 0) return;
         var count = _selected.Count;
-        var confirm = await DialogService.ShowMessageBox(
+        var confirm = await DialogService.ShowMessageBoxAsync(
             $"Delete {count} selected tickets?",
             "This action will remove the selected tickets and will not notify the requester.",
             yesText: "Delete",
@@ -294,7 +294,7 @@
     {
         if (_selected.Count == 0) return;
         var count = _selected.Count;
-        var confirm = await DialogService.ShowMessageBox(
+        var confirm = await DialogService.ShowMessageBoxAsync(
             $"Mark {count} selected tickets as Marketing/Spam?",
             "This action will silently close the selected tickets and will not notify the requester.",
             yesText: "Mark as Marketing/Spam",

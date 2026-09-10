@@ -338,7 +338,7 @@
 
     private async Task EnableRuleAsync(InboundEmailRuleDto rule)
     {
-        var confirm = await DialogService.ShowMessageBox(
+        var confirm = await DialogService.ShowMessageBoxAsync(
             "Enable Email Rule",
             $"Enable '{rule.Name}'? Enabled rules can affect live inbound email processing.",
             yesText: "Enable",

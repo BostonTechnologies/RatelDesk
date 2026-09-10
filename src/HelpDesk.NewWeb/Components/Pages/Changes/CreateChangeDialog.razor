@@ -478,9 +478,9 @@
     private static string FormatUser(ChangeParticipantUserDto user) =>
         string.IsNullOrWhiteSpace(user.Email) ? user.Name : $"{user.Name} ({user.Email})";
 
-    private string GetApproverMultiSelectionText(List<string> selectedValues)
+    private string GetApproverMultiSelectionText(IReadOnlyList<string> selectedValues)
     {
-        var selected = selectedValues ?? new List<string>();
+        var selected = selectedValues ?? Array.Empty<string>();
         if (selected.Count == 0)
         {
             return string.Empty;

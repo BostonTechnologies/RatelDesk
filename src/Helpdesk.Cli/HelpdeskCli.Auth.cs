@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.CommandLine.Builder;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.ComponentModel.DataAnnotations;
@@ -114,17 +113,17 @@ internal static partial class HelpdeskCli
         var logs = new Command("logs", "Search Helpdesk API AI-agent operation logs.");
         var search = new Command("search", "Search log entries.");
         var tail = new Command("tail", "Poll log entries repeatedly.");
-        var since = new Option<long?>("--since", "Return logs after this sequence.");
-        var level = new Option<string?>("--level", "Filter by log level.");
-        var contains = new Option<string?>("--contains", "Filter by message text.");
-        var correlationId = new Option<string?>("--correlation-id", "Filter by correlation id.");
-        var limit = new Option<int?>("--limit", "Maximum entries.");
+        var since = new Option<long?>("--since") { Description = "Return logs after this sequence." };
+        var level = new Option<string?>("--level") { Description = "Filter by log level." };
+        var contains = new Option<string?>("--contains") { Description = "Filter by message text." };
+        var correlationId = new Option<string?>("--correlation-id") { Description = "Filter by correlation id." };
+        var limit = new Option<int?>("--limit") { Description = "Maximum entries." };
         foreach (var option in new Option[] { since, level, contains, correlationId, limit }) search.AddOption(option);
         search.SetHandler(ctx => SendAsync(runtime, globals, ctx, HttpMethod.Get, "/api/v1/ops/ai-agent/logs" + Query(ctx, (since, "since"), (level, "level"), (contains, "contains"), (correlationId, "correlationId"), (limit, "limit"))));
         logs.AddCommand(search);
 
-        var iterations = new Option<int>("--iterations", () => 20, "Poll count.");
-        var delay = new Option<int>("--delay-seconds", () => 3, "Delay between polls.");
+        var iterations = new Option<int>("--iterations") { Description = "Poll count.", DefaultValueFactory = _ => 20 };
+        var delay = new Option<int>("--delay-seconds") { Description = "Delay between polls.", DefaultValueFactory = _ => 3 };
         foreach (var option in new Option[] { since, iterations, delay }) tail.AddOption(option);
         tail.SetHandler(async ctx =>
         {
