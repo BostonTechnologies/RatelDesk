@@ -129,7 +129,8 @@ public sealed class EmailTemplateRenderer(ITemplateEngine templateEngine) : IEma
             ["ActionBorderColor"] = actionBorderColor,
             ["ActionTextColor"] = actionTextColor,
             ["LogoHtml"] = context.LogoHtml ?? string.Empty,
-            ["FooterHtml"] = context.FooterHtml ?? string.Empty
+            ["FooterHtml"] = context.FooterHtml ?? string.Empty,
+            ["brand"] = context.Brand
         };
 
         var body = templateEngine.Render(templateHtml ?? string.Empty, templateModel);
@@ -154,7 +155,8 @@ public sealed class EmailTemplateRenderer(ITemplateEngine templateEngine) : IEma
             ["ActionBorderColor"] = actionBorderColor,
             ["ActionTextColor"] = actionTextColor,
             ["LogoHtml"] = context.LogoHtml ?? string.Empty,
-            ["FooterHtml"] = context.FooterHtml ?? string.Empty
+            ["FooterHtml"] = context.FooterHtml ?? string.Empty,
+            ["brand"] = context.Brand
         };
 
         return templateEngine.Render(context.LayoutHtml, layoutModel);

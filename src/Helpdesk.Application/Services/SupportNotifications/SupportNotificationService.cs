@@ -208,7 +208,7 @@ public sealed class SupportNotificationService(
         TenantBrandingResolved branding)
     {
         var ticketRef = ticket.TrackingId ?? string.Empty;
-        var ticketLink = BuildSignedPublicTicketLink(ticketRef, recipient.Email);
+        var ticketLink = BuildSignedPublicTicketLink(ticketRef, recipient.Email, branding.TemplateBrand.ApplicationUrl);
         return new EmailTemplateContext
         {
             UserName = string.IsNullOrWhiteSpace(recipient.UserName) ? recipient.Email : recipient.UserName,
@@ -221,15 +221,17 @@ public sealed class SupportNotificationService(
             UpdateMessageText = $"Support notification for {ticketRef}",
             LayoutHtml = layout?.HtmlContent ?? string.Empty,
             BrandName = branding.BrandName,
+            Brand = branding.TemplateBrand,
             LogoHtml = branding.LogoHtml,
             FooterHtml = branding.FooterHtml,
             PrimaryColor = branding.PrimaryColor
         };
     }
 
-    private string BuildSignedPublicTicketLink(string trackingId, string email)
+    private string BuildSignedPublicTicketLink(string trackingId, string email, string? applicationUrl = null)
     {
-        if (string.IsNullOrWhiteSpace(_publicWebAppUrl) ||
+        var baseUrl = string.IsNullOrWhiteSpace(applicationUrl) ? _publicWebAppUrl : applicationUrl;
+        if (string.IsNullOrWhiteSpace(baseUrl) ||
             string.IsNullOrWhiteSpace(trackingId) ||
             string.IsNullOrWhiteSpace(email))
         {
@@ -240,7 +242,7 @@ public sealed class SupportNotificationService(
             trackingId,
             email,
             DateTimeOffset.UtcNow.AddDays(30));
-        return $"{_publicWebAppUrl.TrimEnd('/')}/view-ticket/{Uri.EscapeDataString(trackingId)}?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
+        return $"{baseUrl.TrimEnd('/')}/view-ticket/{Uri.EscapeDataString(trackingId)}?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
     }
 
     private static string RenderSubject(string subject, EmailTemplateContext context)

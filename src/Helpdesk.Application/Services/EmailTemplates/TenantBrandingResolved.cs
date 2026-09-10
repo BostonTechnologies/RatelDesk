@@ -8,4 +8,5 @@ public sealed class TenantBrandingResolved
     public string PrimaryColor { get; init; } = "#0b5fff";
     public string FromName { get; init; } = "Helpdesk";
     public string ReplyTo { get; init; } = string.Empty;
+    public EmailBrandingTemplateContext TemplateBrand { get; init; } = new();
 }

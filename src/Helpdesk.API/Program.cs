@@ -6,6 +6,7 @@ using Helpdesk.API.DependencyInjection;
 using Helpdesk.Infrastructure.Configuration;
 using Helpdesk.API.Endpoints.Activity;
 using Helpdesk.API.Endpoints.Attachments;
+using Helpdesk.API.Endpoints.Branding;
 using Helpdesk.API.Endpoints.Authentication;
 using Helpdesk.API.Endpoints.Captcha;
 using Helpdesk.API.Endpoints.Changes;
@@ -967,6 +968,7 @@ if (app.Environment.IsDevelopment())
     app.MapAuthenticationEndpoints();
 }
 app.MapCurrentUserAccessEndpoint();
+app.MapInstanceBrandingEndpoints();
 
 app.MapUserEndpoints();
 app.MapCustomerAuthEndpoints();

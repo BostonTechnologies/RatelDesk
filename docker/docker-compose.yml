@@ -27,6 +27,17 @@ services:
       DataProtection__KeyRingPath: /var/lib/rateldesk/keys
       PublicWebAppUrl: http://localhost:8111/
       StorageOptions__PublicApiBaseUrl: http://localhost:8222
+      Branding__ApplicationName: ${Branding__ApplicationName:-}
+      Branding__OrganizationName: ${Branding__OrganizationName:-}
+      Branding__ApplicationUrl: ${Branding__ApplicationUrl:-}
+      Branding__OrganizationUrl: ${Branding__OrganizationUrl:-}
+      Branding__SupportUrl: ${Branding__SupportUrl:-}
+      Branding__SupportEmail: ${Branding__SupportEmail:-}
+      Branding__LogoUrl: ${Branding__LogoUrl:-}
+      Branding__CompactLogoUrl: ${Branding__CompactLogoUrl:-}
+      Branding__FaviconUrl: ${Branding__FaviconUrl:-}
+      Branding__EmailFromDisplayName: ${Branding__EmailFromDisplayName:-}
+      Branding__Tagline: ${Branding__Tagline:-}
       # Local-only value so the sample stack can generate signed links. Override
       # with a unique secret before exposing the API outside this workstation.
       StorageOptions__ImageSigningSecret: ${RATELDESK_IMAGE_SIGNING_SECRET:-development-only-change-before-production}

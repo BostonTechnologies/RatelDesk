@@ -1,3 +1,5 @@
+<p align="center"><img src=".github/assets/rateldesk-wordmark.svg" alt="RatelDesk" width="560" /></p>
+
 # RatelDesk
 
 RatelDesk is a self-hosted, multi-tenant service-desk application built with ASP.NET Core and Blazor. It manages incidents, requests, changes, work logs, knowledge, email workflows, and optional AI-assisted operations.
@@ -33,6 +35,7 @@ The main public configuration surfaces are:
 - `ImapEmail__*` and SMTP configuration for inbound/outbound email workflows.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_RESOURCE_ATTRIBUTES` for telemetry export.
 - `RATELDESK_MCP_*` for isolated MCP clients.
+- `Branding__*` for deployment-owned instance identity. See [branding](docs/branding.md).
 - AI-provider and orchestration configuration through the administration UI or documented environment configuration.
 
 `/tmp/rateldesk/keys` is a safe local fallback for data-protection keys. Production deployments must override it with a durable mounted volume or managed key store.
@@ -40,6 +43,7 @@ The main public configuration surfaces are:
 ## Documentation
 
 See [self-hosting guidance](docs/SELF_HOSTING.md) for configuration, Docker, reverse-proxy, identity, email, AI, MCP, orchestration, telemetry, and troubleshooting guidance.
+See [instance branding](docs/branding.md) to customise the customer-facing identity without forking RatelDesk.
 
 ## Contributing and security
 

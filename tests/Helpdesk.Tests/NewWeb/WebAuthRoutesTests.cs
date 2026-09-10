@@ -38,7 +38,7 @@ public class WebAuthRoutesTests
         Assert.Contains("RatelDesk", content, StringComparison.Ordinal);
         Assert.Contains("Self-hosted", content, StringComparison.Ordinal);
         Assert.Contains("Continue to RatelDesk using your authorised account.", content, StringComparison.Ordinal);
-        Assert.Contains("Sign in to Helpdesk", content, StringComparison.Ordinal);
+        Assert.Contains("Sign in to RatelDesk", content, StringComparison.Ordinal);
         Assert.Contains("href=\"/login-authentik\"", content, StringComparison.Ordinal);
         Assert.Contains("rateldesk-mark.svg", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Automation Platform", content, StringComparison.Ordinal);

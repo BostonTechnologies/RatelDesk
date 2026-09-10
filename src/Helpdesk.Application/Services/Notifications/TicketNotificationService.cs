@@ -383,9 +383,10 @@ public class TicketNotificationService(
             TicketRef = safeTicketRef,
             TicketType = ticketType,
             TicketTypeLower = ticketType.ToLowerInvariant(),
-            TicketLink = BuildSignedPublicTicketLink(safeTicketRef, safeRecipientEmail),
+            TicketLink = BuildSignedPublicTicketLink(safeTicketRef, safeRecipientEmail, branding.TemplateBrand.ApplicationUrl),
             LayoutHtml = layout?.HtmlContent ?? string.Empty,
             BrandName = branding.BrandName,
+            Brand = branding.TemplateBrand,
             LogoHtml = branding.LogoHtml,
             FooterHtml = branding.FooterHtml,
             PrimaryColor = branding.PrimaryColor
@@ -665,11 +666,12 @@ public class TicketNotificationService(
         return null;
     }
 
-    private string BuildSignedPublicTicketLink(string trackingId, string email)
+    private string BuildSignedPublicTicketLink(string trackingId, string email, string? applicationUrl = null)
     {
-        var baseUrl = string.IsNullOrWhiteSpace(_publicWebAppUrl)
+        var configuredUrl = string.IsNullOrWhiteSpace(applicationUrl) ? _publicWebAppUrl : applicationUrl;
+        var baseUrl = string.IsNullOrWhiteSpace(configuredUrl)
             ? "[YOUR_PUBLIC_URL]"
-            : _publicWebAppUrl.TrimEnd('/');
+            : configuredUrl.TrimEnd('/');
         var expires = DateTimeOffset.UtcNow.AddDays(7);
         var token = publicTicketLinkSigner.GenerateToken(trackingId, email, expires);
         return $"{baseUrl}/view-ticket/{trackingId}?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";

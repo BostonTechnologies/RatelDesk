@@ -1,6 +1,7 @@
 using Helpdesk.Application.Services.AI;
 using Helpdesk.Application.Services.Email;
 using Helpdesk.Application.Services.EmailTemplates;
+using Helpdesk.Application.Services.Branding;
 using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Services.Notifications;
 using Helpdesk.Application.Services.SupportNotifications;
@@ -35,6 +36,7 @@ using Helpdesk.Infrastructure.Storage;
 using Helpdesk.Infrastructure.Orchestration;
 using Helpdesk.Infrastructure.Resources;
 using Helpdesk.Infrastructure.AiAssistant;
+using Helpdesk.Infrastructure.Branding;
 using Helpdesk.Infrastructure.Auth.Authentik;
 using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Shared.Models;
@@ -189,6 +191,7 @@ public static class DependencyInjection
         services.AddScoped<ITemplateEngine, TemplateEngine>();
         services.AddScoped<IEmailTemplateRenderer, EmailTemplateRenderer>();
         services.AddScoped<IEmailLayoutResolver, EmailLayoutResolver>();
+        services.AddScoped<IInstanceBrandingProvider, InstanceBrandingProvider>();
         services.AddScoped<ITenantBrandingResolver, TenantBrandingResolver>();
         services.AddScoped<IHtmlSanitizerService, HtmlSanitizerService>();
         services.AddSingleton<IImageLinkSigner, ImageLinkSigner>();
@@ -255,6 +258,7 @@ public static class DependencyInjection
         services.AddScoped<IRepository<EmailTemplate>, EfRepository<EmailTemplate>>();
         services.AddScoped<IRepository<EmailLayout>, EfRepository<EmailLayout>>();
         services.AddScoped<IRepository<TenantBranding>, EfRepository<TenantBranding>>();
+        services.AddScoped<IRepository<InstanceBranding>, EfRepository<InstanceBranding>>();
         services.AddScoped<IRepository<Service>, EfRepository<Service>>();
         services.AddScoped<IRepository<RequestForm>, EfRepository<RequestForm>>();
         services.AddScoped<IRepository<AutomationBinding>, EfRepository<AutomationBinding>>();

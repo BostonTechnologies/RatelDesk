@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 480" role="img" aria-labelledby="title desc">
+<title id="title">RatelDesk wordmark</title>
+<desc id="desc">Horizontal RatelDesk neon wordmark with a honey badger service desk mark.</desc>
+<defs>
+  <linearGradient id="n" x1="0" y1="0" x2="1" y2="0">
+    <stop stop-color="#35D9FF"/><stop offset=".46" stop-color="#F5F3FF"/><stop offset=".72" stop-color="#AF2BFF"/><stop offset="1" stop-color="#FF37D1"/>
+  </linearGradient>
+  <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
+    <stop stop-color="#111735"/><stop offset="1" stop-color="#050610"/>
+  </linearGradient>
+  <filter id="g" x="-40%" y="-40%" width="180%" height="180%">
+    <feGaussianBlur stdDeviation="10" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+<path d="M182 70 H1602 L1736 240 L1602 410 H182 L64 240Z" fill="url(#plate)" stroke="#1E2952" stroke-width="16"/>
+<path d="M198 92 H1585 L1706 240 L1585 388 H198 L94 240Z" fill="none" stroke="url(#n)" stroke-width="8" filter="url(#g)"/>
+<!-- simplified ratel head -->
+<g transform="translate(120 78)">
+  <path d="M86 173 C83 86 143 25 230 25 C317 25 377 86 374 173 C371 254 314 319 230 319 C146 319 89 254 86 173Z" fill="#090B18" stroke="#AF2BFF" stroke-width="8"/>
+  <path d="M87 151 C112 68 164 29 230 29 C296 29 348 68 373 151 C328 125 294 116 266 112 C251 110 239 98 230 84 C221 98 209 110 194 112 C166 116 132 125 87 151Z" fill="#F5F3FF"/>
+  <path d="M126 173 Q164 151 198 174 Q166 198 126 188Z" fill="#35D9FF" filter="url(#g)"/>
+  <path d="M334 173 Q296 151 262 174 Q294 198 334 188Z" fill="#35D9FF" filter="url(#g)"/>
+  <path d="M158 218 Q230 180 302 218 L287 251 Q230 281 173 251Z" fill="#151224" stroke="#AF2BFF" stroke-width="7"/>
+  <path d="M187 244 Q230 278 273 244 Q261 308 230 314 Q199 308 187 244Z" fill="#26081B" stroke="#FF37D1" stroke-width="5"/>
+  <path d="M199 251 l18 4 -8 28Z M261 251 l-18 4 8 28Z" fill="#F5F3FF"/>
+</g>
+<text x="520" y="258" font-family="Arial Black, Arial, sans-serif" font-size="190" font-weight="900" letter-spacing="3" fill="url(#n)" stroke="#F5F3FF" stroke-width="2">RATELDESK</text>
+<text x="530" y="334" font-family="Arial, sans-serif" font-size="50" font-weight="700" letter-spacing="15" fill="#AAB7E8">SELF-HOSTED SERVICE DESK</text>
+<path d="M520 360 H1538" stroke="url(#n)" stroke-width="5"/>
+</svg>
