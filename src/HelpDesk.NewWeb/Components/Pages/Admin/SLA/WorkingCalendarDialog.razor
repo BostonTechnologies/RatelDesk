@@ -94,7 +94,7 @@
 
     private async Task Save()
     {
-        await form.Validate();
+        await form.ValidateAsync();
         if (!form.IsValid)
         {
             return;

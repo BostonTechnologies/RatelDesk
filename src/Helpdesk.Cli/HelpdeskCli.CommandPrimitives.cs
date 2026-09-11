@@ -33,7 +33,7 @@ internal static partial class HelpdeskCli
                 runtime,
                 globals,
                 ctx,
-                ResolveMethod(ctx.ParseResult.GetValueForArgument(method)),
+                ResolveMethod(RequiredArgument(ctx.ParseResult, method)),
                 rawPath!,
                 ReadBody(ctx.ParseResult.GetValueForOption(body), ctx.ParseResult.GetValueForOption(bodyFile), "{}"));
         });
@@ -75,7 +75,7 @@ internal static partial class HelpdeskCli
     {
         var identity = new Argument<string>("identity");
         var command = new Command(name, $"GET {template}") { identity };
-        command.SetHandler(ctx => SendAsync(runtime, globals, ctx, HttpMethod.Get, template.Replace("{identity}", Escape(ctx.ParseResult.GetValueForArgument(identity)), StringComparison.Ordinal)));
+        command.SetHandler(ctx => SendAsync(runtime, globals, ctx, HttpMethod.Get, template.Replace("{identity}", Escape(RequiredArgument(ctx.ParseResult, identity)), StringComparison.Ordinal)));
         return command;
     }
 
@@ -91,7 +91,7 @@ internal static partial class HelpdeskCli
     {
         var identity = new Argument<string>("identity");
         var command = new Command(name, $"DELETE {template}") { identity };
-        command.SetHandler(ctx => SendAsync(runtime, globals, ctx, HttpMethod.Delete, template.Replace("{identity}", Escape(ctx.ParseResult.GetValueForArgument(identity)), StringComparison.Ordinal)));
+        command.SetHandler(ctx => SendAsync(runtime, globals, ctx, HttpMethod.Delete, template.Replace("{identity}", Escape(RequiredArgument(ctx.ParseResult, identity)), StringComparison.Ordinal)));
         return command;
     }
 
@@ -118,8 +118,8 @@ internal static partial class HelpdeskCli
         command.SetHandler(ctx =>
         {
             var path = template;
-            if (idArg is not null) path = path.Replace("{id}", Escape(ctx.ParseResult.GetValueForArgument(idArg)), StringComparison.Ordinal);
-            if (identityArg is not null) path = path.Replace("{identity}", Escape(ctx.ParseResult.GetValueForArgument(identityArg)), StringComparison.Ordinal);
+            if (idArg is not null) path = path.Replace("{id}", Escape(RequiredArgument(ctx.ParseResult, idArg)), StringComparison.Ordinal);
+            if (identityArg is not null) path = path.Replace("{identity}", Escape(RequiredArgument(ctx.ParseResult, identityArg)), StringComparison.Ordinal);
             var content = ReadBody(ctx.ParseResult.GetValueForOption(body), ctx.ParseResult.GetValueForOption(bodyFile), null)
                 ?? BuildBodyFromOptions(ctx, fields);
             content = NormalizeKnownBodyEnums(content);
@@ -128,5 +128,9 @@ internal static partial class HelpdeskCli
 
         return command;
     }
+
+    private static string RequiredArgument(CliParseResult parseResult, Argument<string> argument)
+        => parseResult.GetValueForArgument(argument)
+            ?? throw new CliValidationException($"Argument '{argument.Name}' is required.");
 
 }

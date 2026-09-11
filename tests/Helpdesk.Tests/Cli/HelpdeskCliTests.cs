@@ -220,6 +220,19 @@ public sealed class HelpdeskCliTests
     }
 
     [Fact]
+    public async Task ConfigGet_WithoutKey_ReturnsValidationError()
+    {
+        var errors = new StringWriter();
+
+        var code = await HelpdeskCli.RunAsync(
+            ["config", "get"],
+            new CliRuntime { Out = new StringWriter(), Error = errors });
+
+        Assert.Equal(CliExitCodes.ValidationError, code);
+        Assert.Contains("Required argument missing", errors.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task IncidentsList_Defaults_ToSummaryTable()
     {
         var output = new StringWriter();

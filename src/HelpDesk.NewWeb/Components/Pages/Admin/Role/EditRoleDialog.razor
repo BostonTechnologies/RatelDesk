@@ -15,7 +15,7 @@
 
     private async Task Submit()
     {
-        await form.Validate();
+        await form.ValidateAsync();
         if (form.IsValid)
         {
             var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/roles/{Role.Id}", model);

@@ -94,12 +94,12 @@
     private async Task OnHtmlValueChanged(string newHtmlContent)
     {
         model.HtmlContent = newHtmlContent;
-        await form.Validate();
+        await form.ValidateAsync();
     }
 
     private async Task Submit()
     {
-        await form.Validate();
+        await form.ValidateAsync();
         if (!isValid) return;
 
         HttpResponseMessage response;

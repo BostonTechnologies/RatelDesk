@@ -59,7 +59,7 @@
 
     private async Task HandleSubmit()
     {
-        await form.Validate();
+        await form.ValidateAsync();
         if (!form.IsValid)
         {
             return;
