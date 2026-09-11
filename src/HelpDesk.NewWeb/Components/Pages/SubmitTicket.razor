@@ -293,9 +293,9 @@ else
     {
         var isValid = _currentStepIndex switch
         {
-            0 => _contactInfoForm?.Validate() ?? false,
-            1 => _ticketDetailsForm?.Validate() ?? false,
-            2 => _attachmentsForm?.Validate() ?? false,
+            0 => await ValidateStepAsync(_contactInfoForm),
+            1 => await ValidateStepAsync(_ticketDetailsForm),
+            2 => await ValidateStepAsync(_attachmentsForm),
             _ => true
         };
 
@@ -307,6 +307,9 @@ else
 
         await _stepper.NextStepAsync();
     }
+
+    private static async Task<bool> ValidateStepAsync(FormCraftComponent<SubmitTicketModel>? form)
+        => form is not null && await form.ValidateAsync();
 
     private async Task GoToPreviousStep()
     {

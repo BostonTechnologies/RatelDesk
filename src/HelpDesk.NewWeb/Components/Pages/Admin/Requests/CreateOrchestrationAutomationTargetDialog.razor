@@ -82,7 +82,7 @@
 
     private async Task CreateAsync()
     {
-        await form.Validate();
+        await form.ValidateAsync();
         if (!form.IsValid)
         {
             return;

@@ -71,7 +71,7 @@ internal static partial class HelpdeskCli
             ("--password", "password"));
         var email = new Argument<string>("email");
         var byEmail = new Command("by-email", "GET /api/v1/users/by-email/{email}") { email };
-        byEmail.SetHandler(ctx => SendProjectedReadAsync(runtime, globals, ctx, "/api/v1/users/by-email/" + Escape(ctx.ParseResult.GetValueForArgument(email)), "user"));
+        byEmail.SetHandler(ctx => SendProjectedReadAsync(runtime, globals, ctx, "/api/v1/users/by-email/" + Escape(RequiredArgument(ctx.ParseResult, email)), "user"));
         users.AddCommand(byEmail);
         users.AddCommand(BodyCommand(runtime, globals, "provision", HttpMethod.Post, "/api/v1/users/provision",
             ("--email", "email"),

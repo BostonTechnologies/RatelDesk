@@ -65,8 +65,9 @@ internal static partial class HelpdeskCli
         get.SetHandler(async ctx =>
         {
             var store = new CliConfigStore(ctx.ParseResult.GetValueForOption(globals.ConfigPath));
-            var value = GetConfigValue(store.Load(), ctx.ParseResult.GetValueForArgument(keyArg), redact: true);
-            await WriteJsonAsync(runtime, new { key = ctx.ParseResult.GetValueForArgument(keyArg), value }, ctx, globals).ConfigureAwait(false);
+            var key = RequiredArgument(ctx.ParseResult, keyArg);
+            var value = GetConfigValue(store.Load(), key, redact: true);
+            await WriteJsonAsync(runtime, new { key, value }, ctx, globals).ConfigureAwait(false);
         });
         config.AddCommand(get);
 
@@ -75,7 +76,7 @@ internal static partial class HelpdeskCli
         {
             var store = new CliConfigStore(ctx.ParseResult.GetValueForOption(globals.ConfigPath));
             var current = store.Load();
-            var updated = SetConfigValue(current, ctx.ParseResult.GetValueForArgument(keyArg), ctx.ParseResult.GetValueForArgument(valueArg));
+            var updated = SetConfigValue(current, RequiredArgument(ctx.ParseResult, keyArg), RequiredArgument(ctx.ParseResult, valueArg));
             store.Save(updated);
             await WriteJsonAsync(runtime, new { saved = true, path = store.Path }, ctx, globals).ConfigureAwait(false);
         });
@@ -85,7 +86,7 @@ internal static partial class HelpdeskCli
         unset.SetHandler(async ctx =>
         {
             var store = new CliConfigStore(ctx.ParseResult.GetValueForOption(globals.ConfigPath));
-            var updated = SetConfigValue(store.Load(), ctx.ParseResult.GetValueForArgument(keyArg), null);
+            var updated = SetConfigValue(store.Load(), RequiredArgument(ctx.ParseResult, keyArg), null);
             store.Save(updated);
             await WriteJsonAsync(runtime, new { saved = true, path = store.Path }, ctx, globals).ConfigureAwait(false);
         });

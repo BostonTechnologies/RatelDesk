@@ -125,12 +125,12 @@
     private async Task OnHtmlValueChanged(string newHtmlContent)
     {
         model.HtmlContent = newHtmlContent;
-        await form.Validate(); // Manually trigger validation
+        await form.ValidateAsync(); // Manually trigger validation
     }
 
     private async Task Submit()
     {
-        await form.Validate();
+        await form.ValidateAsync();
         if (!isValid) return;
 
         if (string.IsNullOrWhiteSpace(model.Name))
