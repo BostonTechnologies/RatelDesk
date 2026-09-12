@@ -11,6 +11,7 @@
         <MudStack Spacing="2">
             <MudText Typo="Typo.h4" HtmlTag="h1">Set up RatelDesk</MudText>
             <MudText Typo="Typo.body1">Complete first-time initialization with the operator-only setup code.</MudText>
+            @if (_managedFields.Count > 0) { <MudAlert Severity="Severity.Info">Deployment-managed setup values are shown read-only.</MudAlert> }
             @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
             @if (_ready) { <MudAlert Severity="Severity.Success">RatelDesk is restarting into its normal application host. You can sign in shortly.</MudAlert> }
 
@@ -37,10 +38,10 @@
                         }
                     </MudStep>
                     <MudStep Title="Instance">
-                        <MudTextField T="string" @bind-Value="_organization" Label="Initial organization" Required="true" FullWidth="true" />
-                        <MudTextField T="string" @bind-Value="_applicationName" Label="Application name" Required="true" FullWidth="true" />
-                        <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL" InputType="InputType.Url" Required="true" FullWidth="true" HelperText="HTTPS is required except for localhost HTTP." />
-                        <MudTextField T="string" @bind-Value="_timeZoneId" Label="Time zone" Required="true" FullWidth="true" HelperText="IANA time-zone ID; UTC is the default (for example, Africa/Johannesburg)." />
+                        <MudTextField T="string" @bind-Value="_organization" Label="Initial organization" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.OrganizationName))" />
+                        <MudTextField T="string" @bind-Value="_applicationName" Label="Application name" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.ApplicationName))" />
+                        <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL" InputType="InputType.Url" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.ApplicationUrl))" HelperText="HTTPS is required except for localhost HTTP." />
+                        <MudTextField T="string" @bind-Value="_timeZoneId" Label="Time zone" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.TimeZoneId))" HelperText="IANA time-zone ID; UTC is the default (for example, Africa/Johannesburg)." />
                     </MudStep>
                     <MudStep Title="First administrator">
                         <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" FullWidth="true" />
@@ -97,6 +98,7 @@
     private int _step;
     private bool _busy, _ready, _useTls = true, _keepDefaults = true;
     private string? _error, _session;
+    private readonly HashSet<string> _managedFields = new(StringComparer.Ordinal);
     private string _setupCode = string.Empty, _provider = "Sqlite", _host = string.Empty, _database = string.Empty, _username = string.Empty, _databasePassword = string.Empty;
     private int _port = 5432;
     private string _organization = string.Empty, _applicationName = "RatelDesk", _applicationUrl = string.Empty, _timeZoneId = "UTC", _displayName = string.Empty, _email = string.Empty, _password = string.Empty, _confirmPassword = string.Empty;
@@ -108,7 +110,8 @@
         try
         {
             var status = await HttpClientFactory.CreateClient("SystemApiNoAuth").GetFromJsonAsync<SetupStatus>("/api/v1/setup/status");
-            if (status?.State.ValueKind == System.Text.Json.JsonValueKind.String && status.State.GetString() == "Ready") Navigation.NavigateTo("/login", forceLoad: true);
+            if (status?.State == "Ready") Navigation.NavigateTo("/login", forceLoad: true);
+            ApplyDeploymentDefaults(status?.Defaults);
         }
         catch (HttpRequestException exception)
         {
@@ -177,7 +180,22 @@
 
     private void Back() { _error = null; _step--; }
     private void ExpireSession() { _step = 0; _error = "Your setup session expired. Enter the setup code again."; }
+    private void ApplyDeploymentDefaults(SetupDefaults? defaults)
+    {
+        if (defaults is null) return;
+        ApplyManagedValue(nameof(SetupDefaults.OrganizationName), defaults.OrganizationName, value => _organization = value);
+        ApplyManagedValue(nameof(SetupDefaults.ApplicationName), defaults.ApplicationName, value => _applicationName = value);
+        ApplyManagedValue(nameof(SetupDefaults.ApplicationUrl), defaults.ApplicationUrl, value => _applicationUrl = value);
+        ApplyManagedValue(nameof(SetupDefaults.TimeZoneId), defaults.TimeZoneId, value => _timeZoneId = value);
+    }
+    private void ApplyManagedValue(string name, string? value, Action<string> apply)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        apply(value); _managedFields.Add(name);
+    }
+    private bool IsManaged(string name) => _managedFields.Contains(name);
     private static bool ValidUrl(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback));
     private sealed record SetupSession(string Session);
-    private sealed record SetupStatus(System.Text.Json.JsonElement State);
+    private sealed record SetupStatus(string? State, SetupDefaults? Defaults);
+    private sealed record SetupDefaults(string? OrganizationName, string? ApplicationName, string? ApplicationUrl, string? TimeZoneId);
 }

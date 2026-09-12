@@ -205,7 +205,14 @@ public sealed class BootstrapStateStoreTests
             {
                 StateDirectory = directory,
                 DataDirectory = dataDirectory,
-                SetupCode = "operator-provided-code"
+                SetupCode = "operator-provided-code",
+                Interactive = new BootstrapInteractiveOptions
+                {
+                    OrganizationName = "Deployment Organization",
+                    ApplicationName = "Deployment Desk",
+                    ApplicationUrl = "https://deployment.example.test",
+                    TimeZoneId = "Africa/Johannesburg"
+                }
             };
             var store = new FileBootstrapStateStore(options);
             await store.LoadOrCreateAsync();
@@ -258,8 +265,11 @@ public sealed class BootstrapStateStoreTests
             Assert.Equal(configured.InstanceId, initialization.InstanceId);
             Assert.Equal(configured.OperationId, initialization.OperationId);
             Assert.NotEqual("unknown", initialization.SetupVersion);
-            Assert.Equal("UTC", initialization.TimeZoneId);
+            Assert.Equal("Africa/Johannesburg", initialization.TimeZoneId);
+            Assert.Equal("Deployment Organization", (await application.Organizations.SingleAsync()).Name);
             var branding = await application.InstanceBrandings.SingleAsync();
+            Assert.Equal("Deployment Desk", branding.ApplicationName);
+            Assert.Equal("https://deployment.example.test", branding.ApplicationUrl);
             Assert.Equal("https://desk.example.test/logo.svg", branding.LogoUrl);
             Assert.Equal("https://desk.example.test/compact.svg", branding.CompactLogoUrl);
             Assert.Equal("https://support.example.test", branding.SupportUrl);

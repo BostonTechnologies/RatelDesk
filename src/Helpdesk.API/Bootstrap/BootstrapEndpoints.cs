@@ -11,10 +11,11 @@ public static class BootstrapEndpoints
     {
         app.MapGet("/api/v1/setup/status", async (
             [FromServices] IBootstrapStateStore stateStore,
+            [FromServices] BootstrapOptions options,
             CancellationToken cancellationToken) =>
         {
             var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
-            return Results.Ok(ToResponse(descriptor));
+            return Results.Ok(ToResponse(descriptor, options));
         })
         .AllowAnonymous()
         .RequireRateLimiting("SetupUnlock")
@@ -101,8 +102,8 @@ public static class BootstrapEndpoints
                 }, cancellationToken);
 
                 return postgreSqlDescriptor.State == BootstrapState.Configuring
-                    ? Results.Ok(ToResponse(postgreSqlDescriptor))
-                    : Results.Conflict(ToResponse(postgreSqlDescriptor));
+                    ? Results.Ok(ToResponse(postgreSqlDescriptor, options))
+                    : Results.Conflict(ToResponse(postgreSqlDescriptor, options));
             }
 
             var sqlitePath = Path.GetFullPath(string.IsNullOrWhiteSpace(request.SqlitePath)
@@ -131,8 +132,8 @@ public static class BootstrapEndpoints
             }, cancellationToken);
 
             return descriptor.State == BootstrapState.Configuring
-                ? Results.Ok(ToResponse(descriptor))
-                : Results.Conflict(ToResponse(descriptor));
+                ? Results.Ok(ToResponse(descriptor, options))
+                : Results.Conflict(ToResponse(descriptor, options));
         })
         .AllowAnonymous()
         .WithTags("Setup");
@@ -180,10 +181,22 @@ public static class BootstrapEndpoints
 
     private sealed record SetupSessionResponse(string Session, DateTimeOffset ExpiresAtUtc);
 
-    private static BootstrapStatusResponse ToResponse(BootstrapDescriptor descriptor) =>
-        new(descriptor.State.ToString(), descriptor.Provider);
+    private static BootstrapStatusResponse ToResponse(BootstrapDescriptor descriptor, BootstrapOptions? options = null) =>
+        new(descriptor.State.ToString(), descriptor.Provider, options is null ? null : new BootstrapInteractiveDefaultsResponse(
+            TrimOrNull(options.Interactive.OrganizationName),
+            TrimOrNull(options.Interactive.ApplicationName),
+            TrimOrNull(options.Interactive.ApplicationUrl),
+            TrimOrNull(options.Interactive.TimeZoneId)));
 
-    private sealed record BootstrapStatusResponse(string State, string? Provider);
+    private static string? TrimOrNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private sealed record BootstrapStatusResponse(string State, string? Provider, BootstrapInteractiveDefaultsResponse? Defaults);
+
+    private sealed record BootstrapInteractiveDefaultsResponse(
+        string? OrganizationName,
+        string? ApplicationName,
+        string? ApplicationUrl,
+        string? TimeZoneId);
 
     private static async Task StopBootstrapHostAfterResponseAsync(IHostApplicationLifetime applicationLifetime)
     {

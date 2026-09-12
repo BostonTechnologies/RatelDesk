@@ -23,6 +23,7 @@ public sealed class BootstrapInitializationService(
         FirstAdministratorRequest request,
         CancellationToken cancellationToken)
     {
+        request = ApplyDeploymentManagedDefaults(request);
         if (descriptor.State is not BootstrapState.Configuring ||
             !IsSupportedConfiguredProvider(descriptor) ||
             descriptor.OperationId is null)
@@ -180,6 +181,17 @@ public sealed class BootstrapInitializationService(
         }, cancellationToken);
         return new BootstrapInitializationResult(true, null, ready);
     }
+
+    private FirstAdministratorRequest ApplyDeploymentManagedDefaults(FirstAdministratorRequest request) => request with
+    {
+        OrganizationName = SelectDeploymentValue(options.Interactive.OrganizationName, request.OrganizationName),
+        ApplicationName = SelectDeploymentValue(options.Interactive.ApplicationName, request.ApplicationName),
+        ApplicationUrl = SelectDeploymentValue(options.Interactive.ApplicationUrl, request.ApplicationUrl),
+        TimeZoneId = SelectDeploymentValue(options.Interactive.TimeZoneId, request.TimeZoneId)
+    };
+
+    private static string? SelectDeploymentValue(string? configured, string? submitted) =>
+        string.IsNullOrWhiteSpace(configured) ? submitted : configured.Trim();
 
     private static bool IsSupportedConfiguredProvider(BootstrapDescriptor descriptor) =>
         (string.Equals(descriptor.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase) &&

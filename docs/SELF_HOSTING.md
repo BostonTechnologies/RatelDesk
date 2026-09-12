@@ -10,6 +10,16 @@ For built-in roles, scoped custom roles, and the bounded tenant-member delegatio
 
 Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. After the first API start, retrieve the operator-only setup code from `/var/lib/rateldesk/bootstrap/setup-code` in the API container and complete `http://localhost:8111/setup`. The code is consumed at completion and is never returned by HTTP APIs. On success, the API exits its restricted setup host and Compose restarts it into the normal application host; wait briefly for the sign-in page to become available.
 
+An operator can prefill and lock non-secret interactive values with
+`Bootstrap__Interactive__OrganizationName`,
+`Bootstrap__Interactive__ApplicationName`,
+`Bootstrap__Interactive__ApplicationUrl`, and
+`Bootstrap__Interactive__TimeZoneId`. The setup page labels these as
+deployment-managed and renders them read-only; the API applies the same values
+at completion, so modifying the browser request cannot override them. Keep
+database passwords and administrator passwords out of these values and use the
+operator-controlled setup flow or unattended secret inputs instead.
+
 Before setup completes, an operator can replace a lost or exposed setup code without reopening a completed instance:
 
 ```bash
