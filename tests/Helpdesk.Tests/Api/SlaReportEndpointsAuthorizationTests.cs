@@ -7,10 +7,13 @@ using Helpdesk.Application.Sla;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.Sla;
 using Helpdesk.Shared.Enums;
+using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -64,6 +67,8 @@ public class SlaReportEndpointsAuthorizationTests
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<ISlaReportingQueryService>(fake);
+                services.RemoveAll<ICurrentUserAccessService>();
+                services.AddSingleton<ICurrentUserAccessService, SlaReportTestAccessService>();
                 services.AddAuthentication(o =>
                 {
                     o.DefaultAuthenticateScheme = "Test";
@@ -129,13 +134,40 @@ public class SlaReportEndpointsAuthorizationTests
 
             if (!string.Equals(role, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase))
             {
-                claims.Add(new Claim("organization_id", "tenant-a"));
+                claims.Add(new Claim("sla_test_tenant", "tenant-a"));
             }
 
             var identity = new ClaimsIdentity(claims, "Test");
             var principal = new ClaimsPrincipal(identity);
             var ticket = new AuthenticationTicket(principal, "Test");
             return Task.FromResult(AuthenticateResult.Success(ticket));
+        }
+    }
+
+    private sealed class SlaReportTestAccessService : ICurrentUserAccessService
+    {
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
+        {
+            var roles = user.FindAll(ClaimTypes.Role)
+                .Select(claim => claim.Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var isAdmin = roles.Contains(HelpdeskPermissions.HelpdeskAdmin);
+            var organizationId = user.FindFirst("sla_test_tenant")?.Value;
+
+            return Task.FromResult(new CurrentUserAccessProfile(
+                true,
+                user.Identity?.Name,
+                null,
+                organizationId,
+                null,
+                null,
+                isAdmin,
+                roles,
+                roles,
+                string.IsNullOrWhiteSpace(organizationId)
+                    ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { organizationId },
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
         }
     }
 }

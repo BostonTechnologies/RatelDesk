@@ -8,6 +8,7 @@ using Helpdesk.Application.Events;
 using Helpdesk.Application.AiAssistant.Chat;
 using Helpdesk.Infrastructure.AiAssistant.Chat;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.AiAssistant.Chat;
 using Helpdesk.Shared.Services;
 using Helpdesk.Tests.Infrastructure.AiAssistant;
@@ -226,6 +227,8 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
                 services.AddScoped(sp => database.Context(sp.GetRequiredService<ITenantContext>()));
                 services.AddSingleton(Transport);
                 services.AddSingleton(Publisher);
+                services.RemoveAll<ICurrentUserAccessService>();
+                services.AddSingleton<ICurrentUserAccessService, ChatTestAccessService>();
                 services.PostConfigure<AiAssistantChatOptions>(x => { x.Enabled = enabled; x.Endpoint = "https://chat.invalid/hub/session"; x.DeviceToken = "test-only-device-token"; });
                 services.AddAuthentication(options =>
                 {
@@ -250,8 +253,38 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
             if (!Request.Headers.TryGetValue("X-Chat-Test-Role", out var role)) return Task.FromResult(AuthenticateResult.NoResult());
-            var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "operator"), new Claim(ClaimTypes.Role, role.ToString()), new Claim("organization_id", Request.Headers["X-Chat-Test-Tenant"].ToString()) }, Scheme.Name);
+            var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "operator"), new Claim(ClaimTypes.Role, role.ToString()), new Claim("chat_test_tenant", Request.Headers["X-Chat-Test-Tenant"].ToString()) }, Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name)));
+        }
+    }
+
+    private sealed class ChatTestAccessService : ICurrentUserAccessService
+    {
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
+        {
+            var roles = user.FindAll(ClaimTypes.Role)
+                .Select(claim => claim.Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var organizationId = user.FindFirst("chat_test_tenant")?.Value;
+            var isAdmin = roles.Contains(HelpdeskPermissions.HelpdeskAdmin);
+            var permissions = roles.Contains("Technician")
+                ? HelpdeskPermissions.TechnicalBundle.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            return Task.FromResult(new CurrentUserAccessProfile(
+                true,
+                user.Identity?.Name,
+                null,
+                organizationId,
+                null,
+                null,
+                isAdmin,
+                roles,
+                permissions,
+                string.IsNullOrWhiteSpace(organizationId)
+                    ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { organizationId },
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
         }
     }
 
