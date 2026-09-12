@@ -846,6 +846,45 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, withRecoveryCode.StatusCode);
     }
 
+    [Fact]
+    public async Task Ticket_counts_do_not_disclose_a_ticket_outside_the_principal_scope()
+    {
+        const string incidentOrganizationId = "count-incident-organization";
+        const string userOrganizationId = "count-user-organization";
+        const string incidentId = "restricted-count-incident";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "count.reader@example.test", Email = "count.reader@example.test", DisplayName = "Count Reader" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("count.reader@example.test"))!.Id;
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = incidentOrganizationId, Name = "Count incident organization" },
+                new Organization { Id = userOrganizationId, Name = "Count reader organization" });
+            db.Users.Add(new User { Id = userId, Name = "Count Reader", Email = "count.reader@example.test", OrganizationId = userOrganizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = userId, OrganizationId = userOrganizationId, RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Incidents.Add(new Incident { Id = incidentId, OrganizationId = incidentOrganizationId, Title = "Restricted count incident", Description = "Restricted count incident" });
+            db.TicketTimelineEvents.Add(new TicketTimelineEvent { TicketId = incidentId, EventType = Helpdesk.Shared.Enums.TimelineEventType.Worklog, MessageText = "Restricted timeline item" });
+            await db.SaveChangesAsync();
+        }
+
+        using var reader = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await reader.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "count.reader@example.test", "correct horse battery staple"))).StatusCode);
+        var denied = await reader.GetAsync($"/api/v1/incidents/{incidentId}/timeline/count");
+        using var administrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+        var permitted = await administrator.GetAsync($"/api/v1/incidents/{incidentId}/timeline/count");
+
+        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, permitted.StatusCode);
+        Assert.Equal("1", await permitted.Content.ReadAsStringAsync());
+    }
+
     private static string CreateTotp(string sharedKey)
     {
         const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
