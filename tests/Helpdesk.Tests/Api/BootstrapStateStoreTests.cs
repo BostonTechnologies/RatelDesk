@@ -602,6 +602,25 @@ public sealed class BootstrapStateStoreTests
         await establishedMigrator.MigrateAsync("20260912082029_AddRoleDefinitions");
         var organization = new Organization { Name = "Established organization" };
         established.Organizations.Add(organization);
+        var customer = new Customer
+        {
+            Name = "Established OIDC customer",
+            Email = "customer@example.test",
+            OrganizationId = organization.Id
+        };
+        established.Customers.Add(customer);
+        established.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = customer.Id,
+            AuthProviderType = "Oidc",
+            OidcIssuer = "https://id.example.test",
+            OidcSubject = "established-subject",
+            AuthentikUserId = "established-provider-user",
+            AuthentikUsername = "established.customer",
+            AuthentikEmail = customer.Email,
+            InviteStatus = CustomerInviteStatus.Active,
+            InviteAcceptedAtUtc = DateTimeOffset.UtcNow
+        });
         established.Users.Add(new User
         {
             Name = "Established administrator",
@@ -617,6 +636,19 @@ public sealed class BootstrapStateStoreTests
         Assert.Equal(LegacyInstallationAdoptionResult.AlreadyMarked,
             await adoption.AdoptAsync(established, CancellationToken.None));
         Assert.Single(await established.InstanceInitializations.ToListAsync());
+
+        var preservedLink = await established.CustomerAuthLinks.AsNoTracking().SingleAsync();
+        var preservedCustomer = await established.Customers.AsNoTracking().SingleAsync();
+        Assert.Equal("Oidc", preservedLink.AuthProviderType);
+        Assert.Equal("https://id.example.test", preservedLink.OidcIssuer);
+        Assert.Equal("established-subject", preservedLink.OidcSubject);
+        Assert.Equal("established-provider-user", preservedLink.AuthentikUserId);
+        Assert.Equal("established.customer", preservedLink.AuthentikUsername);
+        Assert.Equal(customer.Email, preservedLink.AuthentikEmail);
+        Assert.Equal(CustomerInviteStatus.Active, preservedLink.InviteStatus);
+        Assert.Equal(customer.Id, preservedLink.CustomerId);
+        Assert.Equal(customer.Email, preservedCustomer.Email);
+        Assert.Equal(organization.Id, preservedCustomer.OrganizationId);
     }
 
     [Fact]
