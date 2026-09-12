@@ -31,15 +31,15 @@ public static class TicketSlaEndpoints
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
-            var authorizationFailure = await AuthorizeSlaMutationAsync(
+            var authorization = await AuthorizeSlaMutationAsync(
                 ticketId,
                 context.User,
                 accessService,
                 db,
                 cancellationToken);
-            if (authorizationFailure is not null)
+            if (authorization.Failure is not null)
             {
-                return authorizationFailure;
+                return authorization.Failure;
             }
 
             if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 200)
@@ -54,7 +54,7 @@ public static class TicketSlaEndpoints
 
             try
             {
-                await slaService.PauseAsync(ticketId, userId, request.Reason.Trim());
+                await slaService.PauseAsync(authorization.Ticket!, userId, request.Reason.Trim());
                 await TryEvaluateEscalationAsync(
                     ticketId,
                     ticketRepo,
@@ -89,22 +89,22 @@ public static class TicketSlaEndpoints
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
-            var authorizationFailure = await AuthorizeSlaMutationAsync(
+            var authorization = await AuthorizeSlaMutationAsync(
                 ticketId,
                 context.User,
                 accessService,
                 db,
                 cancellationToken);
-            if (authorizationFailure is not null)
+            if (authorization.Failure is not null)
             {
-                return authorizationFailure;
+                return authorization.Failure;
             }
 
             var userId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
 
             try
             {
-                await slaService.ResumeAsync(ticketId, userId);
+                await slaService.ResumeAsync(authorization.Ticket!, userId);
                 await TryEvaluateEscalationAsync(
                     ticketId,
                     ticketRepo,
@@ -126,23 +126,27 @@ public static class TicketSlaEndpoints
         .WithSummary("Resume ticket SLA");
     }
 
-    private static async Task<IResult?> AuthorizeSlaMutationAsync(
+    private static async Task<SlaMutationAuthorization> AuthorizeSlaMutationAsync(
         string ticketId,
         ClaimsPrincipal user,
         ICurrentUserAccessService accessService,
         HelpdeskDbContext db,
         CancellationToken cancellationToken)
     {
-        var ticket = await db.Tickets.AsNoTracking()
+        var ticket = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
             .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, cancellationToken);
         if (ticket is null)
         {
-            return Results.NotFound();
+            return new(null, Results.NotFound());
         }
 
         var access = await accessService.ResolveAsync(user, cancellationToken);
-        return CanManageSla(access, ticket) ? null : Results.Forbid();
+        return CanManageSla(access, ticket)
+            ? new(ticket, null)
+            : new(null, Results.Forbid());
     }
+
+    private sealed record SlaMutationAuthorization(Ticket? Ticket, IResult? Failure);
 
     private static bool CanManageSla(CurrentUserAccessProfile access, Ticket ticket)
     {
