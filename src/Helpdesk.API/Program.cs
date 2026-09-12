@@ -57,6 +57,7 @@ using Helpdesk.Infrastructure;
 using Helpdesk.Infrastructure.Logging;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Infrastructure.Persistence.SeedData;
+using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Health;
 using Helpdesk.Infrastructure.Services;
 using Helpdesk.Shared.Models;
@@ -65,6 +66,7 @@ using Helpdesk.Shared.Services;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
@@ -94,6 +96,10 @@ var builder = WebApplication.CreateBuilder(args);
 var systemTokenSecret = builder.Configuration["SYSTEM_TOKEN_SECRET"] ?? builder.Configuration["SystemTokenSecret"];
 var aiAgentOpsLogBuffer = new AiAgentOpsLogBuffer();
 var skipDatabaseStartup = builder.Configuration.GetValue<bool>("Helpdesk:SkipDatabaseStartup");
+var localAuthenticationOptions = builder.Configuration.GetSection(LocalAuthenticationOptions.SectionName).Get<LocalAuthenticationOptions>() ?? new LocalAuthenticationOptions();
+var localAuthenticationCookieName = localAuthenticationOptions.AllowInsecureLocalhost
+    ? "RatelDesk.Local"
+    : "__Host-RatelDesk.Local";
 var bootstrapOptions = builder.Configuration.GetSection(BootstrapOptions.SectionName).Get<BootstrapOptions>() ?? new BootstrapOptions();
 var bootstrapStateStore = new FileBootstrapStateStore(bootstrapOptions);
 var bootstrapDescriptor = !skipDatabaseStartup && string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("HelpdeskDb"))
@@ -283,6 +289,17 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0
             });
     });
+    options.AddPolicy("LocalLogin", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                AutoReplenishment = true,
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(15),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            }));
 
     options.OnRejected = (context, ct) =>
     {
@@ -312,7 +329,9 @@ builder.Services.AddAuthentication(options =>
         // If there is no bearer token, forward to a concrete scheme (NOT to "Bearer")
         var auth = context.Request.Headers["Authorization"].ToString();
         if (string.IsNullOrEmpty(auth) || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            return "Azure";
+            return context.Request.Cookies.ContainsKey(localAuthenticationCookieName)
+                ? LocalAuthenticationOptions.Scheme
+                : "Azure";
 
         var token = auth.Substring("Bearer ".Length).Trim();
         try
@@ -351,6 +370,18 @@ builder.Services.AddAuthentication(options =>
 
         return "Azure";
     };
+})
+.AddCookie(LocalAuthenticationOptions.Scheme, options =>
+{
+    options.Cookie.Name = localAuthenticationCookieName;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.Path = "/";
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = localAuthenticationOptions.AllowInsecureLocalhost
+        ? CookieSecurePolicy.SameAsRequest
+        : CookieSecurePolicy.Always;
+    options.ExpireTimeSpan = TimeSpan.FromHours(8);
+    options.SlidingExpiration = true;
 })
 .AddJwtBearer("Authentik", options =>
 {
@@ -829,7 +860,9 @@ if (!skipDatabaseStartup)
     using (var scope = app.Services.CreateScope())
     {
         var ctx = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        var identityDb = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
         await ctx.Database.MigrateAsync();
+        await identityDb.Database.MigrateAsync();
         await TicketCategorySeed.SeedAsync(ctx);
         await SlaPolicySeed.SeedAsync(ctx);
 
@@ -933,6 +966,10 @@ if (app.Environment.IsDevelopment())
 }
 app.MapCurrentUserAccessEndpoint();
 app.MapInstanceBrandingEndpoints();
+if (localAuthenticationOptions.SupportsLocalAccounts)
+{
+    app.MapLocalAuthenticationEndpoints();
+}
 
 app.MapUserEndpoints();
 app.MapCustomerAuthEndpoints();

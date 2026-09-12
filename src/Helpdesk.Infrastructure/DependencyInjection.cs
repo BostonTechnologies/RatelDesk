@@ -83,6 +83,9 @@ public static class DependencyInjection
             options.UseNpgsql(
                 helpdeskDbConnectionString,
                 npg => npg.UseVector()));
+        services.AddDbContext<RatelDeskIdentityDbContext>(options =>
+            options.UseNpgsql(helpdeskDbConnectionString));
+        services.AddRatelDeskLocalIdentity();
 
         AddRepositoryRegistrations(services);
 
