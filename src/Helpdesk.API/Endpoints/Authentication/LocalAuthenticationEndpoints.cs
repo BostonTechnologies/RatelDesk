@@ -222,6 +222,17 @@ public static class LocalAuthenticationEndpoints
             }
 
             var normalizedEmail = request.Email.Trim();
+            var organizationId = string.IsNullOrWhiteSpace(request.OrganizationId)
+                ? null
+                : request.OrganizationId.Trim();
+            if (organizationId is not null && !await db.Organizations.AnyAsync(organization => organization.Id == organizationId && organization.IsEnabled))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["organizationId"] = ["The organization does not exist or is disabled."]
+                });
+            }
+
             if (await db.Users.AnyAsync(domainUser => domainUser.Email == normalizedEmail))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
@@ -254,7 +265,9 @@ public static class LocalAuthenticationEndpoints
                     Id = user.Id,
                     Name = user.DisplayName,
                     Email = user.Email!,
-                    Role = user.IsInstanceAdministrator ? "HelpdeskAdmin" : "User"
+                    Role = user.IsInstanceAdministrator ? "HelpdeskAdmin" : "User",
+                    OrganizationId = organizationId,
+                    IsTestUser = request.IsTestUser
                 });
                 await db.SaveChangesAsync();
             }
@@ -313,7 +326,12 @@ public static class LocalAuthenticationEndpoints
 
     public sealed record ChangeLocalPasswordRequest(string CurrentPassword, string NewPassword);
 
-    public sealed record CreateLocalAccountRequest(string DisplayName, string Email, bool IsInstanceAdministrator = false);
+    public sealed record CreateLocalAccountRequest(
+        string DisplayName,
+        string Email,
+        bool IsInstanceAdministrator = false,
+        string? OrganizationId = null,
+        bool IsTestUser = false);
 
     public sealed record ActivateLocalAccountRequest(string Email, string ActivationToken, string NewPassword);
 

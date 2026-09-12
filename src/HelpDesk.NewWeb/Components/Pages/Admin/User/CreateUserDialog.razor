@@ -88,7 +88,9 @@
                 {
                     displayName = model.Name,
                     email = model.Email,
-                    isInstanceAdministrator = model.IsInstanceAdministrator
+                    isInstanceAdministrator = model.IsInstanceAdministrator,
+                    organizationId = string.IsNullOrWhiteSpace(model.OrganizationId) ? null : model.OrganizationId,
+                    isTestUser = model.IsTestUser
                 });
                 if (localAccountResponse.IsSuccessStatusCode)
                 {

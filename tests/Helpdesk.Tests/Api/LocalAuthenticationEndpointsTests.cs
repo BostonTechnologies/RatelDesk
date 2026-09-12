@@ -6,6 +6,7 @@ using Helpdesk.API.Endpoints.Authentication;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.DTOs.Auth;
+using Helpdesk.Shared.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -140,12 +141,20 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     [Fact]
     public async Task Administrator_can_create_and_activate_a_local_account_with_a_single_use_token()
     {
+        const string organizationId = "local-account-organization";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var setupDb = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            setupDb.Organizations.Add(new Organization { Id = organizationId, Name = "Local account organization" });
+            await setupDb.SaveChangesAsync();
+        }
+
         using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
             "admin@example.test", "correct horse battery staple"))).StatusCode);
 
         var create = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
-            "New Operator", "new.operator@example.test"));
+            "New Operator", "new.operator@example.test", OrganizationId: organizationId, IsTestUser: true));
         var activation = await create.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
 
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
@@ -153,7 +162,9 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.False(string.IsNullOrWhiteSpace(activation.ActivationToken));
         await using var scope = _factory.Services.CreateAsyncScope();
         var domainDb = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
-        Assert.True(await domainDb.Users.AnyAsync(user => user.Id == activation.UserId && user.Email == activation.Email));
+        var domainUser = await domainDb.Users.SingleAsync(user => user.Id == activation.UserId && user.Email == activation.Email);
+        Assert.Equal(organizationId, domainUser.OrganizationId);
+        Assert.True(domainUser.IsTestUser);
 
         var activate = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/activate", new LocalAuthenticationEndpoints.ActivateLocalAccountRequest(
             activation.Email, activation.ActivationToken, "another secure passphrase"));
@@ -166,6 +177,33 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, activate.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+    }
+
+    [Fact]
+    public async Task Administrator_cannot_create_a_local_account_for_an_unknown_or_disabled_organization()
+    {
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var setupDb = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            setupDb.Organizations.Add(new Organization { Id = "disabled-local-account-organization", Name = "Disabled organization", IsEnabled = false });
+            await setupDb.SaveChangesAsync();
+        }
+
+        using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+
+        var unknownOrganization = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
+            "Unknown Organization Operator", "unknown.organization.operator@example.test", OrganizationId: "missing-organization"));
+        var disabledOrganization = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
+            "Disabled Organization Operator", "disabled.organization.operator@example.test", OrganizationId: "disabled-local-account-organization"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, unknownOrganization.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, disabledOrganization.StatusCode);
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        Assert.Null(await users.FindByEmailAsync("unknown.organization.operator@example.test"));
+        Assert.Null(await users.FindByEmailAsync("disabled.organization.operator@example.test"));
     }
 
     [Fact]
