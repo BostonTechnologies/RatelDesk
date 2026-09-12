@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -869,6 +870,66 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task RequestTasks_PutDoesNotChangeTheAuthorizedParentRequest()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Allowed tenant" },
+                new Organization { Id = "org-2", Name = "Other tenant" });
+            db.Customers.Add(new Customer
+            {
+                Id = "customer-request-manager",
+                Name = "Request manager",
+                Email = "operator@example.test",
+                OrganizationId = "org-1"
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-request-manager",
+                OidcIssuer = "https://id.example.test",
+                OidcSubject = "operator",
+                InviteStatus = CustomerInviteStatus.Active
+            });
+            db.Requests.AddRange(
+                new Request { Id = "req-allowed", TrackingId = "REQ-ALLOWED", Title = "Allowed request", State = TicketState.InProgress, OrganizationId = "org-1" },
+                new Request { Id = "req-other", TrackingId = "REQ-OTHER", Title = "Other tenant request", State = TicketState.InProgress, OrganizationId = "org-2" });
+            db.RequestTasks.Add(new RequestTask
+            {
+                Id = "task-allowed",
+                TrackingId = "TASK-ALLOWED",
+                Title = "Allowed task",
+                RequestId = "req-allowed",
+                OrganizationId = "org-1",
+                Status = RequestTaskStatus.Pending,
+                Type = RequestTaskType.Manual,
+                State = TicketState.New
+            });
+        });
+        harness.UseRole("Request.Manager");
+
+        var response = await harness.Client.PutAsJsonAsync("/api/v1/request-tasks/task-allowed", new RequestTask
+        {
+            Id = "task-allowed",
+            TrackingId = "TASK-ALLOWED",
+            Title = "Allowed task",
+            RequestId = "req-other",
+            OrganizationId = "org-1",
+            Status = RequestTaskStatus.Pending,
+            Type = RequestTaskType.Manual,
+            State = TicketState.New
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await harness.WithDbAsync(db =>
+        {
+            Assert.Equal("req-allowed", db.RequestTasks.Single(task => task.Id == "task-allowed").RequestId);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
     public async Task RequestTasks_PatchUpdatesOnlyTheBoundedMetadataFields()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
@@ -1562,6 +1623,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
             builder.Services.AddScoped<IRepository<Incident>, EfRepository<Incident>>();
             builder.Services.AddScoped<IRepository<Request>, EfRepository<Request>>();
             builder.Services.AddScoped<IRepository<RequestTask>, EfRepository<RequestTask>>();
+            builder.Services.AddScoped<IRepository<User>, EfRepository<User>>();
             builder.Services.AddScoped<IRepository<Change>, EfRepository<Change>>();
             builder.Services.AddScoped<IRepository<KnowledgeBaseArticle>, EfRepository<KnowledgeBaseArticle>>();
             builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
