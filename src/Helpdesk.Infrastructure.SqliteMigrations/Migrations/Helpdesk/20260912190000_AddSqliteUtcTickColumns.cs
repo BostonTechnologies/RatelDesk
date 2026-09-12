@@ -1,7 +1,11 @@
+using Helpdesk.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk;
 
+[DbContext(typeof(HelpdeskDbContext))]
 [Migration("20260912190000_AddSqliteUtcTickColumns")]
 public partial class AddSqliteUtcTickColumns : Migration
 {
@@ -24,10 +28,10 @@ public partial class AddSqliteUtcTickColumns : Migration
         migrationBuilder.DropIndex(name: "IX_TicketSlaStates_ResolutionDueAtUtcTicks", table: "TicketSlaStates");
         migrationBuilder.DropIndex(name: "IX_Tickets_Status_DueAtUtcTicks", table: "Tickets");
         migrationBuilder.DropIndex(name: "IX_Tickets_Status_NextRetryAtUtcTicks", table: "Tickets");
-        migrationBuilder.DropColumn(name: "CompletedAtUtcTicks", table: "TicketSlaStates");
-        migrationBuilder.DropColumn(name: "ResolutionDueAtUtcTicks", table: "TicketSlaStates");
-        migrationBuilder.DropColumn(name: "ResponseDueAtUtcTicks", table: "TicketSlaStates");
-        migrationBuilder.DropColumn(name: "DueAtUtcTicks", table: "Tickets");
-        migrationBuilder.DropColumn(name: "NextRetryAtUtcTicks", table: "Tickets");
+        migrationBuilder.Sql("ALTER TABLE \"TicketSlaStates\" DROP COLUMN \"CompletedAtUtcTicks\"");
+        migrationBuilder.Sql("ALTER TABLE \"TicketSlaStates\" DROP COLUMN \"ResolutionDueAtUtcTicks\"");
+        migrationBuilder.Sql("ALTER TABLE \"TicketSlaStates\" DROP COLUMN \"ResponseDueAtUtcTicks\"");
+        migrationBuilder.Sql("ALTER TABLE \"Tickets\" DROP COLUMN \"DueAtUtcTicks\"");
+        migrationBuilder.Sql("ALTER TABLE \"Tickets\" DROP COLUMN \"NextRetryAtUtcTicks\"");
     }
 }
