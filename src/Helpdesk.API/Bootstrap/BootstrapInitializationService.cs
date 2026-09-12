@@ -30,7 +30,8 @@ public sealed class BootstrapInitializationService(
         if (string.IsNullOrWhiteSpace(request.Email) ||
             string.IsNullOrWhiteSpace(request.DisplayName) ||
             string.IsNullOrWhiteSpace(request.OrganizationName) ||
-            string.IsNullOrWhiteSpace(request.Password))
+            string.IsNullOrWhiteSpace(request.Password) ||
+            !IsPermittedApplicationUrl(request.ApplicationUrl))
         {
             return BootstrapInitializationResult.InvalidRequest;
         }
@@ -137,6 +138,18 @@ public sealed class BootstrapInitializationService(
          !string.IsNullOrWhiteSpace(descriptor.SqlitePath)) ||
         (string.Equals(descriptor.Provider, "PostgreSql", StringComparison.OrdinalIgnoreCase) &&
          !string.IsNullOrWhiteSpace(descriptor.ProtectedPostgreSqlConnection));
+
+    private static bool IsPermittedApplicationUrl(string? applicationUrl)
+    {
+        if (string.IsNullOrWhiteSpace(applicationUrl))
+        {
+            return true;
+        }
+
+        return Uri.TryCreate(applicationUrl, UriKind.Absolute, out var applicationUri) &&
+               (applicationUri.Scheme == Uri.UriSchemeHttps ||
+                (applicationUri.Scheme == Uri.UriSchemeHttp && applicationUri.IsLoopback));
+    }
 }
 
 public sealed record FirstAdministratorRequest(

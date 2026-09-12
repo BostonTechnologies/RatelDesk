@@ -228,4 +228,48 @@ public sealed class BootstrapStateStoreTests
             }
         }
     }
+
+    [Fact]
+    public async Task Initialization_rejects_an_external_http_application_url()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-bootstrap-{Guid.NewGuid():N}");
+        try
+        {
+            var options = new BootstrapOptions
+            {
+                StateDirectory = directory,
+                DataDirectory = Path.Combine(directory, "data"),
+                SetupCode = "operator-provided-code"
+            };
+            var store = new FileBootstrapStateStore(options);
+            await store.LoadOrCreateAsync();
+            var configured = await store.UpdateAsync(current => current with
+            {
+                State = BootstrapState.Configuring,
+                Provider = "Sqlite",
+                SqlitePath = Path.Combine(options.DataDirectory, "rateldesk.db"),
+                OperationId = Guid.NewGuid()
+            });
+            var dataProtection = DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(directory, "keys")));
+            var initializer = new BootstrapInitializationService(store, options, dataProtection);
+
+            var result = await initializer.InitializeAsync(configured, new FirstAdministratorRequest(
+                "admin@example.test",
+                "Instance Admin",
+                "correct horse battery staple",
+                "Example Organization",
+                "Example Desk",
+                "http://desk.example.test"), CancellationToken.None);
+
+            Assert.Equal(BootstrapInitializationResult.InvalidRequest, result);
+            Assert.False(File.Exists(Path.Combine(options.DataDirectory, "rateldesk.db")));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
 }

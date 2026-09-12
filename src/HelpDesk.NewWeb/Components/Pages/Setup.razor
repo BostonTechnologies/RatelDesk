@@ -38,7 +38,7 @@
             }
             <MudTextField T="string" @bind-Value="_organizationName" Label="Initial organization" Required="true" />
             <MudTextField T="string" @bind-Value="_applicationName" Label="Application name (optional)" />
-            <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL" InputType="InputType.Url" Required="true" HelperText="Use the HTTPS URL that operators and end users will open." />
+            <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL (optional)" InputType="InputType.Url" HelperText="Use the HTTPS URL that operators and end users will open. HTTP is allowed only for localhost." />
             <MudDivider />
             <MudText Typo="Typo.h6">First administrator</MudText>
             <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" />
@@ -99,10 +99,13 @@
         _completionMessage = null;
         try
         {
-            if (!Uri.TryCreate(_applicationUrl, UriKind.Absolute, out var applicationUri) ||
-                applicationUri.Scheme is not ("https" or "http"))
+            Uri? applicationUri = null;
+            if (!string.IsNullOrWhiteSpace(_applicationUrl) &&
+                (!Uri.TryCreate(_applicationUrl, UriKind.Absolute, out applicationUri) ||
+                 (applicationUri.Scheme != Uri.UriSchemeHttps &&
+                  (applicationUri.Scheme != Uri.UriSchemeHttp || !applicationUri.IsLoopback))))
             {
-                _error = "Enter a valid public application URL.";
+                _error = "Enter an HTTPS public application URL, or use HTTP only for localhost.";
                 return;
             }
 
@@ -157,7 +160,7 @@
                     password = _password,
                     organizationName = _organizationName,
                     applicationName = string.IsNullOrWhiteSpace(_applicationName) ? null : _applicationName,
-                    applicationUrl = applicationUri.AbsoluteUri
+                    applicationUrl = applicationUri?.AbsoluteUri
                 })
             };
             initializeRequest.Headers.Add("X-RatelDesk-Setup-Session", session.Session);
