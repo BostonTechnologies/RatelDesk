@@ -572,6 +572,8 @@ public static class RequestEndpoints
         staffGroup.MapPost("/{id}/state", async (
             [FromRoute] string id,
             [FromBody] QuickStateChangeRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] IRepository<Request> repo,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] ITicketNotificationService ticketNotificationService,
@@ -581,6 +583,12 @@ public static class RequestEndpoints
             if (request is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageRequest(request.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             var previousState = request.State;

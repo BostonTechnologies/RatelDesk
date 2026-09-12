@@ -1112,6 +1112,8 @@ public static class IncidentEndpoints
         staffGroup.MapPost("/{id}/state", async (
             [FromRoute] string id,
             [FromBody] QuickStateChangeRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] IRepository<Incident> repo,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] ITicketNotificationService ticketNotificationService,
@@ -1121,6 +1123,12 @@ public static class IncidentEndpoints
             if (incident is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageIncident(incident.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             var previousState = incident.State;

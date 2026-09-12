@@ -508,8 +508,29 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
         await harness.SeedAsync(db =>
         {
-            db.Incidents.Add(new Incident { Id = "inc-quick-state", TrackingId = "INC-QUICK", Title = "Quick incident", State = TicketState.New });
-            db.Requests.Add(new Request { Id = "req-quick-state", TrackingId = "REQ-QUICK", Title = "Quick request", State = TicketState.New });
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Technician organization" },
+                new Organization { Id = "org-2", Name = "Foreign organization" });
+            db.Users.Add(new User
+            {
+                Id = "admin-1",
+                Name = "Technician One",
+                Email = "technician@example.com",
+                OrganizationId = "org-1",
+                Role = "Technician"
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = "admin-1",
+                OrganizationId = "org-1",
+                RoleKey = ScopedRoleCatalog.Technician
+            });
+            db.Incidents.AddRange(
+                new Incident { Id = "inc-quick-state", TrackingId = "INC-QUICK", Title = "Quick incident", State = TicketState.New, OrganizationId = "org-1" },
+                new Incident { Id = "inc-quick-state-foreign", TrackingId = "INC-QUICK-FOREIGN", Title = "Foreign quick incident", State = TicketState.New, OrganizationId = "org-2" });
+            db.Requests.AddRange(
+                new Request { Id = "req-quick-state", TrackingId = "REQ-QUICK", Title = "Quick request", State = TicketState.New, OrganizationId = "org-1" },
+                new Request { Id = "req-quick-state-foreign", TrackingId = "REQ-QUICK-FOREIGN", Title = "Foreign quick request", State = TicketState.New, OrganizationId = "org-2" });
         });
         harness.UseRole("Technician");
 
@@ -519,13 +540,23 @@ public sealed class LiveHistoryFilteringEndpointsTests
         var requestResponse = await harness.Client.PostAsJsonAsync(
             "/api/v1/requests/req-quick-state/state",
             new { NewState = TicketState.OnHold });
+        var foreignIncidentResponse = await harness.Client.PostAsJsonAsync(
+            "/api/v1/incidents/inc-quick-state-foreign/state",
+            new { NewState = TicketState.InProgress });
+        var foreignRequestResponse = await harness.Client.PostAsJsonAsync(
+            "/api/v1/requests/req-quick-state-foreign/state",
+            new { NewState = TicketState.OnHold });
 
         incidentResponse.EnsureSuccessStatusCode();
         requestResponse.EnsureSuccessStatusCode();
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignIncidentResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignRequestResponse.StatusCode);
         await harness.WithDbAsync(async db =>
         {
             Assert.Equal(TicketState.InProgress, (await db.Incidents.FindAsync("inc-quick-state"))!.State);
             Assert.Equal(TicketState.OnHold, (await db.Requests.FindAsync("req-quick-state"))!.State);
+            Assert.Equal(TicketState.New, (await db.Incidents.FindAsync("inc-quick-state-foreign"))!.State);
+            Assert.Equal(TicketState.New, (await db.Requests.FindAsync("req-quick-state-foreign"))!.State);
         });
     }
 
@@ -1641,6 +1672,8 @@ public sealed class LiveHistoryFilteringEndpointsTests
 
             if (string.Equals(role, "Technician", StringComparison.OrdinalIgnoreCase))
             {
+                claims.Add(new Claim("auth_mode", "local"));
+                claims.Add(new Claim(ClaimTypes.Email, "technician@example.com"));
                 foreach (var managerRole in new[] { "Incident.Manager", "Request.Manager", "Change.Manager" })
                 {
                     claims.Add(new Claim(ClaimTypes.Role, managerRole));
