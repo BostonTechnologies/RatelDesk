@@ -222,6 +222,17 @@ public static class LocalAuthenticationEndpoints
             }
 
             var normalizedEmail = request.Email.Trim();
+            var role = request.IsInstanceAdministrator
+                ? "HelpdeskAdmin"
+                : request.Role?.Trim() ?? string.Empty;
+            if (role is not ("User" or "Technician"))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["role"] = ["Local accounts can be assigned the User or Technician access bundle."]
+                });
+            }
+
             var organizationId = string.IsNullOrWhiteSpace(request.OrganizationId)
                 ? null
                 : request.OrganizationId.Trim();
@@ -265,7 +276,7 @@ public static class LocalAuthenticationEndpoints
                     Id = user.Id,
                     Name = user.DisplayName,
                     Email = user.Email!,
-                    Role = user.IsInstanceAdministrator ? "HelpdeskAdmin" : "User",
+                    Role = role,
                     OrganizationId = organizationId,
                     IsTestUser = request.IsTestUser
                 });
@@ -340,6 +351,8 @@ public static class LocalAuthenticationEndpoints
         public string Email { get; init; }
 
         public bool IsInstanceAdministrator { get; init; }
+
+        public string Role { get; init; } = "User";
 
         public string? OrganizationId { get; init; }
 

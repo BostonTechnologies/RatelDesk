@@ -20,6 +20,10 @@
                            Color="Color.Warning"
                            Label="Instance administrator"
                            Class="mt-2" />
+                <MudSelect T="string" @bind-Value="model.Role" Label="Access bundle" Required="true">
+                    <MudSelectItem T="string" Value="@("User")">User</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
+                </MudSelect>
                 <MudText Typo="Typo.body2" Class="mt-2">A one-time activation token is generated after account creation. Share it through an approved secure channel.</MudText>
             }
             else
@@ -89,6 +93,7 @@
                     displayName = model.Name,
                     email = model.Email,
                     isInstanceAdministrator = model.IsInstanceAdministrator,
+                    role = model.Role,
                     organizationId = string.IsNullOrWhiteSpace(model.OrganizationId) ? null : model.OrganizationId,
                     isTestUser = model.IsTestUser
                 });
