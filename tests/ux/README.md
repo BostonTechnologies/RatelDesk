@@ -10,6 +10,8 @@ npm run test:ux
 
 The suite deliberately has no authentication bypass. It uses the existing `/auth/ai-agent/exchange` endpoint for public dev and the local-only `/auth/development` endpoint only when explicitly selected.
 
+CI also starts an isolated, unconfigured bootstrap API and local Web host to drive the anonymous first-run wizard through setup-code rejection, SQLite selection, instance details, administrator details, and review. The Compose smoke checks perform the final initialization and restart verification for both SQLite and PostgreSQL.
+
 ## AiAssistant presentation fixture
 
 Build `src/HelpDesk.NewWeb`, then run `npm run test:ux:ai-assistant`. The separate
