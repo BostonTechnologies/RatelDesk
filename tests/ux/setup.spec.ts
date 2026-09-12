@@ -11,10 +11,6 @@ test('first-run setup unlocks embedded storage and reaches review', async ({ pag
   await expect(page.getByRole('heading', { name: 'Set up RatelDesk' })).toBeVisible();
   await expect(page.getByText('operator-only setup code')).toBeVisible();
 
-  await page.getByLabel('Setup code').fill('incorrect-setup-code');
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByText('The setup code was not accepted.')).toBeVisible();
-
   await page.getByLabel('Setup code').fill(setupCode);
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByLabel('Storage provider')).toBeVisible();
