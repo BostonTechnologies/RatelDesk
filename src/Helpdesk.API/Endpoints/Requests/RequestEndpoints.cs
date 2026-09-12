@@ -613,10 +613,25 @@ public static class RequestEndpoints
         .WithDescription("Updates one request state from a list row state picker.")
         .WithTags("Requests");
 
-        group.MapGet("/{id}/worklogs", async ([FromRoute] string id, [FromServices] IRepository<WorkLog> repo) =>
+        group.MapGet("/{id}/worklogs", async (
+            [FromRoute] string id,
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] IRepository<WorkLog> repo,
+            CancellationToken ct) =>
         {
+            var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: false, ct);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             var allLogs = await repo.GetAllAsync();
-            var logs = allLogs.Where(l => l.TicketId == id).Select(l => new WorkLogDto
+            var logs = allLogs
+                .Where(log => log.TicketId == id)
+                .Where(log => authorization.Access!.CanManageRequest(authorization.OrganizationId) || !log.IsInternalNote)
+                .Select(l => new WorkLogDto
             {
                 Id = l.Id,
                 TicketId = l.TicketId,
@@ -633,12 +648,24 @@ public static class RequestEndpoints
         group.MapGet("/{id}/timeline", async (
             [FromRoute] string id,
             [FromQuery] string? order,
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             CancellationToken ct) =>
         {
+            var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: false, ct);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             var timelineQuery = db.TicketTimelineEvents
                 .AsNoTracking()
                 .Where(evt => evt.TicketId == id);
+            if (!authorization.Access!.CanManageRequest(authorization.OrganizationId))
+            {
+                timelineQuery = timelineQuery.Where(evt => evt.EventType != TimelineEventType.InternalNote);
+            }
 
             timelineQuery = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
                 ? timelineQuery.OrderBy(evt => evt.CreatedUtc)
@@ -657,8 +684,18 @@ public static class RequestEndpoints
             [FromRoute] string id,
             [FromBody] CreateWorkLogDto dto,
             ClaimsPrincipal user,
-            [FromServices] IRequestSender sender) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] IRequestSender sender,
+            CancellationToken ct) =>
         {
+            var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: true, ct);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             if (string.IsNullOrWhiteSpace(dto.Notes))
             {
                 return Results.Problem("Notes cannot be empty", statusCode: 400);
@@ -1133,12 +1170,22 @@ public static class RequestEndpoints
     private static async Task StreamTimeline(
         [FromRoute] string id,
         HttpContext context,
+        [FromServices] ICurrentUserAccessService accessService,
+        [FromServices] HelpdeskDbContext db,
         [FromServices] ITimelineEventBus eventBus,
         [FromServices] ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
+        var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: false, ct);
+        if (authorization.Failure is not null)
+        {
+            await authorization.Failure.ExecuteAsync(context);
+            return;
+        }
+
         var logger = loggerFactory.CreateLogger("RequestEndpoints");
         var reader = eventBus.Subscribe(id);
+        var canManageRequest = authorization.Access!.CanManageRequest(authorization.OrganizationId);
 
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Append("Connection", "keep-alive");
@@ -1169,6 +1216,11 @@ public static class RequestEndpoints
 
                     while (reader.TryRead(out var evt))
                     {
+                        if (!canManageRequest && evt.EventType == TimelineEventType.InternalNote)
+                        {
+                            continue;
+                        }
+
                         var json = JsonSerializer.Serialize(evt);
                         await context.Response.WriteAsync("event: timeline\n", ct);
                         await context.Response.WriteAsync($"data: {json}\n\n", ct);
@@ -1216,6 +1268,48 @@ public static class RequestEndpoints
             IsRetryable = evt.IsRetryable
         };
     }
+
+    private static async Task<RequestAuthorization> AuthorizeRequestAsync(
+        string requestId,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        HelpdeskDbContext db,
+        bool requireManager,
+        CancellationToken cancellationToken)
+    {
+        var request = await db.Requests.AsNoTracking()
+            .Where(candidate => candidate.Id == requestId)
+            .Select(candidate => new RequestScope(candidate.OrganizationId, candidate.CustomerId, candidate.RequesterEmail))
+            .FirstOrDefaultAsync(cancellationToken);
+        if (request is null)
+        {
+            return new RequestAuthorization(null, null, Results.NotFound());
+        }
+
+        var customer = !string.IsNullOrWhiteSpace(request.CustomerId)
+            ? await db.Customers.AsNoTracking()
+                .Where(candidate => candidate.Id == request.CustomerId)
+                .Select(candidate => new { candidate.Id, candidate.Email })
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+        var access = await accessService.ResolveAsync(user, cancellationToken);
+        var allowed = requireManager
+            ? access.CanManageRequest(request.OrganizationId)
+            : access.CanViewRequest(
+                request.OrganizationId,
+                customer?.Id ?? request.CustomerId,
+                customer?.Email ?? request.RequesterEmail);
+        return allowed
+            ? new RequestAuthorization(access, request.OrganizationId, null)
+            : new RequestAuthorization(null, null, Results.Forbid());
+    }
+
+    private sealed record RequestScope(string? OrganizationId, string? CustomerId, string? RequesterEmail);
+
+    private sealed record RequestAuthorization(
+        CurrentUserAccessProfile? Access,
+        string? OrganizationId,
+        IResult? Failure);
 
     private static IEnumerable<string> NormalizeEmails(IEnumerable<string>? values)
     {
