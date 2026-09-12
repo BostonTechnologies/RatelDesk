@@ -4,7 +4,7 @@
 <MudNavMenu>
     <MudNavLink Href="home" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Home</MudNavLink>
 
-    <AuthorizeView>
+    <AuthorizeView Roles="SelfService.User,HelpdeskAdmin">
         <MudNavGroup Title="Portal" Icon="@Icons.Material.Filled.Apps" Expanded="false">
             <MudNavLink Href="self-service" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Storefront">Self Service</MudNavLink>
             <MudNavLink Href="self-service/my-requests" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ReceiptLong">My Requests</MudNavLink>
