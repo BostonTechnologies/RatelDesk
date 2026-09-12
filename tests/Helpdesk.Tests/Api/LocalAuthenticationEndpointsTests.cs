@@ -488,6 +488,8 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
 
         var ownRoute = $"/api/v1/tenant-admin/organizations/{organizationId}/users/{target!.UserId}/assignments";
         var otherRoute = $"/api/v1/tenant-admin/organizations/{otherOrganizationId}/users/{target.UserId}/assignments";
+        var removeSelfService = await tenantAdministrator.PutAsJsonAsync(ownRoute,
+            new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([]));
         var ownTenant = await tenantAdministrator.PutAsJsonAsync(ownRoute,
             new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([ScopedRoleCatalog.SelfServiceUser]));
         var otherTenant = await tenantAdministrator.PutAsJsonAsync(otherRoute,
@@ -497,6 +499,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         var members = await tenantAdministrator.GetFromJsonAsync<List<TenantAdministrationEndpoints.TenantMemberResponse>>(
             $"/api/v1/tenant-admin/organizations/{organizationId}/users/");
 
+        Assert.Equal(HttpStatusCode.NoContent, removeSelfService.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, ownTenant.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, otherTenant.StatusCode);
         Assert.Collection(availableOrganizations!, organization => Assert.Equal(organizationId, organization.Id));
@@ -509,6 +512,14 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             .ToListAsync();
         Assert.Contains(ScopedRoleCatalog.SelfServiceUser, assignedRoles);
         Assert.Contains(ScopedRoleCatalog.Technician, assignedRoles);
+        var auditMessages = await verificationScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().ActivityLogs
+            .Where(log => log.RelatedEntityId == target.UserId)
+            .Select(log => log.Message)
+            .ToListAsync();
+        Assert.Contains(auditMessages, message => message.Contains("Created a tenant-local self-service invitation", StringComparison.Ordinal));
+        Assert.Contains(auditMessages, message => message.Contains("Removed tenant self-service access", StringComparison.Ordinal));
+        Assert.Contains(auditMessages, message => message.Contains("Granted tenant self-service access", StringComparison.Ordinal));
+        Assert.DoesNotContain(target.ActivationToken, auditMessages);
     }
 
     [Fact]

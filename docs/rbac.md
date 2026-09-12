@@ -49,6 +49,8 @@ The API remains authoritative for the page and all direct requests:
 Membership changes increment the target local account's authorization revision
 and security stamp. Its next API request is rejected until it signs in again,
 so revoked tenant access does not persist in an existing API session.
+Invitation and membership-change audit records contain the actor, target, and
+tenant-scoped action, but never the activation token or a credential.
 
 ## External identities
 

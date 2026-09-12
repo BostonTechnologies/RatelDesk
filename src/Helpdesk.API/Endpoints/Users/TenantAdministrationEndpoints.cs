@@ -5,6 +5,7 @@ using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace Helpdesk.API.Endpoints.Users;
 
@@ -107,6 +108,12 @@ public static class TenantAdministrationEndpoints
                     UserId = account.Id,
                     OrganizationId = organizationId,
                     RoleKey = ScopedRoleCatalog.SelfServiceUser
+                });
+                db.ActivityLogs.Add(new ActivityLog
+                {
+                    UserId = ResolveActorId(context.User),
+                    RelatedEntityId = account.Id,
+                    Message = $"Created a tenant-local self-service invitation in organization '{organizationId}'."
                 });
                 await db.SaveChangesAsync(cancellationToken);
             }
@@ -222,6 +229,8 @@ public static class TenantAdministrationEndpoints
             var existing = await db.ScopedRoleAssignments
                 .Where(assignment => assignment.UserId == userId && assignment.OrganizationId == organizationId)
                 .ToListAsync(cancellationToken);
+            var hadSelfServiceAccess = existing.Any(assignment => DelegableRoleKeys.Contains(assignment.RoleKey));
+            var hasSelfServiceAccess = roleKeys.Contains(ScopedRoleCatalog.SelfServiceUser, StringComparer.OrdinalIgnoreCase);
             db.ScopedRoleAssignments.RemoveRange(existing.Where(assignment => DelegableRoleKeys.Contains(assignment.RoleKey)));
             db.ScopedRoleAssignments.AddRange(roleKeys.Select(key => new ScopedRoleAssignment
             {
@@ -229,6 +238,15 @@ public static class TenantAdministrationEndpoints
                 OrganizationId = organizationId,
                 RoleKey = key
             }));
+            if (hadSelfServiceAccess != hasSelfServiceAccess)
+            {
+                db.ActivityLogs.Add(new ActivityLog
+                {
+                    UserId = ResolveActorId(context.User),
+                    RelatedEntityId = userId,
+                    Message = $"{(hasSelfServiceAccess ? "Granted" : "Removed")} tenant self-service access in organization '{organizationId}'."
+                });
+            }
             await db.SaveChangesAsync(cancellationToken);
 
             target.AuthorizationRevision++;
@@ -266,6 +284,12 @@ public static class TenantAdministrationEndpoints
 
         return await users.FindByIdAsync(userId);
     }
+
+    private static string ResolveActorId(ClaimsPrincipal user) =>
+        user.FindFirstValue(ClaimTypes.NameIdentifier) ??
+        user.FindFirstValue("sub") ??
+        user.Identity?.Name ??
+        "unknown";
 
     public sealed record ReplaceTenantMembershipRequest(IReadOnlyList<string> RoleKeys);
     public sealed record TenantMembershipResponse(string UserId, string OrganizationId, IReadOnlyList<string> RoleKeys);
