@@ -7,7 +7,7 @@ namespace Helpdesk.Tests.Application.Dashboard;
 public sealed class GetTechnicianDashboardQueryHandlerTests
 {
     [Fact]
-    public async Task Handle_FiltersPendingChangesToTheCallersPermittedOrganizations()
+    public async Task Handle_FiltersAssignedIncidentsAndPendingChangesToTheCallersPermittedOrganizations()
     {
         var incidents = new InMemoryRepository<Incident>();
         var changes = new InMemoryRepository<Change>();
@@ -15,14 +15,16 @@ public sealed class GetTechnicianDashboardQueryHandlerTests
         {
             Id = "incident-assigned",
             Title = "Assigned incident",
+            OrganizationId = "org-alpha",
             AssignedToId = "technician-1",
             State = TicketState.InProgress
         });
         await incidents.CreateAsync(new Incident
         {
-            Id = "incident-unassigned",
-            Title = "Other incident",
-            AssignedToId = "technician-2",
+            Id = "incident-other-tenant",
+            Title = "Other tenant incident",
+            OrganizationId = "org-other",
+            AssignedToId = "technician-1",
             State = TicketState.InProgress
         });
         await changes.CreateAsync(new Change
@@ -46,6 +48,7 @@ public sealed class GetTechnicianDashboardQueryHandlerTests
             new GetTechnicianDashboardQuery(
                 "technician-1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "org-alpha" },
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "org-alpha" },
                 IsHelpdeskAdmin: false),
             CancellationToken.None);
 
@@ -65,6 +68,7 @@ public sealed class GetTechnicianDashboardQueryHandlerTests
         var result = await handler.Handle(
             new GetTechnicianDashboardQuery(
                 "administrator",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                 IsHelpdeskAdmin: true),
             CancellationToken.None);

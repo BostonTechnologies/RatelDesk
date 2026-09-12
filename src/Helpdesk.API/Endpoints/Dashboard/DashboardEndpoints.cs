@@ -32,6 +32,7 @@ public static class DashboardEndpoints
             var access = await accessService.ResolveAsync(user, token);
             return await sender.Send(new GetTechnicianDashboardQuery(
                 id,
+                access.OrganizationIdsFor(HelpdeskPermissions.IncidentManager),
                 access.OrganizationIdsFor(HelpdeskPermissions.ChangeManager),
                 access.IsHelpdeskAdmin), token);
         })
