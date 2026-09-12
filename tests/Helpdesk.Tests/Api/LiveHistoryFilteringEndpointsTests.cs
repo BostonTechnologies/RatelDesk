@@ -567,6 +567,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await harness.SeedAsync(db =>
         {
             db.Organizations.Add(new Organization { Id = "org-quick-approved", Name = "Example Organization" });
+            AddTechnicianChangeManagerAccess(db, "org-quick-approved");
             db.Changes.Add(new Change
             {
                 Id = "chg-quick-approved",
@@ -596,6 +597,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await harness.SeedAsync(db =>
         {
             db.Organizations.Add(new Organization { Id = "org-quick-block", Name = "Example Organization" });
+            AddTechnicianChangeManagerAccess(db, "org-quick-block");
             db.Changes.Add(new Change
             {
                 Id = "chg-quick-block",
@@ -623,6 +625,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await harness.SeedAsync(db =>
         {
             db.Organizations.Add(new Organization { Id = "org-quick-draft", Name = "Example Organization" });
+            AddTechnicianChangeManagerAccess(db, "org-quick-draft");
             db.Changes.Add(new Change
             {
                 Id = "chg-quick-draft",
@@ -671,6 +674,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await harness.SeedAsync(db =>
         {
             db.Organizations.Add(new Organization { Id = "org-quick-implemented", Name = "Example Organization" });
+            AddTechnicianChangeManagerAccess(db, "org-quick-implemented");
             db.Changes.Add(new Change
             {
                 Id = "chg-quick-implemented",
@@ -703,6 +707,40 @@ public sealed class LiveHistoryFilteringEndpointsTests
         var updated = await response.Content.ReadFromJsonAsync<ChangeDto>();
         Assert.Equal(ChangeLifecycleState.ImplementedBackedOut, updated!.LifecycleState);
         Assert.Equal(TicketState.Resolved, updated.State);
+    }
+
+    [Fact]
+    public async Task QuickChangeLifecycle_RequiresScopedManagerAccess()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.Add(new Organization { Id = "org-1", Name = "Organization One" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Changes.Add(new Change
+            {
+                Id = "chg-self-service-lifecycle",
+                TrackingId = "CHG-SELF-LIFECYCLE",
+                Title = "Self-service change",
+                OrganizationId = "org-1",
+                State = TicketState.New,
+                Priority = TicketPriority.Low,
+                LifecycleState = ChangeLifecycleState.ApprovedForImplementation
+            });
+        });
+        harness.UseRole("SelfService");
+
+        var response = await harness.Client.PostAsJsonAsync(
+            "/api/v1/changes/chg-self-service-lifecycle/lifecycle",
+            new { LifecycleState = ChangeLifecycleState.ImplementationInProgress });
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+        await harness.WithDbAsync(async db =>
+        {
+            var change = await db.Changes.FindAsync("chg-self-service-lifecycle");
+            Assert.Equal(ChangeLifecycleState.ApprovedForImplementation, change!.LifecycleState);
+        });
     }
 
     [Fact]
@@ -1332,6 +1370,24 @@ public sealed class LiveHistoryFilteringEndpointsTests
         Type = RequestTaskType.Manual,
         OrganizationId = "org-1"
     };
+
+    private static void AddTechnicianChangeManagerAccess(HelpdeskDbContext db, string organizationId)
+    {
+        db.Users.Add(new User
+        {
+            Id = "admin-1",
+            Name = "Technician One",
+            Email = "technician@example.com",
+            OrganizationId = organizationId,
+            Role = "Technician"
+        });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "admin-1",
+            OrganizationId = organizationId,
+            RoleKey = ScopedRoleCatalog.Technician
+        });
+    }
 
     private sealed class LiveHistoryFilteringHarness : IAsyncDisposable
     {

@@ -1076,6 +1076,8 @@ public static class ChangeEndpoints
         staffGroup.MapPost("/{id}/lifecycle", async (
             [FromRoute] string id,
             [FromBody] QuickChangeLifecycleRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IChangeReviewService changeReviewService,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
@@ -1090,6 +1092,12 @@ public static class ChangeEndpoints
             if (change is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageChange(change.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             var previousState = change.State;
