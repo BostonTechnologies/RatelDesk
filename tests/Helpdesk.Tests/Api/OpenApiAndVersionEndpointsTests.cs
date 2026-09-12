@@ -55,7 +55,7 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
 
         Assert.Equal(HttpStatusCode.OK, httpResponse.StatusCode);
         Assert.NotNull(response);
-        Assert.Equal("0.1.0", response!.Version);
+        Assert.Equal("0.1.0-rc.4", response!.Version);
         Assert.Equal("Helpdesk.API", response.AssemblyName);
         Assert.False(string.IsNullOrWhiteSpace(response.CommitHash));
         Assert.NotEqual("unknown", response.BuildTimestamp);
