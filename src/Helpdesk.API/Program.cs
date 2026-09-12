@@ -205,7 +205,10 @@ NpgsqlConnection.GlobalTypeMapper.EnableDynamicJson(); // Opt in to Npgsql's dyn
 var runStartupTasks = Environment.GetEnvironmentVariable("RUN_MIGRATIONS") == "true";
 var hangfireSettings = builder.Configuration.GetSection("Hangfire").Get<HangfireSettings>() ?? new HangfireSettings();
 var hangfireConnectionString = builder.Configuration.GetConnectionString(hangfireSettings.ConnectionStringName);
-if (!skipDatabaseStartup && string.IsNullOrWhiteSpace(hangfireConnectionString))
+var databaseOptions = builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
+var databaseProvider = databaseOptions.ResolveProvider(builder.Configuration.GetConnectionString("HelpdeskDb"));
+var usePostgreSqlHangfire = !skipDatabaseStartup && databaseProvider is DatabaseProvider.PostgreSql;
+if (usePostgreSqlHangfire && string.IsNullOrWhiteSpace(hangfireConnectionString))
 {
     throw new InvalidOperationException($"ConnectionStrings:{hangfireSettings.ConnectionStringName} is required.");
 }
@@ -244,9 +247,9 @@ builder.Services.Configure<SlaEvaluationJobSettings>(options =>
 builder.Services.AddSingleton(new HangfireRuntimeStatus(
     hangfireSettings.QueueName,
     "/hangfire",
-    "Ops UI / database",
-    "Application PostgreSQL database"));
-if (!skipDatabaseStartup)
+    usePostgreSqlHangfire ? "Ops UI / database" : "Disabled for SQLite runtime",
+    usePostgreSqlHangfire ? "Application PostgreSQL database" : "No SQLite Hangfire provider configured"));
+if (usePostgreSqlHangfire)
 {
     builder.Services.AddHangfire(config =>
     {
@@ -1048,7 +1051,7 @@ app.UseMiddleware<UserAccessClaimsMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 
-if (!skipDatabaseStartup)
+if (usePostgreSqlHangfire)
 {
     app.UseHangfireDashboard("/hangfire", new DashboardOptions
     {
@@ -1257,7 +1260,7 @@ if (!skipDatabaseStartup)
     await SeedEmailTemplatesAsync(app);
 }
 
-if (!skipDatabaseStartup)
+if (usePostgreSqlHangfire)
 {
     var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
     if (hangfireSettings.SlaEvaluationEnabled)
@@ -1314,7 +1317,8 @@ if (!skipDatabaseStartup)
 }
 else
 {
-    app.Logger.LogInformation("Skipping Hangfire startup because Helpdesk:SkipDatabaseStartup is enabled.");
+    app.Logger.LogInformation("Skipping Hangfire startup because {Reason}.",
+        skipDatabaseStartup ? "Helpdesk:SkipDatabaseStartup is enabled" : "the selected database provider is SQLite");
 }
 
 /* claim debug
