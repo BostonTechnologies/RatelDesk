@@ -26,12 +26,24 @@ public static class WorkLogEndpoints
         group.MapGet("/{id}/timeline", async (
             [FromRoute] string id,
             [FromQuery] string? order,
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             CancellationToken ct) =>
         {
+            var authorization = await AuthorizeIncidentAsync(id, context.User, accessService, db, requireManager: false, ct);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             var timelineQuery = db.TicketTimelineEvents
                 .AsNoTracking()
                 .Where(evt => evt.TicketId == id);
+            if (!authorization.Access!.CanManageIncident(authorization.OrganizationId))
+            {
+                timelineQuery = timelineQuery.Where(evt => evt.EventType != Helpdesk.Shared.Enums.TimelineEventType.InternalNote);
+            }
 
             timelineQuery = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
                 ? timelineQuery.OrderBy(evt => evt.CreatedUtc)
@@ -56,8 +68,18 @@ public static class WorkLogEndpoints
             [FromRoute] string id,
             [FromBody] CreateWorkLogDto dto,
             ClaimsPrincipal user,
-            [FromServices] IRequestSender sender) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] IRequestSender sender,
+            CancellationToken cancellationToken) =>
         {
+            var authorization = await AuthorizeIncidentAsync(id, context.User, accessService, db, requireManager: true, cancellationToken);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             if (string.IsNullOrWhiteSpace(dto.Notes))
             {
                 return Results.Problem("Notes cannot be empty", statusCode: 400);
@@ -141,12 +163,22 @@ public static class WorkLogEndpoints
     private static async Task StreamTimeline(
         [FromRoute] string id,
         HttpContext context,
+        [FromServices] ICurrentUserAccessService accessService,
+        [FromServices] HelpdeskDbContext db,
         [FromServices] ITimelineEventBus eventBus,
         [FromServices] ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
+        var authorization = await AuthorizeIncidentAsync(id, context.User, accessService, db, requireManager: false, ct);
+        if (authorization.Failure is not null)
+        {
+            await authorization.Failure.ExecuteAsync(context);
+            return;
+        }
+
         var logger = loggerFactory.CreateLogger("WorkLogEndpoints");
         var reader = eventBus.Subscribe(id);
+        var canManageIncident = authorization.Access!.CanManageIncident(authorization.OrganizationId);
 
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Append("Connection", "keep-alive");
@@ -177,6 +209,11 @@ public static class WorkLogEndpoints
 
                     while (reader.TryRead(out var evt))
                     {
+                        if (!canManageIncident && evt.EventType == Helpdesk.Shared.Enums.TimelineEventType.InternalNote)
+                        {
+                            continue;
+                        }
+
                         var json = JsonSerializer.Serialize(evt);
 
                         await context.Response.WriteAsync("event: timeline\n", ct);
@@ -225,6 +262,48 @@ public static class WorkLogEndpoints
             IsRetryable = evt.IsRetryable
         };
     }
+
+    private static async Task<IncidentAuthorization> AuthorizeIncidentAsync(
+        string incidentId,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        HelpdeskDbContext db,
+        bool requireManager,
+        CancellationToken cancellationToken)
+    {
+        var incident = await db.Incidents.AsNoTracking()
+            .Where(candidate => candidate.Id == incidentId)
+            .Select(candidate => new IncidentScope(candidate.OrganizationId, candidate.CustomerId, candidate.RequesterEmail))
+            .FirstOrDefaultAsync(cancellationToken);
+        if (incident is null)
+        {
+            return new IncidentAuthorization(null, null, Results.NotFound());
+        }
+
+        var customer = !string.IsNullOrWhiteSpace(incident.CustomerId)
+            ? await db.Customers.AsNoTracking()
+                .Where(candidate => candidate.Id == incident.CustomerId)
+                .Select(candidate => new { candidate.Id, candidate.Email })
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+        var access = await accessService.ResolveAsync(user, cancellationToken);
+        var allowed = requireManager
+            ? access.CanManageIncident(incident.OrganizationId)
+            : access.CanViewIncident(
+                incident.OrganizationId,
+                customer?.Id ?? incident.CustomerId,
+                customer?.Email ?? incident.RequesterEmail);
+        return allowed
+            ? new IncidentAuthorization(access, incident.OrganizationId, null)
+            : new IncidentAuthorization(null, null, Results.Forbid());
+    }
+
+    private sealed record IncidentScope(string? OrganizationId, string? CustomerId, string? RequesterEmail);
+
+    private sealed record IncidentAuthorization(
+        CurrentUserAccessProfile? Access,
+        string? OrganizationId,
+        IResult? Failure);
 
     private static string SanitizePathSegment(string value)
     {

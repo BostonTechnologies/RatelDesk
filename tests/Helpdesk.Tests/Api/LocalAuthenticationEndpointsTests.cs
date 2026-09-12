@@ -667,6 +667,62 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Incident_worklogs_require_an_incident_manager_grant()
+    {
+        const string organizationId = "worklog-self-service-organization";
+        const string incidentId = "worklog-self-service-incident";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "worklog.user@example.test", Email = "worklog.user@example.test", DisplayName = "Worklog User" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("worklog.user@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.Add(new Organization { Id = organizationId, Name = "Worklog self-service organization" });
+            db.Users.Add(new User { Id = userId, Name = "Worklog User", Email = "worklog.user@example.test", OrganizationId = organizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = userId,
+                OrganizationId = organizationId,
+                RoleKey = ScopedRoleCatalog.SelfServiceUser
+            });
+            db.Incidents.Add(new Incident
+            {
+                Id = incidentId,
+                OrganizationId = organizationId,
+                Title = "Self-service worklog incident",
+                Description = "Incident that must not accept a staff worklog from a self-service account",
+                RequesterEmail = "worklog.user@example.test"
+            });
+            db.TicketTimelineEvents.AddRange(
+                new TicketTimelineEvent { TicketId = incidentId, EventType = Helpdesk.Shared.Enums.TimelineEventType.Worklog, MessageText = "Customer-visible update" },
+                new TicketTimelineEvent { TicketId = incidentId, EventType = Helpdesk.Shared.Enums.TimelineEventType.InternalNote, MessageText = "Private staff note" });
+            await db.SaveChangesAsync();
+        }
+
+        using var selfServiceUser = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await selfServiceUser.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "worklog.user@example.test", "correct horse battery staple"))).StatusCode);
+        var createWorklog = await selfServiceUser.PostAsJsonAsync(
+            $"/api/v1/incidents/{incidentId}/worklogs",
+            new { Hours = 1d, Notes = "Attempted staff worklog", IsInternalNote = true });
+        var timeline = await selfServiceUser.GetAsync($"/api/v1/incidents/{incidentId}/timeline");
+        var timelineContent = await timeline.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Forbidden, createWorklog.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, timeline.StatusCode);
+        Assert.Contains("Customer-visible update", timelineContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Private staff note", timelineContent, StringComparison.Ordinal);
+        await using var verificationScope = _factory.Services.CreateAsyncScope();
+        Assert.DoesNotContain(
+            await verificationScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().WorkLogs.ToListAsync(),
+            workLog => workLog.TicketId == incidentId);
+    }
+
+    [Fact]
     public async Task Local_login_requires_an_authenticator_code_after_two_factor_is_enabled()
     {
         using var setupClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
