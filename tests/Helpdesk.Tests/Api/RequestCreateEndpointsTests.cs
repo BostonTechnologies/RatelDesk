@@ -215,6 +215,23 @@ public sealed class RequestCreateEndpointsTests
     }
 
     [Fact]
+    public async Task SelfServicePost_Does_Not_Claim_A_Customer_From_Another_Organization()
+    {
+        await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "DifferentDomain");
+        await harness.SeedRequestFormAsync();
+        await harness.SeedCustomerAsync("other-customer", "Other Tenant Customer", "local.user@unrelated.example", "org-2");
+
+        var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", new SubmitSelfServiceRequestDto
+        {
+            RequestFormId = "form-1",
+            PayloadJson = "{}"
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
+    }
+
+    [Fact]
     public async Task SelfServiceRequestUsers_Returns_Only_Visible_Regular_User_Organizations()
     {
         await using var harness = await SelfServiceRequestTestHarness.CreateAsync();

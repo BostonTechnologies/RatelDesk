@@ -358,8 +358,21 @@ public static class SelfServiceRequestEndpoints
                     State = Helpdesk.Shared.Models.EntityState.Enabled
                 };
                 db.Customers.Add(provisionedCustomer);
-                await db.SaveChangesAsync(token);
-                return (provisionedCustomer, provisionedCustomer.Name);
+                try
+                {
+                    await db.SaveChangesAsync(token);
+                    return (provisionedCustomer, provisionedCustomer.Name);
+                }
+                catch (DbUpdateException)
+                {
+                    db.Entry(provisionedCustomer).State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+                    var racingCustomer = await db.Customers
+                        .FirstOrDefaultAsync(x => x.Email.ToLower() == normalizedEmail, token);
+                    return racingCustomer?.State == Helpdesk.Shared.Models.EntityState.Enabled
+                           && string.Equals(racingCustomer.OrganizationId, scopedOrganizationId, StringComparison.OrdinalIgnoreCase)
+                        ? (racingCustomer, racingCustomer.Name)
+                        : (null, null);
+                }
             }
 
             var (customer, _) = await tenantProvisioningService.GetOrCreateCustomerAsync(
