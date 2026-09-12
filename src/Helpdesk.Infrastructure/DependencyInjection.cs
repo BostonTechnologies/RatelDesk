@@ -42,6 +42,7 @@ using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql.EntityFrameworkCore.PostgreSQL;
@@ -245,6 +246,11 @@ public static class DependencyInjection
         if (provider is DatabaseProvider.PostgreSql)
         {
             options.UseNpgsql(connectionString, npgsql => npgsql.UseVector());
+            // The historical PostgreSQL model contains intentional provider
+            // annotations that EF Core 10 re-detects as pending changes. The
+            // application always applies the explicit migration chain; fresh
+            // PostgreSQL setup is verified by the Compose smoke test.
+            options.ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
             return;
         }
 
