@@ -729,6 +729,7 @@ public static class IncidentEndpoints
             [FromRoute] string id,
             [FromBody] CreateTicketRelationDto dto,
             ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] IDomainEventPublisher domainEvents,
@@ -772,6 +773,12 @@ public static class IncidentEndpoints
             if (!string.Equals(source.OrganizationId, target.OrganizationId, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.BadRequest("Related incidents must belong to the same organization.");
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageIncident(source.OrganizationId) || !access.CanManageIncident(target.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             var exists = await db.TicketRelations.AnyAsync(x =>
@@ -848,6 +855,8 @@ public static class IncidentEndpoints
         group.MapDelete("/{id}/relations/{relationId:guid}", async (
             [FromRoute] string id,
             [FromRoute] Guid relationId,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             CancellationToken token) =>
         {
@@ -863,6 +872,18 @@ public static class IncidentEndpoints
                  !string.Equals(relation.TargetTicketId, incident.Id, StringComparison.OrdinalIgnoreCase)))
             {
                 return Results.NotFound();
+            }
+
+            var otherIncidentId = string.Equals(relation.SourceTicketId, incident.Id, StringComparison.OrdinalIgnoreCase)
+                ? relation.TargetTicketId
+                : relation.SourceTicketId;
+            var otherIncident = await ResolveIncidentAsync(db, otherIncidentId, false, token);
+            if (otherIncident is null) return Results.NotFound();
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageIncident(incident.OrganizationId) || !access.CanManageIncident(otherIncident.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             db.TicketRelations.Remove(relation);
