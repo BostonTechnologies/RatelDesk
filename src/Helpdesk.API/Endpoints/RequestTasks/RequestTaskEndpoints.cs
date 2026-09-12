@@ -785,7 +785,7 @@ public static class RequestTaskEndpoints
     }
 
     private static bool CanManageTasks(CurrentUserAccessProfile access) =>
-        access.IsHelpdeskAdmin || RequestManagerOrganizationIds(access).Count > 0;
+        access.IsHelpdeskAdmin || access.HasPermission(HelpdeskPermissions.RequestManager);
 
     private static bool CanAccessOrganization(CurrentUserAccessProfile access, string? organizationId) =>
         access.IsHelpdeskAdmin

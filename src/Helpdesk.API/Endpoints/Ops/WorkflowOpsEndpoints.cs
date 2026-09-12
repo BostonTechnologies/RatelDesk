@@ -411,7 +411,7 @@ public static class WorkflowOpsEndpoints
     }
 
     private static bool CanManageWorkflowOps(CurrentUserAccessProfile access) =>
-        access.IsHelpdeskAdmin || RequestManagerOrganizationIds(access).Count > 0;
+        access.IsHelpdeskAdmin || access.HasPermission(HelpdeskPermissions.RequestManager);
 
     private static IReadOnlySet<string> RequestManagerOrganizationIds(CurrentUserAccessProfile access) =>
         access.OrganizationIdsFor(HelpdeskPermissions.RequestManager);

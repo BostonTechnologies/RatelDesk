@@ -19,10 +19,7 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         var groups = ClaimValues(user, "groups", ClaimTypes.Role, "roles").ToHashSet(StringComparer.OrdinalIgnoreCase);
         var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var bundles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var scopedPermissionGrants = user.FindAll("scoped_permission")
-            .Select(claim => ScopedPermissionGrant.TryParse(claim.Value))
-            .OfType<ScopedPermissionGrant>()
-            .ToHashSet();
+        var scopedPermissionGrants = new HashSet<ScopedPermissionGrant>();
         var isAdmin = IsAdmin(user, groups);
 
         if (isAdmin)
@@ -32,11 +29,6 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         }
 
         AddDirectPermissionClaims(groups, permissions);
-        foreach (var grant in scopedPermissionGrants)
-        {
-            permissions.Add(grant.Permission);
-        }
-
         if (groups.Contains(AuthentikRbacGroups.ClientAdmin) || groups.Contains(HelpdeskPermissions.DataManagementAdmin))
         {
             bundles.Add(HelpdeskRoleBundles.DataManagementAdmin);

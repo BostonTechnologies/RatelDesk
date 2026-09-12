@@ -9,6 +9,7 @@ public sealed class UserAccessClaimsMiddleware(RequestDelegate next)
     {
         if (context.User.Identity?.IsAuthenticated == true && context.User.Identity is ClaimsIdentity identity)
         {
+            RemoveApplicationAccessClaims(identity);
             var access = await accessService.ResolveAsync(context.User, context.RequestAborted);
             AddClaim(identity, "organization_id", access.PrimaryOrganizationId);
             AddClaim(identity, "customer_id", access.CustomerId);
@@ -28,6 +29,18 @@ public sealed class UserAccessClaimsMiddleware(RequestDelegate next)
         }
 
         await next(context);
+    }
+
+    private static void RemoveApplicationAccessClaims(ClaimsIdentity identity)
+    {
+        foreach (var claim in identity.Claims.Where(claim => claim.Type is
+                     "organization_id" or
+                     "allowed_organization_id" or
+                     "customer_id" or
+                     "scoped_permission").ToArray())
+        {
+            identity.RemoveClaim(claim);
+        }
     }
 
     private static void AddClaim(ClaimsIdentity identity, string type, string? value)

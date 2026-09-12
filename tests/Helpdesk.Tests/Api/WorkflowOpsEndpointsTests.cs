@@ -115,6 +115,19 @@ public sealed class WorkflowOpsEndpointsTests
             db.Organizations.AddRange(
                 new Organization { Id = "org-alpha", Name = "Alpha" },
                 new Organization { Id = "org-other", Name = "Other" });
+            db.Customers.Add(new Customer
+            {
+                Id = "customer-manager",
+                Name = "Workflow manager",
+                Email = "manager@example.test",
+                OrganizationId = "org-alpha"
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-manager",
+                OidcIssuer = "https://issuer.example.test",
+                OidcSubject = "manager-1"
+            });
             db.Requests.AddRange(
                 new Request { Id = "req-alpha", TrackingId = "REQ-ALPHA", Title = "Alpha request", OrganizationId = "org-alpha" },
                 new Request { Id = "req-other", TrackingId = "REQ-OTH", Title = "Other request", OrganizationId = "org-other" });
@@ -177,7 +190,10 @@ public sealed class WorkflowOpsEndpointsTests
                 : new[]
                 {
                     new Claim(ClaimTypes.NameIdentifier, "manager-1"),
-                    new Claim("scoped_permission", $"{HelpdeskPermissions.RequestManager}|org-alpha")
+                    new Claim("iss", "https://issuer.example.test"),
+                    new Claim("sub", "manager-1"),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.RequestManager),
+                    new Claim("roles", HelpdeskPermissions.RequestManager)
                 };
 
             var identity = new ClaimsIdentity(claims, Scheme.Name);

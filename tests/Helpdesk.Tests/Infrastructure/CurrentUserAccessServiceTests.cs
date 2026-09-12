@@ -198,24 +198,6 @@ public class CurrentUserAccessServiceTests
         Assert.DoesNotContain("disabled-org", access.AllowedOrganizationIds);
     }
 
-    [Fact]
-    public async Task Scoped_permission_claims_keep_external_grants_paired_with_their_organizations()
-    {
-        await using var db = CreateDb();
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(
-            [
-                new Claim("scoped_permission", $"{HelpdeskPermissions.RequestManager}|org-a"),
-                new Claim("scoped_permission", $"{HelpdeskPermissions.IncidentManager}|org-b")
-            ],
-            "Test"));
-
-        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
-
-        Assert.True(access.HasPermission(HelpdeskPermissions.RequestManager, "org-a"));
-        Assert.False(access.HasPermission(HelpdeskPermissions.RequestManager, "org-b"));
-        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-b"));
-    }
-
     private static ClaimsPrincipal User(string email, string subject, params string[] groups)
         => User(email, subject, tenantId: null, groups);
 
