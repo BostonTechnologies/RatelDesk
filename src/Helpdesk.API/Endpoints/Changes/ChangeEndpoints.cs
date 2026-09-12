@@ -53,12 +53,21 @@ public static class ChangeEndpoints
         group.MapGet("/{id}/timeline", async (
             [FromRoute] string id,
             [FromQuery] string? order,
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             CancellationToken ct) =>
         {
+            var authorization = await AuthorizeChangeAsync(id, context.User, accessService, db, requireManager: false, ct);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             var timelineEvents = await db.TicketTimelineEvents
                 .AsNoTracking()
                 .Where(evt => evt.TicketId == id)
+                .Where(evt => authorization.Access!.CanManageChange(authorization.OrganizationId) || evt.EventType != TimelineEventType.InternalNote)
                 .ToListAsync(ct);
 
             var ordered = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
@@ -1234,10 +1243,25 @@ public static class ChangeEndpoints
         .WithDescription("Updates one change lifecycle state from a list row state picker.")
         .WithTags("Changes");
 
-        group.MapGet("/{id}/worklogs", async ([FromRoute] string id, [FromServices] IRepository<WorkLog> repo) =>
+        group.MapGet("/{id}/worklogs", async (
+            [FromRoute] string id,
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] IRepository<WorkLog> repo,
+            CancellationToken ct) =>
         {
+            var authorization = await AuthorizeChangeAsync(id, context.User, accessService, db, requireManager: false, ct);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             var allLogs = await repo.GetAllAsync();
-            var logs = allLogs.Where(l => l.TicketId == id).Select(l => new WorkLogDto
+            var logs = allLogs
+                .Where(log => log.TicketId == id)
+                .Where(log => authorization.Access!.CanManageChange(authorization.OrganizationId) || !log.IsInternalNote)
+                .Select(l => new WorkLogDto
             {
                 Id = l.Id,
                 TicketId = l.TicketId,
@@ -1255,8 +1279,18 @@ public static class ChangeEndpoints
             [FromRoute] string id,
             [FromBody] CreateWorkLogDto dto,
             ClaimsPrincipal user,
-            [FromServices] IRequestSender sender) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] IRequestSender sender,
+            CancellationToken ct) =>
         {
+            var authorization = await AuthorizeChangeAsync(id, context.User, accessService, db, requireManager: true, ct);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             if (string.IsNullOrWhiteSpace(dto.Notes))
             {
                 return Results.Problem("Notes cannot be empty", statusCode: 400);
@@ -1457,12 +1491,22 @@ public static class ChangeEndpoints
     private static async Task StreamChangeTimeline(
         [FromRoute] string id,
         HttpContext context,
+        [FromServices] ICurrentUserAccessService accessService,
+        [FromServices] HelpdeskDbContext db,
         [FromServices] ITimelineEventBus eventBus,
         [FromServices] ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
+        var authorization = await AuthorizeChangeAsync(id, context.User, accessService, db, requireManager: false, ct);
+        if (authorization.Failure is not null)
+        {
+            await authorization.Failure.ExecuteAsync(context);
+            return;
+        }
+
         var logger = loggerFactory.CreateLogger("ChangeEndpoints");
         var reader = eventBus.Subscribe(id);
+        var canManageChange = authorization.Access!.CanManageChange(authorization.OrganizationId);
 
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Append("Connection", "keep-alive");
@@ -1493,6 +1537,11 @@ public static class ChangeEndpoints
 
                     while (reader.TryRead(out var evt))
                     {
+                        if (!canManageChange && evt.EventType == TimelineEventType.InternalNote)
+                        {
+                            continue;
+                        }
+
                         var json = JsonSerializer.Serialize(evt);
                         await context.Response.WriteAsync("event: timeline\n", ct);
                         await context.Response.WriteAsync($"data: {json}\n\n", ct);
@@ -1537,6 +1586,48 @@ public static class ChangeEndpoints
         RetryCount = evt.RetryCount,
         IsRetryable = evt.IsRetryable
     };
+
+    private static async Task<ChangeAuthorization> AuthorizeChangeAsync(
+        string changeId,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        HelpdeskDbContext db,
+        bool requireManager,
+        CancellationToken cancellationToken)
+    {
+        var change = await db.Changes.AsNoTracking()
+            .Where(candidate => candidate.Id == changeId)
+            .Select(candidate => new ChangeScope(candidate.OrganizationId, candidate.CustomerId, candidate.RequesterEmail))
+            .FirstOrDefaultAsync(cancellationToken);
+        if (change is null)
+        {
+            return new ChangeAuthorization(null, null, Results.NotFound());
+        }
+
+        var customer = !string.IsNullOrWhiteSpace(change.CustomerId)
+            ? await db.Customers.AsNoTracking()
+                .Where(candidate => candidate.Id == change.CustomerId)
+                .Select(candidate => new { candidate.Id, candidate.Email })
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+        var access = await accessService.ResolveAsync(user, cancellationToken);
+        var allowed = requireManager
+            ? access.CanManageChange(change.OrganizationId)
+            : access.CanViewChange(
+                change.OrganizationId,
+                customer?.Id ?? change.CustomerId,
+                customer?.Email ?? change.RequesterEmail);
+        return allowed
+            ? new ChangeAuthorization(access, change.OrganizationId, null)
+            : new ChangeAuthorization(null, null, Results.Forbid());
+    }
+
+    private sealed record ChangeScope(string? OrganizationId, string? CustomerId, string? RequesterEmail);
+
+    private sealed record ChangeAuthorization(
+        CurrentUserAccessProfile? Access,
+        string? OrganizationId,
+        IResult? Failure);
 
     private static async Task<IResult> GetChanges(
         [FromServices] HelpdeskDbContext db,
