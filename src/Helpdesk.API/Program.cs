@@ -67,6 +67,7 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
@@ -81,6 +82,7 @@ using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using Microsoft.AspNetCore.Identity;
 using Npgsql;
 using System.IdentityModel.Tokens.Jwt;
 using System.IO;
@@ -422,6 +424,39 @@ builder.Services.AddAuthentication(options =>
         : CookieSecurePolicy.Always;
     options.ExpireTimeSpan = TimeSpan.FromHours(8);
     options.SlidingExpiration = true;
+    options.Events.OnValidatePrincipal = async context =>
+    {
+        var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            context.RejectPrincipal();
+            return;
+        }
+
+        var users = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await users.FindByIdAsync(userId);
+        var claimedRevision = context.Principal!.FindFirstValue("authorization_revision");
+        var claimedStamp = context.Principal.FindFirstValue("security_stamp");
+        var hasAdministratorClaim = context.Principal.IsInRole("HelpdeskAdmin");
+        if (user is null || !user.IsEnabled ||
+            !string.Equals(claimedRevision, user.AuthorizationRevision.ToString(global::System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal) ||
+            !string.Equals(claimedStamp, user.SecurityStamp, StringComparison.Ordinal) ||
+            hasAdministratorClaim != user.IsInstanceAdministrator)
+        {
+            context.RejectPrincipal();
+            await context.HttpContext.SignOutAsync(LocalAuthenticationOptions.Scheme);
+        }
+    };
+    options.Events.OnRedirectToLogin = context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return Task.CompletedTask;
+    };
 })
 .AddJwtBearer("Authentik", options =>
 {

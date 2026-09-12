@@ -36,7 +36,9 @@ public static class LocalAuthenticationEndpoints
                 new Claim(ClaimTypes.NameIdentifier, user.Id),
                 new Claim(ClaimTypes.Name, string.IsNullOrWhiteSpace(user.DisplayName) ? user.UserName ?? user.Email! : user.DisplayName),
                 new Claim(ClaimTypes.Email, user.Email ?? string.Empty),
-                new Claim("auth_mode", "local")
+                new Claim("auth_mode", "local"),
+                new Claim("security_stamp", user.SecurityStamp ?? string.Empty),
+                new Claim("authorization_revision", user.AuthorizationRevision.ToString(global::System.Globalization.CultureInfo.InvariantCulture))
             }.Concat(user.IsInstanceAdministrator
                 ? [new Claim(ClaimTypes.Role, "HelpdeskAdmin"), new Claim("roles", "HelpdeskAdmin")]
                 : []);
@@ -58,7 +60,64 @@ public static class LocalAuthenticationEndpoints
             return Results.NoContent();
         })
         .RequireAuthorization();
+
+        group.MapPost("/change-password", async (
+            [FromBody] ChangeLocalPasswordRequest request,
+            [FromServices] UserManager<ApplicationUser> users,
+            HttpContext context) =>
+        {
+            var user = await users.GetUserAsync(context.User);
+            if (user is null || !user.IsEnabled)
+            {
+                return Results.Unauthorized();
+            }
+
+            var change = await users.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+            if (!change.Succeeded)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["password"] = ["The current password or new password was not accepted."]
+                });
+            }
+
+            user.AuthorizationRevision++;
+            await users.UpdateAsync(user);
+            await context.SignOutAsync(LocalAuthenticationOptions.Scheme);
+            return Results.NoContent();
+        })
+        .RequireAuthorization();
+
+        group.MapPost("/users/{userId}/disable", async (
+            string userId,
+            [FromServices] UserManager<ApplicationUser> users,
+            HttpContext context) =>
+        {
+            var target = await users.FindByIdAsync(userId);
+            if (target is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (target.IsInstanceAdministrator && target.IsEnabled)
+            {
+                var enabledAdministrators = users.Users.Count(user => user.IsInstanceAdministrator && user.IsEnabled);
+                if (enabledAdministrators <= 1)
+                {
+                    return Results.Conflict(new { error = "last_instance_administrator" });
+                }
+            }
+
+            target.IsEnabled = false;
+            target.DisabledAtUtc = DateTimeOffset.UtcNow;
+            target.AuthorizationRevision++;
+            await users.UpdateAsync(target);
+            return Results.NoContent();
+        })
+        .RequireAuthorization("HelpdeskAdmin");
     }
 
     public sealed record LocalLoginRequest(string Email, string Password, bool RememberMe = false);
+
+    public sealed record ChangeLocalPasswordRequest(string CurrentPassword, string NewPassword);
 }

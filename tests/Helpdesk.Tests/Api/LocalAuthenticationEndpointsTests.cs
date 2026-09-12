@@ -82,4 +82,46 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         var access = await currentUser.Content.ReadFromJsonAsync<CurrentUserAccessDto>();
         Assert.True(access!.IsHelpdeskAdmin);
     }
+
+    [Fact]
+    public async Task Last_enabled_instance_administrator_cannot_be_disabled()
+    {
+        using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var login = await client.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test",
+            "Strong!Passw0rd"));
+        Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var administrator = await users.FindByEmailAsync("admin@example.test");
+
+        var disable = await client.PostAsync($"/api/v1/local-auth/users/{administrator!.Id}/disable", content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, disable.StatusCode);
+        Assert.True((await users.FindByIdAsync(administrator.Id))!.IsEnabled);
+    }
+
+    [Fact]
+    public async Task Disabled_local_account_loses_an_existing_cookie_session()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var operatorCreate = await users.CreateAsync(
+            new ApplicationUser { UserName = "operator@example.test", Email = "operator@example.test", DisplayName = "Operator" },
+            "Strong!Passw0rd");
+        Assert.True(operatorCreate.Succeeded, string.Join(", ", operatorCreate.Errors.Select(error => error.Description)));
+        var operatorUser = await users.FindByEmailAsync("operator@example.test");
+
+        using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        using var operatorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "Strong!Passw0rd"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await operatorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "operator@example.test", "Strong!Passw0rd"))).StatusCode);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsync($"/api/v1/local-auth/users/{operatorUser!.Id}/disable", content: null)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await operatorClient.GetAsync("/api/v1/auth/me")).StatusCode);
+    }
 }
