@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-compose_file="${1:-docker/docker-compose.yml}"
+if [[ "$#" -eq 0 ]]; then
+  compose_files=(docker/docker-compose.yml)
+else
+  compose_files=("$@")
+fi
+compose_arguments=()
+for compose_file in "${compose_files[@]}"; do
+  compose_arguments+=(-f "$compose_file")
+done
+
 api_base_url="${RATELDESK_API_URL:-http://127.0.0.1:8222}"
 web_base_url="${RATELDESK_WEB_URL:-http://127.0.0.1:8111}"
+setup_provider="${RATELDESK_SETUP_PROVIDER:-Sqlite}"
 work_directory="$(mktemp -d)"
 cookie_jar="$work_directory/cookies.txt"
 
@@ -15,7 +25,7 @@ trap cleanup EXIT
 curl --retry 6 --retry-all-errors --retry-delay 2 --fail --silent --show-error \
   "$web_base_url/setup" > /dev/null
 
-setup_code="$(docker compose -f "$compose_file" exec -T api sh -c 'cat /var/lib/rateldesk/bootstrap/setup-code')"
+setup_code="$(docker compose "${compose_arguments[@]}" exec -T api sh -c 'cat /var/lib/rateldesk/bootstrap/setup-code')"
 password="Rc4-$(openssl rand -hex 24)"
 
 session_payload="$(jq -nc --arg setupCode "$setup_code" '{setupCode: $setupCode}')"
@@ -24,7 +34,24 @@ session="$(curl --fail --silent --show-error \
   --data "$session_payload" \
   "$api_base_url/api/v1/setup/session" | jq -er '.session')"
 
-storage_payload='{"provider":"Sqlite"}'
+case "$setup_provider" in
+  Sqlite)
+    storage_payload='{"provider":"Sqlite"}'
+    ;;
+  PostgreSql)
+    postgre_sql_password="${RATELDESK_SETUP_POSTGRES_PASSWORD:?Set RATELDESK_SETUP_POSTGRES_PASSWORD for PostgreSQL setup validation}"
+    storage_payload="$(jq -nc \
+      --arg host "${RATELDESK_SETUP_POSTGRES_HOST:-postgres}" \
+      --arg database "${RATELDESK_SETUP_POSTGRES_DATABASE:-rateldesk}" \
+      --arg username "${RATELDESK_SETUP_POSTGRES_USERNAME:-rateldesk}" \
+      --arg password "$postgre_sql_password" \
+      '{provider: "PostgreSql", postgreSqlHost: $host, postgreSqlPort: 5432, postgreSqlDatabase: $database, postgreSqlUsername: $username, postgreSqlPassword: $password, postgreSqlUseTls: false}')"
+    ;;
+  *)
+    echo "Unsupported setup provider: $setup_provider" >&2
+    exit 2
+    ;;
+esac
 curl --fail --silent --show-error \
   --header 'Content-Type: application/json' \
   --header "X-RatelDesk-Setup-Session: $session" \
@@ -71,4 +98,4 @@ curl --fail --silent --show-error \
 
 curl --fail --silent --show-error "$api_base_url/api/v1/setup/status" | jq -e '.state == "Ready"' > /dev/null
 
-echo "First-run SQLite setup and local sign-in smoke test passed."
+echo "First-run $setup_provider setup and local sign-in smoke test passed."

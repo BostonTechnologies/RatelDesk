@@ -191,6 +191,33 @@ jobs:
         if: always()
         run: docker compose -f docker/docker-compose.yml down --volumes --remove-orphans
 
+  compose-postgres:
+    name: Compose PostgreSQL setup validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      RATELDESK_POSTGRES_PASSWORD: rateldesk-ci-postgres-password
+      RATELDESK_SETUP_PROVIDER: PostgreSql
+      RATELDESK_SETUP_POSTGRES_PASSWORD: rateldesk-ci-postgres-password
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate and start the documented PostgreSQL stack
+        run: |
+          docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml config --quiet
+          docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml up --build --detach --wait
+          curl --retry 6 --retry-all-errors --retry-delay 2 --fail --show-error --silent http://127.0.0.1:8222/health/live > /dev/null
+          tools/ci/smoke-first-run-local.sh docker/docker-compose.yml docker/docker-compose.postgres.yml
+
+      - name: Collect PostgreSQL Compose logs
+        if: always()
+        run: docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml logs --no-color
+
+      - name: Stop the PostgreSQL stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml down --volumes --remove-orphans
+
   layout:
     name: Layout and reference validation
     runs-on: ubuntu-latest
