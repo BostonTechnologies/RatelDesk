@@ -115,9 +115,88 @@ public static class LocalAuthenticationEndpoints
             return Results.NoContent();
         })
         .RequireAuthorization("HelpdeskAdmin");
+
+        group.MapPost("/users", async (
+            [FromBody] CreateLocalAccountRequest request,
+            [FromServices] UserManager<ApplicationUser> users) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.DisplayName))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["account"] = ["Display name and email are required."]
+                });
+            }
+
+            var user = new ApplicationUser
+            {
+                UserName = request.Email.Trim(),
+                Email = request.Email.Trim(),
+                DisplayName = request.DisplayName.Trim(),
+                IsInstanceAdministrator = request.IsInstanceAdministrator,
+                EmailConfirmed = false
+            };
+            var created = await users.CreateAsync(user);
+            if (!created.Succeeded)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["account"] = ["The local account could not be created. The email may already be in use."]
+                });
+            }
+
+            var activationToken = await users.GeneratePasswordResetTokenAsync(user);
+            return Results.Created($"/api/v1/local-auth/users/{user.Id}", new LocalAccountActivationResponse(user.Id, user.Email!, activationToken));
+        })
+        .RequireAuthorization("HelpdeskAdmin");
+
+        group.MapPost("/users/{userId}/activation-token", async (
+            string userId,
+            [FromServices] UserManager<ApplicationUser> users) =>
+        {
+            var user = await users.FindByIdAsync(userId);
+            if (user is null)
+            {
+                return Results.NotFound();
+            }
+
+            var activationToken = await users.GeneratePasswordResetTokenAsync(user);
+            return Results.Ok(new LocalAccountActivationResponse(user.Id, user.Email!, activationToken));
+        })
+        .RequireAuthorization("HelpdeskAdmin");
+
+        group.MapPost("/activate", async (
+            [FromBody] ActivateLocalAccountRequest request,
+            [FromServices] UserManager<ApplicationUser> users) =>
+        {
+            var user = await users.FindByEmailAsync(request.Email);
+            if (user is null || !user.IsEnabled)
+            {
+                return Results.BadRequest(new { error = "activation_failed" });
+            }
+
+            var reset = await users.ResetPasswordAsync(user, request.ActivationToken, request.NewPassword);
+            if (!reset.Succeeded)
+            {
+                return Results.BadRequest(new { error = "activation_failed" });
+            }
+
+            user.EmailConfirmed = true;
+            user.AuthorizationRevision++;
+            await users.UpdateAsync(user);
+            return Results.NoContent();
+        })
+        .AllowAnonymous()
+        .RequireRateLimiting("LocalLogin");
     }
 
     public sealed record LocalLoginRequest(string Email, string Password, bool RememberMe = false);
 
     public sealed record ChangeLocalPasswordRequest(string CurrentPassword, string NewPassword);
+
+    public sealed record CreateLocalAccountRequest(string DisplayName, string Email, bool IsInstanceAdministrator = false);
+
+    public sealed record ActivateLocalAccountRequest(string Email, string ActivationToken, string NewPassword);
+
+    public sealed record LocalAccountActivationResponse(string UserId, string Email, string ActivationToken);
 }

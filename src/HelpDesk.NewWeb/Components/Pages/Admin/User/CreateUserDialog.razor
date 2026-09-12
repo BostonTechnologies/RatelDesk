@@ -1,6 +1,7 @@
 @using System.ComponentModel.DataAnnotations
 @using Helpdesk.Shared.DTOs.Organization
 @inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
 
 <MudDialog>
     <TitleContent>
@@ -13,12 +14,22 @@
         <MudForm Model="model" @ref="form" OnValidSubmit="Submit" Class="mt-2">
             <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
             <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
-            @* Password removed: OIDC-only sign-in *@
-            <MudSelect T="string" @bind-Value="model.Role" Label="Role" Required="true">
-                <MudSelectItem T="string" Value="@("Admin")">Admin</MudSelectItem>
-                <MudSelectItem T="string" Value="@("User")">User</MudSelectItem>
-                <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
-            </MudSelect>
+            @if (SupportsLocalAccounts)
+            {
+                <MudSwitch @bind-Value="model.IsInstanceAdministrator"
+                           Color="Color.Warning"
+                           Label="Instance administrator"
+                           Class="mt-2" />
+                <MudText Typo="Typo.body2" Class="mt-2">A one-time activation token is generated after account creation. Share it through an approved secure channel.</MudText>
+            }
+            else
+            {
+                <MudSelect T="string" @bind-Value="model.Role" Label="Role" Required="true">
+                    <MudSelectItem T="string" Value="@("Admin")">Admin</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("User")">User</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
+                </MudSelect>
+            }
             <MudSelect T="string"
                        @bind-Value="model.OrganizationId"
                        Label="Organization"
@@ -33,6 +44,11 @@
                        Label="Allow access to in-testing self-service requests"
                        Class="mt-2" />
         </MudForm>
+        @if (!string.IsNullOrWhiteSpace(_activationToken))
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-4">Copy this one-time activation token now. It cannot be displayed again.</MudAlert>
+            <MudTextField Value="@_activationToken" Label="Activation token" ReadOnly="true" Variant="Variant.Outlined" FullWidth="true" Class="mt-2" />
+        }
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
@@ -47,6 +63,11 @@
     private MudForm form = default!;
     private CreateUserModel model = new();
     private List<OrganizationDto> organizations = new();
+    private string? _activationToken;
+
+    private bool SupportsLocalAccounts =>
+        string.Equals(Configuration["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Configuration["Authentication:Mode"], "Hybrid", StringComparison.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
@@ -61,6 +82,23 @@
         await form.ValidateAsync();
         if (form.IsValid)
         {
+            if (SupportsLocalAccounts)
+            {
+                var localAccountResponse = await HelpdeskApi.PostAsJsonAsync("api/v1/local-auth/users", new
+                {
+                    displayName = model.Name,
+                    email = model.Email,
+                    isInstanceAdministrator = model.IsInstanceAdministrator
+                });
+                if (localAccountResponse.IsSuccessStatusCode)
+                {
+                    var activation = await localAccountResponse.Content.ReadFromJsonAsync<LocalAccountActivationResponse>();
+                    _activationToken = activation?.ActivationToken;
+                }
+
+                return;
+            }
+
             var response = await HelpdeskApi.PostAsJsonAsync("api/v1/users", model);
             if (response.IsSuccessStatusCode)
             {
@@ -80,7 +118,10 @@
         // Password removed: OIDC-only
         [Required]
         public string Role { get; set; } = "User";
+        public bool IsInstanceAdministrator { get; set; }
         public bool IsTestUser { get; set; }
         public string? OrganizationId { get; set; }
     }
+
+    private sealed record LocalAccountActivationResponse(string UserId, string Email, string ActivationToken);
 }

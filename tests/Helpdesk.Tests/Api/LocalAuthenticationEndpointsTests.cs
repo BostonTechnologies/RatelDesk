@@ -124,4 +124,32 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await operatorClient.GetAsync("/api/v1/auth/me")).StatusCode);
     }
+
+    [Fact]
+    public async Task Administrator_can_create_and_activate_a_local_account_with_a_single_use_token()
+    {
+        using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+
+        var create = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
+            "New Operator", "new.operator@example.test"));
+        var activation = await create.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
+
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        Assert.NotNull(activation);
+        Assert.False(string.IsNullOrWhiteSpace(activation.ActivationToken));
+
+        var activate = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/activate", new LocalAuthenticationEndpoints.ActivateLocalAccountRequest(
+            activation.Email, activation.ActivationToken, "another secure passphrase"));
+        var replay = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/activate", new LocalAuthenticationEndpoints.ActivateLocalAccountRequest(
+            activation.Email, activation.ActivationToken, "a different secure passphrase"));
+        using var accountClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var login = await accountClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            activation.Email, "another secure passphrase"));
+
+        Assert.Equal(HttpStatusCode.NoContent, activate.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+    }
 }
