@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -51,24 +52,52 @@ public sealed class WorkflowOpsEndpointsTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Workflow_ops_supports_sqlite_due_date_filters_and_sorting()
+    {
+        await using var harness = await WorkflowOpsHarness.CreateAsync("Admin", useSqlite: true);
+
+        var overdue = await harness.Client.GetFromJsonAsync<PagedResponse<TaskOpsRowDto>>(
+            "/api/v1/ops/tasks/overdue?page=1&pageSize=25");
+        var retries = await harness.Client.GetFromJsonAsync<PagedResponse<TaskOpsRowDto>>(
+            "/api/v1/ops/tasks/retries-pending?page=1&pageSize=25");
+
+        Assert.Equal(["task-overdue", "task-other"], overdue!.Items.Select(item => item.TaskId));
+        Assert.Equal("task-retry", Assert.Single(retries!.Items).TaskId);
+    }
+
     private sealed class WorkflowOpsHarness : IAsyncDisposable
     {
         private readonly WebApplication _app;
+        private readonly SqliteConnection? _connection;
 
-        private WorkflowOpsHarness(WebApplication app, HttpClient client)
+        private WorkflowOpsHarness(WebApplication app, HttpClient client, SqliteConnection? connection)
         {
             _app = app;
             Client = client;
+            _connection = connection;
         }
 
         public HttpClient Client { get; }
 
-        public static async Task<WorkflowOpsHarness> CreateAsync(string actor)
+        public static async Task<WorkflowOpsHarness> CreateAsync(string actor, bool useSqlite = false)
         {
+            SqliteConnection? connection = null;
+            if (useSqlite)
+            {
+                connection = new SqliteConnection("Data Source=:memory:");
+                await connection.OpenAsync();
+            }
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
             builder.WebHost.UseTestServer();
             builder.Services.AddHttpContextAccessor();
-            builder.Services.AddDbContext<HelpdeskDbContext>(options => options.UseInMemoryDatabase($"workflow-ops-{Guid.NewGuid():N}"));
+            builder.Services.AddDbContext<HelpdeskDbContext>(options =>
+            {
+                if (connection is not null)
+                    options.UseSqlite(connection);
+                else
+                    options.UseInMemoryDatabase($"workflow-ops-{Guid.NewGuid():N}");
+            });
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("org-alpha", "user-1", actor == "Admin"));
             builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
             builder.Services.AddAuthentication(options =>
@@ -102,12 +131,14 @@ public sealed class WorkflowOpsEndpointsTests
             await app.StartAsync();
             var client = app.GetTestClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", actor);
-            return new WorkflowOpsHarness(app, client);
+            return new WorkflowOpsHarness(app, client, connection);
         }
 
         public async ValueTask DisposeAsync()
         {
             await _app.DisposeAsync();
+            if (_connection is not null)
+                await _connection.DisposeAsync();
         }
 
         private static void Seed(HelpdeskDbContext db)
