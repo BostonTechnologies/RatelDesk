@@ -206,9 +206,9 @@ public class HelpdeskDbContext(
             if (isSqlite)
             {
                 entity.Property<long?>("DueAtUtcTicks")
-                    .HasComputedColumnSql("CAST((julianday(\"DueAt\") - 2440587.5) * 864000000000 AS INTEGER)");
+                    .HasComputedColumnSql("CAST((julianday(\"DueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
                 entity.Property<long?>("NextRetryAtUtcTicks")
-                    .HasComputedColumnSql("CAST((julianday(\"NextRetryAt\") - 2440587.5) * 864000000000 AS INTEGER)");
+                    .HasComputedColumnSql("CAST((julianday(\"NextRetryAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
                 entity.HasIndex("Status", "DueAtUtcTicks");
                 entity.HasIndex("Status", "NextRetryAtUtcTicks");
             }
@@ -662,6 +662,14 @@ public class HelpdeskDbContext(
             entity.HasIndex(x => x.ResolutionDueAt);
             entity.HasIndex(x => x.ResumeAt);
             entity.HasIndex(x => x.CalendarId);
+            if (isSqlite)
+            {
+                entity.Property<long?>("CompletedAtUtcTicks").HasComputedColumnSql("CAST((julianday(\"CompletedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.Property<long>("ResolutionDueAtUtcTicks").HasComputedColumnSql("CAST((julianday(\"ResolutionDueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.Property<long>("ResponseDueAtUtcTicks").HasComputedColumnSql("CAST((julianday(\"ResponseDueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("Status", "CompletedAtUtcTicks");
+                entity.HasIndex("ResolutionDueAtUtcTicks");
+            }
             entity.HasOne<Ticket>()
                 .WithOne()
                 .HasForeignKey<TicketSlaState>(x => x.TicketId)

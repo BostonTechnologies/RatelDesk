@@ -24,11 +24,9 @@ public class SlaReportingQueryService(
         var completedQuery = BuildCompletedQuery(query.TenantId, query.TicketType)
             .Where(x => x.Sla.CompletedAt.HasValue);
 
-        if (!IsSqlite)
-        {
-            completedQuery = completedQuery.Where(x =>
-                x.Sla.CompletedAt!.Value >= query.FromUtc && x.Sla.CompletedAt!.Value <= query.ToUtc);
-        }
+        completedQuery = IsSqlite
+            ? completedQuery.Where(x => EF.Property<long?>(x.Sla, "CompletedAtUtcTicks") >= query.FromUtc.UtcTicks && EF.Property<long?>(x.Sla, "CompletedAtUtcTicks") <= query.ToUtc.UtcTicks)
+            : completedQuery.Where(x => x.Sla.CompletedAt!.Value >= query.FromUtc && x.Sla.CompletedAt!.Value <= query.ToUtc);
 
         var rows = (await completedQuery
             .Select(x => new
@@ -37,9 +35,7 @@ public class SlaReportingQueryService(
                 x.Sla.CompletedWithinResolutionSla,
                 x.Sla.CompletedWithinResponseSla
             })
-            .ToListAsync(ct))
-            .Where(x => !IsSqlite || (x.CompletedAt >= query.FromUtc && x.CompletedAt <= query.ToUtc))
-            .ToList();
+            .ToListAsync(ct));
 
         var completedTotal = rows.Count;
         var withinResolution = rows.Count(x => x.CompletedWithinResolutionSla);
@@ -82,19 +78,12 @@ public class SlaReportingQueryService(
 
         var total = await baseQuery.CountAsync(ct);
 
-        var rows = IsSqlite
-            ? (await baseQuery.ToListAsync(ct))
+        var rows = await (IsSqlite
+            ? baseQuery.OrderBy(x => EF.Property<long>(x.Sla, "ResolutionDueAtUtcTicks")).ThenBy(x => EF.Property<long>(x.Sla, "ResponseDueAtUtcTicks"))
+            : baseQuery
                 .OrderBy(x => x.Sla.ResolutionDueAt)
-                .ThenBy(x => x.Sla.ResponseDueAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToList()
-            : await baseQuery
-                .OrderBy(x => x.Sla.ResolutionDueAt)
-                .ThenBy(x => x.Sla.ResponseDueAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync(ct);
+                .ThenBy(x => x.Sla.ResponseDueAt))
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
         var calendarCache = await BuildCalendarCacheAsync(rows.Select(x => x.Ticket.OrganizationId), ct);
 
         return new PagedResult<SlaTicketRowDto>
@@ -116,24 +105,10 @@ public class SlaReportingQueryService(
         var candidatesQuery = BuildActiveQuery(query.TenantId, query.TicketType)
             .Where(x => x.Sla.Status != SlaStatus.Completed);
         List<ActiveSlaQueryRow> candidates;
-        if (IsSqlite)
-        {
-            candidates = (await candidatesQuery.ToListAsync(ct))
-                .OrderBy(x => query.Metric == SlaMetricType.Response
-                    ? x.Sla.ResponseDueAt
-                    : x.Sla.ResolutionDueAt)
-                .Take(_nearBreachCandidateLimit)
-                .ToList();
-        }
-        else
-        {
-            candidatesQuery = query.Metric == SlaMetricType.Response
-                ? candidatesQuery.OrderBy(x => x.Sla.ResponseDueAt)
-                : candidatesQuery.OrderBy(x => x.Sla.ResolutionDueAt);
-            candidates = await candidatesQuery
-                .Take(_nearBreachCandidateLimit)
-                .ToListAsync(ct);
-        }
+        candidatesQuery = query.Metric == SlaMetricType.Response
+            ? (IsSqlite ? candidatesQuery.OrderBy(x => EF.Property<long>(x.Sla, "ResponseDueAtUtcTicks")) : candidatesQuery.OrderBy(x => x.Sla.ResponseDueAt))
+            : (IsSqlite ? candidatesQuery.OrderBy(x => EF.Property<long>(x.Sla, "ResolutionDueAtUtcTicks")) : candidatesQuery.OrderBy(x => x.Sla.ResolutionDueAt));
+        candidates = await candidatesQuery.Take(_nearBreachCandidateLimit).ToListAsync(ct);
 
         var calendarCache = await BuildCalendarCacheAsync(candidates.Select(x => x.Ticket.OrganizationId), ct);
         var filtered = candidates
@@ -177,11 +152,9 @@ public class SlaReportingQueryService(
         var completedQuery = BuildCompletedQuery(query.TenantId, query.TicketType)
             .Where(x => x.Sla.CompletedAt.HasValue);
 
-        if (!IsSqlite)
-        {
-            completedQuery = completedQuery.Where(x =>
-                x.Sla.CompletedAt!.Value >= query.FromUtc && x.Sla.CompletedAt!.Value <= query.ToUtc);
-        }
+        completedQuery = IsSqlite
+            ? completedQuery.Where(x => EF.Property<long?>(x.Sla, "CompletedAtUtcTicks") >= query.FromUtc.UtcTicks && EF.Property<long?>(x.Sla, "CompletedAtUtcTicks") <= query.ToUtc.UtcTicks)
+            : completedQuery.Where(x => x.Sla.CompletedAt!.Value >= query.FromUtc && x.Sla.CompletedAt!.Value <= query.ToUtc);
 
         if (query.WithinResolutionSla.HasValue)
         {
@@ -202,29 +175,12 @@ public class SlaReportingQueryService(
             WithinResolutionSla = x.Sla.CompletedWithinResolutionSla
         });
 
-        List<SlaCompletedRowDto> rows;
-        int total;
-        if (IsSqlite)
-        {
-            var sqliteRows = (await projectedQuery.ToListAsync(ct))
-                .Where(x => x.CompletedAt >= query.FromUtc && x.CompletedAt <= query.ToUtc)
-                .OrderByDescending(x => x.CompletedAt)
-                .ToList();
-            total = sqliteRows.Count;
-            rows = sqliteRows
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToList();
-        }
-        else
-        {
-            total = await completedQuery.CountAsync(ct);
-            rows = await projectedQuery
-                .OrderByDescending(x => x.CompletedAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync(ct);
-        }
+        var total = await completedQuery.CountAsync(ct);
+        var rows = await (IsSqlite
+            ? completedQuery.OrderByDescending(x => EF.Property<long?>(x.Sla, "CompletedAtUtcTicks"))
+            : completedQuery.OrderByDescending(x => x.Sla.CompletedAt))
+            .Select(x => new SlaCompletedRowDto { TicketId = x.Ticket.Id, TicketNumber = x.Ticket.TrackingId, Title = x.Ticket.Title, TenantId = x.Ticket.OrganizationId ?? string.Empty, TicketType = ResolveTicketType(x.Discriminator), ServiceId = x.Ticket.ServiceId, Priority = (int)x.Ticket.Priority, CompletedAt = x.Sla.CompletedAt!.Value, WithinResponseSla = x.Sla.CompletedWithinResponseSla, WithinResolutionSla = x.Sla.CompletedWithinResolutionSla })
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
 
         return new PagedResult<SlaCompletedRowDto>
         {
