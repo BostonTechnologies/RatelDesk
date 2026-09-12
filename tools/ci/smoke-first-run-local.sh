@@ -137,7 +137,7 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   --data '{"state":3,"priority":1}' \
   "$api_base_url/api/v1/requests/$request_id" > /dev/null
 
-change_payload="$(jq -nc --arg organizationId "$organization_id" --arg administratorId "$administrator_id" '{title: "RC4 smoke change", description: "Production first-run change verification.", priority: 0, organizationId: $organizationId, requestedForUserId: $administratorId, implementorUserId: $administratorId, changeType: "Standard", implementationStartAt: "2030-01-02T10:00:00Z", implementationEndAt: "2030-01-02T11:00:00Z", changeTemplate: {isPreApproved: true, existingRunbookReference: "RC4-SMOKE", scopeOfChange: "Smoke validation", affectedSystems: ["RatelDesk"], implementationSteps: ["Verify startup"], validationSteps: ["Verify ticket creation"], rollbackPlan: "Revert the smoke change"}}')"
+change_payload="$(jq -nc --arg organizationId "$organization_id" --arg administratorId "$administrator_id" '{title: "RC4 smoke change", description: "Production first-run change verification.", priority: 0, organizationId: $organizationId, requestedForUserId: $administratorId, implementorUserId: $administratorId, changeType: "Standard", implementationStartAt: "2030-01-02T10:00:00Z", implementationEndAt: "2030-01-02T11:00:00Z", changeTemplate: {isPreApproved: false, existingRunbookReference: "RC4-SMOKE", scopeOfChange: "Smoke validation", affectedSystems: ["RatelDesk"], implementationSteps: ["Verify startup"], validationSteps: ["Verify ticket creation"], rollbackPlan: "Revert the smoke change"}}')"
 change_id="$(curl --fail --silent --show-error \
   --cookie "$cookie_jar" \
   --header 'Content-Type: application/json' \
