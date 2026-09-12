@@ -32,6 +32,10 @@ public static class TicketEndpoints
             .WithTags("Tickets")
             .RequireAuthorization();
 
+        var ticketAiFeedbackGroup = app.MapGroup("/api/v1/tickets/{id:guid}")
+            .WithTags("Tickets")
+            .RequireAuthorization();
+
         var ticketCountGroup = app.MapGroup("/api/v1/{ticketType}/{ticketId}")
             .WithTags("Tickets")
             .RequireAuthorization();
@@ -250,7 +254,7 @@ public static class TicketEndpoints
         .WithSummary("List AI audit activity for a ticket")
         .WithDescription("Returns persisted AI operation audit records for the ticket, including generation, approval, and automation actions.");
 
-        MapTicketAiFeedbackEndpoint(group);
+        MapTicketAiFeedbackEndpoint(ticketAiFeedbackGroup);
 
         group.MapGet("/{id:guid}/requester-reply-draft", async (
             Guid id,
