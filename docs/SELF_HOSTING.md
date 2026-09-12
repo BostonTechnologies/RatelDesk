@@ -26,7 +26,22 @@ SQLite uses its own EF Core migration assembly; setup and every normal API start
 
 ## PostgreSQL
 
-An existing PostgreSQL deployment continues to use `ConnectionStrings__HelpdeskDb`; select `Database__Provider=PostgreSql` explicitly for new deployment-managed PostgreSQL configuration. Preserve the database and shared data-protection keys before an upgrade. PostgreSQL uses the existing provider-specific migration chain and requires the extensions used by it, including `vector` and `pg_trgm`; do not point RatelDesk at an unrelated or non-empty database. The default Compose file deliberately does not bundle PostgreSQL; use an externally managed PostgreSQL service, or add one in deployment-owned infrastructure with backups, credentials, TLS, and extension management appropriate to that environment.
+An existing PostgreSQL deployment continues to use `ConnectionStrings__HelpdeskDb`; select `Database__Provider=PostgreSql` explicitly for new deployment-managed PostgreSQL configuration. Preserve the database and shared data-protection keys before an upgrade. PostgreSQL uses the existing provider-specific migration chain and requires the extensions used by it, including `vector` and `pg_trgm`; do not point RatelDesk at an unrelated or non-empty database.
+
+### Bundled PostgreSQL
+
+For a fresh local or single-host deployment, combine the default stack with [docker/docker-compose.postgres.yml](../docker/docker-compose.postgres.yml). It runs the compatible `pgvector/pgvector:pg16` image, creates `vector` and `pg_trgm` only when its new PostgreSQL volume is initialized, and keeps database data in a separate named volume:
+
+```bash
+RATELDESK_POSTGRES_PASSWORD='replace-with-a-secret' \
+  docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml up --build
+```
+
+Complete `/setup` with host `postgres`, port `5432`, database/user `rateldesk`, and the supplied password. The bundled database uses a local password for this recipe; use an externally managed PostgreSQL service with backups, restricted credentials, TLS, and managed extension lifecycle for public or multi-host deployments. The sidecar is not an automatic SQLite-to-PostgreSQL migration path.
+
+### External PostgreSQL
+
+Select PostgreSQL at `/setup` and provide the host, port, database, username, password, and TLS preference. RatelDesk tests the connection with bounded timeouts and refuses a non-empty database that does not contain RatelDesk migration history. The setup principal must be able to apply the existing migrations but does not need superuser access; ensure an administrator has installed the required extensions before setup. Deployment-managed `ConnectionStrings__HelpdeskDb` remains the compatibility path for established installations.
 
 ## Reverse proxy and Traefik
 

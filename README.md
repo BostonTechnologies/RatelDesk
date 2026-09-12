@@ -34,6 +34,17 @@ RATELDESK_VERSION=0.1.0-rc.4 docker compose -f docker/docker-compose.release.yml
 
 Use an exact SemVer tag in production, or preferably replace tags with the published image digests. `latest` advances only for stable releases; prereleases never move it. See [release engineering](docs/releases.md) for versioning, build metadata, and release instructions.
 
+## Bundled PostgreSQL
+
+For a fresh installation with PostgreSQL and the required `vector` and `pg_trgm` extensions, add the bundled sidecar overlay. Choose a unique password outside source control:
+
+```bash
+RATELDESK_POSTGRES_PASSWORD='replace-with-a-secret' \
+  docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml up --build
+```
+
+At `/setup`, select PostgreSQL and enter host `postgres`, port `5432`, database `rateldesk`, user `rateldesk`, and the password supplied above. For published images, replace the first Compose file with `docker/docker-compose.release.yml` and set `RATELDESK_VERSION` to an exact release tag.
+
 ## Configuration
 
 The main public configuration surfaces are:
