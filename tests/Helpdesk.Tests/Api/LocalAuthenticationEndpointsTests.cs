@@ -103,6 +103,16 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Notification_hub_rejects_anonymous_negotiation()
+    {
+        using var anonymous = _factory.CreateClient();
+
+        var negotiate = await anonymous.PostAsync("/notification-hub/negotiate?negotiateVersion=1", content: null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, negotiate.StatusCode);
+    }
+
+    [Fact]
     public async Task Authenticated_non_administrator_cannot_use_legacy_email_ingestion()
     {
         await using var scope = _factory.Services.CreateAsyncScope();
