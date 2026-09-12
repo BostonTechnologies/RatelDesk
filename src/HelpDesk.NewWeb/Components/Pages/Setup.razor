@@ -34,7 +34,7 @@
             <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" />
             <MudTextField T="string" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" />
             <MudTextField T="string" @bind-Value="_password" Label="Password" InputType="InputType.Password" Required="true" />
-            <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm password" InputType="InputType.Password" Required="true" HelperText="Use at least 12 characters, including upper- and lowercase letters, a number, and a symbol." />
+            <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm password" InputType="InputType.Password" Required="true" HelperText="Use a memorable passphrase of at least 15 characters." />
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="InitializeAsync">
                 @(_busy ? "Initializing…" : "Initialize instance")
             </MudButton>

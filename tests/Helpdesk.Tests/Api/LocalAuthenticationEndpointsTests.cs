@@ -54,7 +54,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var result = await users.CreateAsync(
             new ApplicationUser { UserName = "admin@example.test", Email = "admin@example.test", DisplayName = "Instance Admin", IsInstanceAdministrator = true },
-            "Strong!Passw0rd");
+            "correct horse battery staple");
         Assert.True(result.Succeeded, string.Join(", ", result.Errors.Select(error => error.Description)));
     }
 
@@ -71,7 +71,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
 
         var login = await client.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
             "admin@example.test",
-            "Strong!Passw0rd"));
+            "correct horse battery staple"));
 
         Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
         Assert.Contains(login.Headers, header => string.Equals(header.Key, "Set-Cookie", StringComparison.OrdinalIgnoreCase));
@@ -89,7 +89,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         var login = await client.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
             "admin@example.test",
-            "Strong!Passw0rd"));
+            "correct horse battery staple"));
         Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
 
         await using var scope = _factory.Services.CreateAsyncScope();
@@ -109,16 +109,16 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var operatorCreate = await users.CreateAsync(
             new ApplicationUser { UserName = "operator@example.test", Email = "operator@example.test", DisplayName = "Operator" },
-            "Strong!Passw0rd");
+            "correct horse battery staple");
         Assert.True(operatorCreate.Succeeded, string.Join(", ", operatorCreate.Errors.Select(error => error.Description)));
         var operatorUser = await users.FindByEmailAsync("operator@example.test");
 
         using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         using var operatorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
-            "admin@example.test", "Strong!Passw0rd"))).StatusCode);
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await operatorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
-            "operator@example.test", "Strong!Passw0rd"))).StatusCode);
+            "operator@example.test", "correct horse battery staple"))).StatusCode);
 
         Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsync($"/api/v1/local-auth/users/{operatorUser!.Id}/disable", content: null)).StatusCode);
 

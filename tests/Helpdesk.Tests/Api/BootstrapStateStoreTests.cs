@@ -108,7 +108,7 @@ public sealed class BootstrapStateStoreTests
             var result = await initializer.InitializeAsync(configured, new FirstAdministratorRequest(
                 "admin@example.test",
                 "Instance Admin",
-                "Strong!Passw0rd",
+                "correct horse battery staple",
                 "Example Organization",
                 "Example Desk",
                 "https://desk.example.test"), CancellationToken.None);
