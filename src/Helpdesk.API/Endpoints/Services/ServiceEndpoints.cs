@@ -206,7 +206,10 @@ public static class ServiceEndpoints
                 return Results.Forbid();
             }
 
-            var chain = BuildBreadcrumb(current, dict);
+            var visibleServices = tenant.IsHelpdeskAdmin
+                ? all
+                : all.Where(service => IsAllowedForTenant(service.AllowedOrganizationIds, tenant.TenantId));
+            var chain = BuildBreadcrumb(current, visibleServices.ToDictionary(service => service.Id));
             return Results.Ok(chain);
         })
         .RequireAuthorization()

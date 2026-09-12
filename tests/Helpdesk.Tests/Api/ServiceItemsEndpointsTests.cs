@@ -80,6 +80,19 @@ public sealed class ServiceItemsEndpointsTests
         Assert.DoesNotContain(response.Items, item => item.Id == "form-testing");
     }
 
+    [Fact]
+    public async Task GetServiceBreadcrumb_DoesNotRevealAnInaccessibleParent()
+    {
+        await using var harness = await ServiceItemsTestHarness.CreateAsync();
+
+        var response = await harness.Client.GetFromJsonAsync<List<BreadcrumbDto>>(
+            "/api/v1/services/tenant-child/breadcrumb");
+
+        var breadcrumb = Assert.Single(response!);
+        Assert.Equal("tenant-child", breadcrumb.Id);
+        Assert.Equal("Tenant child", breadcrumb.Name);
+    }
+
     private sealed class ServiceItemsTestHarness : IAsyncDisposable
     {
         private readonly SqliteConnection _connection;
@@ -131,7 +144,9 @@ public sealed class ServiceItemsEndpointsTests
                 db.Services.AddRange(
                     new Service { Id = "root-a", Name = "Root A", Description = "Visible root" },
                     new Service { Id = "child-a", Name = "Child A", Description = "Visible child", ParentServiceId = "root-a" },
-                    new Service { Id = "root-b", Name = "Root B", Description = "Hidden root", AllowedOrganizationIds = ["tenant-2"] });
+                    new Service { Id = "root-b", Name = "Root B", Description = "Hidden root", AllowedOrganizationIds = ["tenant-2"] },
+                    new Service { Id = "private-parent", Name = "Private parent", Description = "Hidden parent", AllowedOrganizationIds = ["tenant-2"] },
+                    new Service { Id = "tenant-child", Name = "Tenant child", Description = "Visible child", ParentServiceId = "private-parent", AllowedOrganizationIds = ["tenant-1"] });
 
                 db.RequestForms.AddRange(
                     new RequestForm { Id = "form-root", Title = "Root request", Description = "Direct request", ServiceId = "root-a", OrganizationId = "tenant-1", ReleaseStatus = RequestFormReleaseStatus.Production },
