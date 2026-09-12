@@ -141,6 +141,7 @@ public class WebAuthRoutesTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("action=\"/local-login\"", content, StringComparison.Ordinal);
+        Assert.Contains("Authenticator or recovery code", content, StringComparison.Ordinal);
         Assert.Contains("Sign in to RatelDesk", content, StringComparison.Ordinal);
         Assert.DoesNotContain("href=\"/login-authentik\"", content, StringComparison.Ordinal);
     }

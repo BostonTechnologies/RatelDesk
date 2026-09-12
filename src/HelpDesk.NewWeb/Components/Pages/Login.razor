@@ -30,6 +30,7 @@
                 <form method="post" action="/local-login" class="helpdesk-login-local-form">
                     <MudTextField T="string" Name="email" Label="Email" InputType="InputType.Email" Required="true" Variant="Variant.Outlined" FullWidth="true" />
                     <MudTextField T="string" Name="password" Label="Password" InputType="InputType.Password" Required="true" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" />
+                    <MudTextField T="string" Name="twoFactorCode" Label="Authenticator or recovery code" InputType="InputType.Password" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" HelperText="Required only if two-factor authentication is enabled." />
                     <MudCheckBox T="bool" Name="rememberMe" Label="Keep me signed in" Color="Color.Primary" Class="mt-2" />
                     <MudButton Variant="Variant.Filled" ButtonType="ButtonType.Submit" Size="Size.Large" Color="Color.Primary" FullWidth="true" Class="mt-3" StartIcon="@Icons.Material.Filled.Login">
                         Sign in to @_branding.ApplicationName

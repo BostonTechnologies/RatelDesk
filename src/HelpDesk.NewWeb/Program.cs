@@ -495,6 +495,7 @@ app.MapPost("/local-login", async (HttpContext context, IHttpClientFactory httpC
     var form = await context.Request.ReadFormAsync(context.RequestAborted);
     var email = form["email"].ToString();
     var password = form["password"].ToString();
+    var twoFactorCode = form["twoFactorCode"].ToString();
     var rememberMe = string.Equals(form["rememberMe"], "on", StringComparison.OrdinalIgnoreCase);
     if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
     {
@@ -503,7 +504,7 @@ app.MapPost("/local-login", async (HttpContext context, IHttpClientFactory httpC
 
     using var response = await httpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync(
         "/api/v1/local-auth/login",
-        new { email, password, rememberMe },
+        new { email, password, rememberMe, twoFactorCode },
         context.RequestAborted);
     if (!response.IsSuccessStatusCode)
     {
