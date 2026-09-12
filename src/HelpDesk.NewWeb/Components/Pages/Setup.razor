@@ -18,6 +18,14 @@
             }
 
             <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" InputType="InputType.Password" Required="true" />
+            <MudSelect T="string" @bind-Value="_storageProvider" Label="Storage provider" Required="true">
+                <MudSelectItem Value="@("Sqlite")">Embedded SQLite — no database service required</MudSelectItem>
+                <MudSelectItem Value="@("PostgreSql")">PostgreSQL</MudSelectItem>
+            </MudSelect>
+            @if (string.Equals(_storageProvider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
+            {
+                <MudTextField T="string" @bind-Value="_postgreSqlConnectionString" Label="PostgreSQL connection string" InputType="InputType.Password" Required="true" HelperText="The target must be empty or an established RatelDesk database with vector and pg_trgm installed." />
+            }
             <MudTextField T="string" @bind-Value="_organizationName" Label="Initial organization" Required="true" />
             <MudTextField T="string" @bind-Value="_applicationName" Label="Application name (optional)" />
             <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL (optional)" InputType="InputType.Url" />
@@ -35,6 +43,8 @@
 
 @code {
     private string _setupCode = string.Empty;
+    private string _storageProvider = "Sqlite";
+    private string _postgreSqlConnectionString = string.Empty;
     private string _organizationName = string.Empty;
     private string _applicationName = string.Empty;
     private string _applicationUrl = string.Empty;
@@ -67,7 +77,13 @@
 
             using var storageRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/storage")
             {
-                Content = JsonContent.Create(new { provider = "Sqlite" })
+                Content = JsonContent.Create(new
+                {
+                    provider = _storageProvider,
+                    postgreSqlConnectionString = string.Equals(_storageProvider, "PostgreSql", StringComparison.OrdinalIgnoreCase)
+                        ? _postgreSqlConnectionString
+                        : null
+                })
             };
             storageRequest.Headers.Add("X-RatelDesk-Setup-Session", session.Session);
             using var storageResponse = await client.SendAsync(storageRequest);

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace Helpdesk.API.Bootstrap;
 
@@ -37,6 +38,8 @@ public static class BootstrapEndpoints
             [FromServices] IBootstrapStateStore stateStore,
             [FromServices] BootstrapSessionService sessions,
             [FromServices] BootstrapOptions options,
+            [FromServices] PostgreSqlSetupPreflightService postgreSqlPreflight,
+            [FromServices] IDataProtectionProvider dataProtection,
             CancellationToken cancellationToken) =>
         {
             if (!sessions.IsValid(session))
@@ -54,7 +57,34 @@ public static class BootstrapEndpoints
 
             if (string.Equals(request.Provider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
             {
-                return Results.Problem("PostgreSQL setup preflight is not available yet.", statusCode: StatusCodes.Status501NotImplemented);
+                var preflight = await postgreSqlPreflight.CheckAsync(request.PostgreSqlConnectionString, cancellationToken);
+                if (!preflight.Succeeded)
+                {
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["postgreSqlConnectionString"] = [preflight.Error!]
+                    });
+                }
+
+                var protectedConnection = dataProtection
+                    .CreateProtector("RatelDesk.Bootstrap.PostgreSqlConnection.v1")
+                    .Protect(request.PostgreSqlConnectionString!);
+                var postgreSqlDescriptor = await stateStore.UpdateAsync(current => current.State switch
+                {
+                    BootstrapState.Unconfigured or BootstrapState.Configuring => current with
+                    {
+                        State = BootstrapState.Configuring,
+                        Provider = request.Provider,
+                        SqlitePath = null,
+                        ProtectedPostgreSqlConnection = protectedConnection,
+                        OperationId = current.OperationId ?? Guid.NewGuid()
+                    },
+                    _ => current
+                }, cancellationToken);
+
+                return postgreSqlDescriptor.State == BootstrapState.Configuring
+                    ? Results.Ok(new BootstrapStatusResponse(postgreSqlDescriptor.State, postgreSqlDescriptor.Provider))
+                    : Results.Conflict(new BootstrapStatusResponse(postgreSqlDescriptor.State, postgreSqlDescriptor.Provider));
             }
 
             var sqlitePath = Path.GetFullPath(string.IsNullOrWhiteSpace(request.SqlitePath)
@@ -76,6 +106,7 @@ public static class BootstrapEndpoints
                     State = BootstrapState.Configuring,
                     Provider = request.Provider,
                     SqlitePath = sqlitePath,
+                    ProtectedPostgreSqlConnection = null,
                     OperationId = current.OperationId ?? Guid.NewGuid()
                 },
                 _ => current
@@ -102,7 +133,7 @@ public static class BootstrapEndpoints
             }
 
             var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
-            var result = await initializer.InitializeSqliteAsync(descriptor, request, cancellationToken);
+            var result = await initializer.InitializeAsync(descriptor, request, cancellationToken);
             return result.Succeeded
                 ? Results.Ok(new BootstrapStatusResponse(result.Descriptor!.State, result.Descriptor.Provider))
                 : Results.Problem(result.Error, statusCode: StatusCodes.Status409Conflict);
@@ -113,7 +144,7 @@ public static class BootstrapEndpoints
 
     private sealed record UnlockSetupRequest(string? SetupCode);
 
-    private sealed record SelectStorageRequest(string? Provider, string? SqlitePath);
+    private sealed record SelectStorageRequest(string? Provider, string? SqlitePath, string? PostgreSqlConnectionString);
 
     private sealed record SetupSessionResponse(string Session, DateTimeOffset ExpiresAtUtc);
 

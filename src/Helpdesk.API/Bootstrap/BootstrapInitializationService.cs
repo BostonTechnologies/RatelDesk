@@ -6,21 +6,22 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace Helpdesk.API.Bootstrap;
 
 public sealed class BootstrapInitializationService(
     IBootstrapStateStore stateStore,
-    BootstrapOptions options)
+    BootstrapOptions options,
+    IDataProtectionProvider dataProtection)
 {
-    public async Task<BootstrapInitializationResult> InitializeSqliteAsync(
+    public async Task<BootstrapInitializationResult> InitializeAsync(
         BootstrapDescriptor descriptor,
         FirstAdministratorRequest request,
         CancellationToken cancellationToken)
     {
         if (descriptor.State is not BootstrapState.Configuring ||
-            !string.Equals(descriptor.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase) ||
-            string.IsNullOrWhiteSpace(descriptor.SqlitePath))
+            !IsSupportedConfiguredProvider(descriptor))
         {
             return BootstrapInitializationResult.InvalidState;
         }
@@ -33,16 +34,32 @@ public sealed class BootstrapInitializationService(
             return BootstrapInitializationResult.InvalidRequest;
         }
 
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
+        var settings = new Dictionary<string, string?>
+        {
+            ["Database:Provider"] = descriptor.Provider,
+            ["Authentication:Mode"] = "Local",
+            ["DataProtection:KeyRingPath"] = Path.Combine(options.StateDirectory, "keys"),
+            ["StorageOptions:RootPath"] = Path.Combine(options.DataDirectory, "storage")
+        };
+        if (string.Equals(descriptor.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            settings["Database:Sqlite:Path"] = descriptor.SqlitePath;
+        }
+        else
+        {
+            try
             {
-                ["Database:Provider"] = "Sqlite",
-                ["Database:Sqlite:Path"] = descriptor.SqlitePath,
-                ["Authentication:Mode"] = "Local",
-                ["DataProtection:KeyRingPath"] = Path.Combine(options.StateDirectory, "keys"),
-                ["StorageOptions:RootPath"] = Path.Combine(options.DataDirectory, "storage")
-            })
-            .Build();
+                settings["ConnectionStrings:HelpdeskDb"] = dataProtection
+                    .CreateProtector("RatelDesk.Bootstrap.PostgreSqlConnection.v1")
+                    .Unprotect(descriptor.ProtectedPostgreSqlConnection!);
+            }
+            catch (Exception)
+            {
+                return BootstrapInitializationResult.InvalidState;
+            }
+        }
+
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddHelpdeskInfrastructure(configuration);
@@ -50,8 +67,16 @@ public sealed class BootstrapInitializationService(
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
         var identityDb = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
-        await db.Database.EnsureCreatedAsync(cancellationToken);
-        await LocalIdentityDatabaseInitializer.EnsureSqliteSchemaAsync(identityDb, cancellationToken);
+        if (string.Equals(descriptor.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            await db.Database.EnsureCreatedAsync(cancellationToken);
+            await LocalIdentityDatabaseInitializer.EnsureSqliteSchemaAsync(identityDb, cancellationToken);
+        }
+        else
+        {
+            await db.Database.MigrateAsync(cancellationToken);
+            await identityDb.Database.MigrateAsync(cancellationToken);
+        }
 
         if (await identityDb.Users.AnyAsync(cancellationToken) ||
             await db.Organizations.AnyAsync(cancellationToken))
@@ -112,6 +137,12 @@ public sealed class BootstrapInitializationService(
         }, cancellationToken);
         return new BootstrapInitializationResult(true, null, ready);
     }
+
+    private static bool IsSupportedConfiguredProvider(BootstrapDescriptor descriptor) =>
+        (string.Equals(descriptor.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase) &&
+         !string.IsNullOrWhiteSpace(descriptor.SqlitePath)) ||
+        (string.Equals(descriptor.Provider, "PostgreSql", StringComparison.OrdinalIgnoreCase) &&
+         !string.IsNullOrWhiteSpace(descriptor.ProtectedPostgreSqlConnection));
 }
 
 public sealed record FirstAdministratorRequest(

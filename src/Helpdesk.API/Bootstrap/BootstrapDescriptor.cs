@@ -9,4 +9,9 @@ public sealed record BootstrapDescriptor(
     string? Provider,
     string? SqlitePath,
     Guid? OperationId,
-    DateTimeOffset? CompletedAtUtc);
+    DateTimeOffset? CompletedAtUtc)
+{
+    // This value is protected with the durable bootstrap data-protection key ring.
+    // It is never included in setup status responses or logs.
+    public string? ProtectedPostgreSqlConnection { get; init; }
+}

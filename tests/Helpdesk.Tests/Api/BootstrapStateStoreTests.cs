@@ -1,11 +1,23 @@
 using Helpdesk.API.Bootstrap;
 using Helpdesk.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace Helpdesk.Tests.Api;
 
 public sealed class BootstrapStateStoreTests
 {
+    [Fact]
+    public async Task PostgreSql_preflight_rejects_a_missing_connection_without_attempting_setup()
+    {
+        var preflight = new PostgreSqlSetupPreflightService();
+
+        var result = await preflight.CheckAsync(null, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("connection string", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task Generated_operator_code_unlocks_a_new_unconfigured_descriptor()
     {
@@ -88,9 +100,12 @@ public sealed class BootstrapStateStoreTests
                 SqlitePath = Path.Combine(dataDirectory, "rateldesk.db"),
                 OperationId = Guid.NewGuid()
             });
-            var initializer = new BootstrapInitializationService(store, options);
+            var dataProtection = DataProtectionProvider.Create(
+                new DirectoryInfo(Path.Combine(directory, "keys")),
+                configuration => configuration.SetApplicationName("Helpdesk-Keyring"));
+            var initializer = new BootstrapInitializationService(store, options, dataProtection);
 
-            var result = await initializer.InitializeSqliteAsync(configured, new FirstAdministratorRequest(
+            var result = await initializer.InitializeAsync(configured, new FirstAdministratorRequest(
                 "admin@example.test",
                 "Instance Admin",
                 "Strong!Passw0rd",

@@ -112,6 +112,32 @@ if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "Sqlite", Sq
         ["DataProtection:KeyRingPath"] = Path.Combine(bootstrapOptions.StateDirectory, "keys")
     });
 }
+else if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "PostgreSql", ProtectedPostgreSqlConnection: not null })
+{
+    var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
+                              ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    var bootstrapApplicationName = builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring";
+    try
+    {
+        var provider = DataProtectionProvider.Create(
+            new DirectoryInfo(bootstrapKeyRingPath),
+            configuration => configuration.SetApplicationName(bootstrapApplicationName));
+        var connectionString = provider
+            .CreateProtector("RatelDesk.Bootstrap.PostgreSqlConnection.v1")
+            .Unprotect(bootstrapDescriptor.ProtectedPostgreSqlConnection);
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Database:Provider"] = "PostgreSql",
+            ["ConnectionStrings:HelpdeskDb"] = connectionString,
+            ["Authentication:Mode"] = "Local",
+            ["DataProtection:KeyRingPath"] = bootstrapKeyRingPath
+        });
+    }
+    catch (Exception exception) when (exception is CryptographicException or IOException)
+    {
+        throw new InvalidOperationException("The PostgreSQL bootstrap descriptor cannot be recovered. Operator recovery is required.", exception);
+    }
+}
 
 var localAuthenticationOptions = builder.Configuration.GetSection(LocalAuthenticationOptions.SectionName).Get<LocalAuthenticationOptions>() ?? new LocalAuthenticationOptions();
 var localAuthenticationCookieName = localAuthenticationOptions.AllowInsecureLocalhost
@@ -130,6 +156,7 @@ if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not Bootstra
     builder.Services.AddSingleton<IBootstrapStateStore>(bootstrapStateStore);
     builder.Services.AddSingleton<BootstrapSessionService>();
     builder.Services.AddSingleton<BootstrapInitializationService>();
+    builder.Services.AddSingleton<PostgreSqlSetupPreflightService>();
     builder.Services.AddRateLimiter(options =>
     {
         options.AddPolicy("SetupUnlock", context =>
