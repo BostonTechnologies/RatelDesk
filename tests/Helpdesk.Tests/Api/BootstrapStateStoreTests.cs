@@ -5,7 +5,11 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Pgvector.EntityFrameworkCore;
 using System.Text;
+using Testcontainers.PostgreSql;
 using Helpdesk.Shared.Models;
 
 namespace Helpdesk.Tests.Api;
@@ -410,6 +414,59 @@ public sealed class BootstrapStateStoreTests
                 File.Delete(databasePath);
             }
         }
+    }
+
+    [Fact]
+    public async Task PostgreSql_migrations_adopt_established_legacy_data_but_leave_a_fresh_database_uninitialized()
+    {
+        await using var postgres = new PostgreSqlBuilder()
+            .WithImage("pgvector/pgvector:pg16")
+            .Build();
+        await postgres.StartAsync();
+
+        var options = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
+            .UseNpgsql(postgres.GetConnectionString(), npgsql => npgsql.UseVector())
+            .Options;
+        var adoption = new LegacyInstallationAdoptionService();
+
+        await using (var fresh = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
+            options,
+            new TestTenantContext(),
+            new HttpContextAccessor()))
+        {
+            var migrator = fresh.GetService<IMigrator>();
+            await migrator.MigrateAsync();
+
+            Assert.Equal(LegacyInstallationAdoptionResult.NotEstablished,
+                await adoption.AdoptAsync(fresh, CancellationToken.None));
+            Assert.Empty(await fresh.InstanceInitializations.ToListAsync());
+        }
+
+        await using var established = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
+            options,
+            new TestTenantContext(),
+            new HttpContextAccessor());
+        await established.Database.ExecuteSqlRawAsync("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+
+        var establishedMigrator = established.GetService<IMigrator>();
+        await establishedMigrator.MigrateAsync("20260912082029_AddRoleDefinitions");
+        var organization = new Organization { Name = "Established organization" };
+        established.Organizations.Add(organization);
+        established.Users.Add(new User
+        {
+            Name = "Established administrator",
+            Email = "admin@example.test",
+            OrganizationId = organization.Id,
+            Role = "HelpdeskAdmin"
+        });
+        await established.SaveChangesAsync();
+
+        await establishedMigrator.MigrateAsync();
+        Assert.Equal(LegacyInstallationAdoptionResult.Adopted,
+            await adoption.AdoptAsync(established, CancellationToken.None));
+        Assert.Equal(LegacyInstallationAdoptionResult.AlreadyMarked,
+            await adoption.AdoptAsync(established, CancellationToken.None));
+        Assert.Single(await established.InstanceInitializations.ToListAsync());
     }
 
     [Fact]
