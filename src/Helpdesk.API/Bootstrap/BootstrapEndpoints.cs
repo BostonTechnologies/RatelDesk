@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
+using Npgsql;
 
 namespace Helpdesk.API.Bootstrap;
 
@@ -57,7 +58,21 @@ public static class BootstrapEndpoints
 
             if (string.Equals(request.Provider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
             {
-                var preflight = await postgreSqlPreflight.CheckAsync(request.PostgreSqlConnectionString, cancellationToken);
+                var connectionString = request.PostgreSqlConnectionString;
+                if (string.IsNullOrWhiteSpace(connectionString) && !string.IsNullOrWhiteSpace(request.PostgreSqlHost))
+                {
+                    connectionString = new NpgsqlConnectionStringBuilder
+                    {
+                        Host = request.PostgreSqlHost.Trim(),
+                        Port = request.PostgreSqlPort.GetValueOrDefault(5432),
+                        Database = request.PostgreSqlDatabase?.Trim(),
+                        Username = request.PostgreSqlUsername?.Trim(),
+                        Password = request.PostgreSqlPassword,
+                        SslMode = request.PostgreSqlUseTls ? SslMode.Require : SslMode.Prefer
+                    }.ConnectionString;
+                }
+
+                var preflight = await postgreSqlPreflight.CheckAsync(connectionString, cancellationToken);
                 if (!preflight.Succeeded)
                 {
                     return Results.ValidationProblem(new Dictionary<string, string[]>
@@ -68,7 +83,7 @@ public static class BootstrapEndpoints
 
                 var protectedConnection = dataProtection
                     .CreateProtector("RatelDesk.Bootstrap.PostgreSqlConnection.v1")
-                    .Protect(request.PostgreSqlConnectionString!);
+                    .Protect(connectionString!);
                 var postgreSqlDescriptor = await stateStore.UpdateAsync(current => current.State switch
                 {
                     BootstrapState.Unconfigured or BootstrapState.Configuring => current with
@@ -144,7 +159,16 @@ public static class BootstrapEndpoints
 
     private sealed record UnlockSetupRequest(string? SetupCode);
 
-    private sealed record SelectStorageRequest(string? Provider, string? SqlitePath, string? PostgreSqlConnectionString);
+    private sealed record SelectStorageRequest(
+        string? Provider,
+        string? SqlitePath,
+        string? PostgreSqlConnectionString,
+        string? PostgreSqlHost,
+        int? PostgreSqlPort,
+        string? PostgreSqlDatabase,
+        string? PostgreSqlUsername,
+        string? PostgreSqlPassword,
+        bool PostgreSqlUseTls = true);
 
     private sealed record SetupSessionResponse(string Session, DateTimeOffset ExpiresAtUtc);
 

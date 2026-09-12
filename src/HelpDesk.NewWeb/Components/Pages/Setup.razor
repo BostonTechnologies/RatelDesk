@@ -24,7 +24,13 @@
             </MudSelect>
             @if (string.Equals(_storageProvider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
             {
-                <MudTextField T="string" @bind-Value="_postgreSqlConnectionString" Label="PostgreSQL connection string" InputType="InputType.Password" Required="true" HelperText="The target must be empty or an established RatelDesk database with vector and pg_trgm installed." />
+                <MudTextField T="string" @bind-Value="_postgreSqlHost" Label="PostgreSQL host" Required="true" />
+                <MudTextField T="int" @bind-Value="_postgreSqlPort" Label="Port" Required="true" />
+                <MudTextField T="string" @bind-Value="_postgreSqlDatabase" Label="Database" Required="true" />
+                <MudTextField T="string" @bind-Value="_postgreSqlUsername" Label="Username" Required="true" />
+                <MudTextField T="string" @bind-Value="_postgreSqlPassword" Label="Password" InputType="InputType.Password" Required="true" />
+                <MudCheckBox T="bool" @bind-Value="_postgreSqlUseTls" Label="Require TLS" Color="Color.Primary" />
+                <MudText Typo="Typo.caption">The target must be empty or an established RatelDesk database with vector and pg_trgm installed.</MudText>
             }
             <MudTextField T="string" @bind-Value="_organizationName" Label="Initial organization" Required="true" />
             <MudTextField T="string" @bind-Value="_applicationName" Label="Application name (optional)" />
@@ -45,7 +51,12 @@
 @code {
     private string _setupCode = string.Empty;
     private string _storageProvider = "Sqlite";
-    private string _postgreSqlConnectionString = string.Empty;
+    private string _postgreSqlHost = string.Empty;
+    private int _postgreSqlPort = 5432;
+    private string _postgreSqlDatabase = string.Empty;
+    private string _postgreSqlUsername = string.Empty;
+    private string _postgreSqlPassword = string.Empty;
+    private bool _postgreSqlUseTls = true;
     private string _organizationName = string.Empty;
     private string _applicationName = string.Empty;
     private string _applicationUrl = string.Empty;
@@ -115,9 +126,12 @@
                 Content = JsonContent.Create(new
                 {
                     provider = _storageProvider,
-                    postgreSqlConnectionString = string.Equals(_storageProvider, "PostgreSql", StringComparison.OrdinalIgnoreCase)
-                        ? _postgreSqlConnectionString
-                        : null
+                    postgreSqlHost = _storageProvider == "PostgreSql" ? _postgreSqlHost : null,
+                    postgreSqlPort = _storageProvider == "PostgreSql" ? _postgreSqlPort : null,
+                    postgreSqlDatabase = _storageProvider == "PostgreSql" ? _postgreSqlDatabase : null,
+                    postgreSqlUsername = _storageProvider == "PostgreSql" ? _postgreSqlUsername : null,
+                    postgreSqlPassword = _storageProvider == "PostgreSql" ? _postgreSqlPassword : null,
+                    postgreSqlUseTls = _postgreSqlUseTls
                 })
             };
             storageRequest.Headers.Add("X-RatelDesk-Setup-Session", session.Session);
