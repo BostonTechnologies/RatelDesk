@@ -39,15 +39,21 @@ public static class TicketEndpoints
         ticketCountGroup.MapGet("/timeline/count", async (
             [FromRoute] string ticketType,
             [FromRoute] string ticketId,
-            [FromServices] HelpdeskDbContext dbContext) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext dbContext,
+            CancellationToken ct) =>
         {
-            if (!IsSupportedTicketType(ticketType))
-                return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
+            var authorizationFailure = await AuthorizeTicketViewAsync(ticketType, ticketId, context.User, accessService, dbContext, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
 
             var count = await dbContext.TicketTimelineEvents
                 .AsNoTracking()
                 .Where(x => x.TicketId == ticketId)
-                .CountAsync();
+                .CountAsync(ct);
 
             return Results.Ok(count);
         });
@@ -55,15 +61,21 @@ public static class TicketEndpoints
         ticketCountGroup.MapGet("/attachments/count", async (
             [FromRoute] string ticketType,
             [FromRoute] string ticketId,
-            [FromServices] HelpdeskDbContext dbContext) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext dbContext,
+            CancellationToken ct) =>
         {
-            if (!IsSupportedTicketType(ticketType))
-                return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
+            var authorizationFailure = await AuthorizeTicketViewAsync(ticketType, ticketId, context.User, accessService, dbContext, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
 
             var count = await dbContext.Attachments
                 .AsNoTracking()
                 .Where(x => x.TicketId == ticketId)
-                .CountAsync();
+                .CountAsync(ct);
 
             return Results.Ok(count);
         });
@@ -71,10 +83,16 @@ public static class TicketEndpoints
         ticketCountGroup.MapGet("/listeners/count", async (
             [FromRoute] string ticketType,
             [FromRoute] string ticketId,
-            [FromServices] HelpdeskDbContext dbContext) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext dbContext,
+            CancellationToken ct) =>
         {
-            if (!IsSupportedTicketType(ticketType))
-                return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
+            var authorizationFailure = await AuthorizeTicketViewAsync(ticketType, ticketId, context.User, accessService, dbContext, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
 
             var count = ticketType.ToLowerInvariant() switch
             {
@@ -82,17 +100,17 @@ public static class TicketEndpoints
                     .AsNoTracking()
                     .Where(x => x.Id == ticketId)
                     .Select(x => (x.RequesterEmail != null ? 1 : 0) + x.CcRecipients.Count)
-                    .SingleOrDefaultAsync(),
+                    .SingleOrDefaultAsync(ct),
                 "requests" => await dbContext.Requests
                     .AsNoTracking()
                     .Where(x => x.Id == ticketId)
                     .Select(x => (x.RequesterEmail != null ? 1 : 0) + x.CcRecipients.Count)
-                    .SingleOrDefaultAsync(),
+                    .SingleOrDefaultAsync(ct),
                 "changes" => await dbContext.Changes
                     .AsNoTracking()
                     .Where(x => x.Id == ticketId)
                     .Select(x => (x.RequesterEmail != null ? 1 : 0) + x.CcRecipients.Count)
-                    .SingleOrDefaultAsync(),
+                    .SingleOrDefaultAsync(ct),
                 _ => 0
             };
 
@@ -769,6 +787,43 @@ public static class TicketEndpoints
         string.Equals(ticketType, "incidents", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(ticketType, "requests", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(ticketType, "changes", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<IResult?> AuthorizeTicketViewAsync(
+        string ticketType,
+        string ticketId,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        HelpdeskDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (!IsSupportedTicketType(ticketType))
+        {
+            return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
+        }
+
+        var ticket = await db.Tickets.AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return Results.NotFound();
+        }
+
+        var customer = !string.IsNullOrWhiteSpace(ticket.CustomerId)
+            ? await db.Customers.AsNoTracking()
+                .Where(candidate => candidate.Id == ticket.CustomerId)
+                .Select(candidate => new { candidate.Id, candidate.Email })
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+        var access = await accessService.ResolveAsync(user, cancellationToken);
+        var canView = ticket switch
+        {
+            Incident => access.CanViewIncident(ticket.OrganizationId, customer?.Id ?? ticket.CustomerId, customer?.Email ?? ticket.RequesterEmail),
+            TicketRequest => access.CanViewRequest(ticket.OrganizationId, customer?.Id ?? ticket.CustomerId, customer?.Email ?? ticket.RequesterEmail),
+            Change => access.CanViewChange(ticket.OrganizationId, customer?.Id ?? ticket.CustomerId, customer?.Email ?? ticket.RequesterEmail),
+            _ => false
+        };
+        return canView ? null : Results.Forbid();
+    }
 
     private static bool IsTechnicianOrAdmin(ClaimsPrincipal user) =>
         user.IsInRole("HelpdeskAdmin") ||
