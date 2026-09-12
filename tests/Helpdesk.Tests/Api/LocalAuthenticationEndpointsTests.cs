@@ -612,6 +612,61 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Ticket_sla_mutation_requires_a_manager_grant_in_the_ticket_tenant()
+    {
+        const string technicianOrganizationId = "sla-technician-organization";
+        const string foreignOrganizationId = "sla-foreign-organization";
+        const string ownIncidentId = "sla-own-incident";
+        const string foreignIncidentId = "sla-foreign-incident";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "sla.technician@example.test", Email = "sla.technician@example.test", DisplayName = "SLA Technician" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("sla.technician@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = technicianOrganizationId, Name = "SLA technician organization" },
+                new Organization { Id = foreignOrganizationId, Name = "SLA foreign organization" });
+            db.Users.Add(new User { Id = userId, Name = "SLA Technician", Email = "sla.technician@example.test", OrganizationId = technicianOrganizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = userId,
+                OrganizationId = technicianOrganizationId,
+                RoleKey = ScopedRoleCatalog.Technician
+            });
+            db.Incidents.AddRange(
+                new Incident { Id = ownIncidentId, OrganizationId = technicianOrganizationId, Title = "Own SLA incident", Description = "Own incident" },
+                new Incident { Id = foreignIncidentId, OrganizationId = foreignOrganizationId, Title = "Foreign SLA incident", Description = "Foreign incident" });
+            db.TicketSlaStates.AddRange(
+                new TicketSlaState { TicketId = ownIncidentId, StartedAt = DateTimeOffset.UtcNow, ResponseDueAt = DateTimeOffset.UtcNow.AddHours(1), ResolutionDueAt = DateTimeOffset.UtcNow.AddHours(2), Status = Helpdesk.Shared.Enums.SlaStatus.InProgress },
+                new TicketSlaState { TicketId = foreignIncidentId, StartedAt = DateTimeOffset.UtcNow, ResponseDueAt = DateTimeOffset.UtcNow.AddHours(1), ResolutionDueAt = DateTimeOffset.UtcNow.AddHours(2), Status = Helpdesk.Shared.Enums.SlaStatus.InProgress });
+            await db.SaveChangesAsync();
+        }
+
+        using var technician = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await technician.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "sla.technician@example.test", "correct horse battery staple"))).StatusCode);
+
+        var ownMutation = await technician.PostAsJsonAsync(
+            $"/api/v1/tickets/{ownIncidentId}/sla/pause",
+            new { Reason = "Awaiting vendor response" });
+        var foreignMutation = await technician.PostAsJsonAsync(
+            $"/api/v1/tickets/{foreignIncidentId}/sla/pause",
+            new { Reason = "Attempted cross-tenant mutation" });
+
+        Assert.Equal(HttpStatusCode.NoContent, ownMutation.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, foreignMutation.StatusCode);
+        await using var verificationScope = _factory.Services.CreateAsyncScope();
+        var foreignState = await verificationScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().TicketSlaStates
+            .SingleAsync(state => state.TicketId == foreignIncidentId);
+        Assert.Equal(Helpdesk.Shared.Enums.SlaStatus.InProgress, foreignState.Status);
+    }
+
+    [Fact]
     public async Task Local_login_requires_an_authenticator_code_after_two_factor_is_enabled()
     {
         using var setupClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
