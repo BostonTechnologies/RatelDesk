@@ -238,15 +238,29 @@ public static class TicketEndpoints
             Guid id,
             [FromBody] SubmitTicketAiFeedbackDto dto,
             HelpdeskDbContext db,
+            ICurrentUserAccessService accessService,
             IRequestSender sender,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var exists = await db.Tickets.AsNoTracking().AnyAsync(x => x.Id == ticketId, ct);
-            if (!exists)
+            var ticket = await db.Tickets.AsNoTracking().SingleOrDefaultAsync(x => x.Id == ticketId, ct);
+            if (ticket is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, ct);
+            var canManage = ticket switch
+            {
+                Incident => access.CanManageIncident(ticket.OrganizationId),
+                TicketRequest => access.CanManageRequest(ticket.OrganizationId),
+                Change => access.CanManageChange(ticket.OrganizationId),
+                _ => false
+            };
+            if (!canManage)
+            {
+                return Results.Forbid();
             }
 
             var feedbackType = dto.FeedbackType?.Trim().ToLowerInvariant();
