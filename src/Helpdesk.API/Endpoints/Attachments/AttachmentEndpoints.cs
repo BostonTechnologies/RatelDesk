@@ -1,5 +1,6 @@
 using Helpdesk.Application.Services.Tickets;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Attachment;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
@@ -130,17 +131,29 @@ public static class AttachmentEndpoints
         return CanAccessTicket(access, ticket, requireManager) ? ticket : null;
     }
 
-    private static bool CanAccessTicket(CurrentUserAccessProfile access, Ticket ticket, bool requireManager) => ticket switch
+    private static bool CanAccessTicket(CurrentUserAccessProfile access, Ticket ticket, bool requireManager) =>
+        requireManager
+            ? CanManageTicket(access, ticket) || CanSelfServiceUpload(access, ticket)
+            : CanViewTicket(access, ticket);
+
+    private static bool CanViewTicket(CurrentUserAccessProfile access, Ticket ticket) => ticket switch
     {
-        Incident incident => requireManager
-            ? access.CanManageIncident(incident.OrganizationId)
-            : access.CanViewIncident(incident.OrganizationId, incident.CustomerId, incident.RequesterEmail),
-        Request request => requireManager
-            ? access.CanManageRequest(request.OrganizationId)
-            : access.CanViewRequest(request.OrganizationId, request.CustomerId, request.RequesterEmail),
-        Change change => requireManager
-            ? access.CanManageChange(change.OrganizationId)
-            : access.CanViewChange(change.OrganizationId, change.CustomerId, change.RequesterEmail),
+        Incident incident => access.CanViewIncident(incident.OrganizationId, incident.CustomerId, incident.RequesterEmail),
+        Request request => access.CanViewRequest(request.OrganizationId, request.CustomerId, request.RequesterEmail),
+        Change change => access.CanViewChange(change.OrganizationId, change.CustomerId, change.RequesterEmail),
         _ => false
     };
+
+    private static bool CanManageTicket(CurrentUserAccessProfile access, Ticket ticket) => ticket switch
+    {
+        Incident incident => access.CanManageIncident(incident.OrganizationId),
+        Request request => access.CanManageRequest(request.OrganizationId),
+        Change change => access.CanManageChange(change.OrganizationId),
+        _ => false
+    };
+
+    private static bool CanSelfServiceUpload(CurrentUserAccessProfile access, Ticket ticket) =>
+        ticket is Incident or Request &&
+        access.HasPermission(HelpdeskPermissions.SelfServiceUser, ticket.OrganizationId) &&
+        CanViewTicket(access, ticket);
 }

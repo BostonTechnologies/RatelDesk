@@ -984,6 +984,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         const string foreignOrganizationId = "attachment-foreign-organization";
         const string managedIncidentId = "attachment-managed-incident";
         const string foreignIncidentId = "attachment-foreign-incident";
+        const string selfServiceIncidentId = "attachment-self-service-incident";
         var foreignAttachmentId = Guid.NewGuid();
 
         await using (var setupScope = _factory.Services.CreateAsyncScope())
@@ -992,23 +993,36 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             var createUser = await identityUsers.CreateAsync(
                 new ApplicationUser { UserName = "attachment.manager@example.test", Email = "attachment.manager@example.test", DisplayName = "Attachment Manager" },
                 "correct horse battery staple");
+            var createSelfServiceUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "attachment.self-service@example.test", Email = "attachment.self-service@example.test", DisplayName = "Attachment Self Service" },
+                "correct horse battery staple");
             Assert.True(createUser.Succeeded);
+            Assert.True(createSelfServiceUser.Succeeded);
             var userId = (await identityUsers.FindByEmailAsync("attachment.manager@example.test"))!.Id;
+            var selfServiceUserId = (await identityUsers.FindByEmailAsync("attachment.self-service@example.test"))!.Id;
 
             var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
             db.Organizations.AddRange(
                 new Organization { Id = managedOrganizationId, Name = "Attachment managed organization" },
                 new Organization { Id = foreignOrganizationId, Name = "Attachment foreign organization" });
             db.Users.Add(new User { Id = userId, Name = "Attachment Manager", Email = "attachment.manager@example.test", OrganizationId = managedOrganizationId, Role = "User" });
+            db.Users.Add(new User { Id = selfServiceUserId, Name = "Attachment Self Service", Email = "attachment.self-service@example.test", OrganizationId = managedOrganizationId, Role = "User" });
             db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
             {
                 UserId = userId,
                 OrganizationId = managedOrganizationId,
                 RoleKey = ScopedRoleCatalog.Technician
             });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = selfServiceUserId,
+                OrganizationId = managedOrganizationId,
+                RoleKey = ScopedRoleCatalog.SelfServiceUser
+            });
             db.Incidents.AddRange(
                 new Incident { Id = managedIncidentId, OrganizationId = managedOrganizationId, Title = "Managed attachment incident", Description = "Managed attachment incident" },
-                new Incident { Id = foreignIncidentId, OrganizationId = foreignOrganizationId, Title = "Foreign attachment incident", Description = "Foreign attachment incident" });
+                new Incident { Id = foreignIncidentId, OrganizationId = foreignOrganizationId, Title = "Foreign attachment incident", Description = "Foreign attachment incident" },
+                new Incident { Id = selfServiceIncidentId, OrganizationId = managedOrganizationId, Title = "Self-service attachment incident", Description = "Self-service attachment incident", RequesterEmail = "attachment.self-service@example.test" });
             db.Attachments.Add(new Attachment
             {
                 Id = foreignAttachmentId,
@@ -1040,6 +1054,20 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, foreignDownload.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, managedUploadAttempt.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, foreignUploadAttempt.StatusCode);
+
+        using var selfService = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await selfService.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "attachment.self-service@example.test", "correct horse battery staple"))).StatusCode);
+        using var selfServiceUpload = new MultipartFormDataContent();
+        using var foreignSelfServiceUpload = new MultipartFormDataContent();
+        selfServiceUpload.Add(new StringContent("not-a-file"), "metadata");
+        foreignSelfServiceUpload.Add(new StringContent("not-a-file"), "metadata");
+
+        var selfServiceUploadAttempt = await selfService.PostAsync($"/api/v1/tickets/{selfServiceIncidentId}/attachments/", selfServiceUpload);
+        var foreignSelfServiceUploadAttempt = await selfService.PostAsync($"/api/v1/tickets/{foreignIncidentId}/attachments/", foreignSelfServiceUpload);
+
+        Assert.Equal(HttpStatusCode.BadRequest, selfServiceUploadAttempt.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, foreignSelfServiceUploadAttempt.StatusCode);
     }
 
     [Fact]
