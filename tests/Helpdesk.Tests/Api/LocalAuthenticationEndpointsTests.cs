@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Helpdesk.API;
 using Helpdesk.API.Endpoints.Authentication;
 using Helpdesk.Infrastructure.Identity;
+using Helpdesk.Shared.DTOs.Auth;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -52,7 +53,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         await db.Database.EnsureCreatedAsync();
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var result = await users.CreateAsync(
-            new ApplicationUser { UserName = "admin@example.test", Email = "admin@example.test", DisplayName = "Instance Admin" },
+            new ApplicationUser { UserName = "admin@example.test", Email = "admin@example.test", DisplayName = "Instance Admin", IsInstanceAdministrator = true },
             "Strong!Passw0rd");
         Assert.True(result.Succeeded, string.Join(", ", result.Errors.Select(error => error.Description)));
     }
@@ -78,5 +79,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         var currentUser = await client.GetAsync("/api/v1/auth/me");
 
         Assert.Equal(HttpStatusCode.OK, currentUser.StatusCode);
+        var access = await currentUser.Content.ReadFromJsonAsync<CurrentUserAccessDto>();
+        Assert.True(access!.IsHelpdeskAdmin);
     }
 }

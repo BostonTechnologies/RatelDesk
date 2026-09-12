@@ -37,7 +37,9 @@ public static class LocalAuthenticationEndpoints
                 new Claim(ClaimTypes.Name, string.IsNullOrWhiteSpace(user.DisplayName) ? user.UserName ?? user.Email! : user.DisplayName),
                 new Claim(ClaimTypes.Email, user.Email ?? string.Empty),
                 new Claim("auth_mode", "local")
-            };
+            }.Concat(user.IsInstanceAdministrator
+                ? [new Claim(ClaimTypes.Role, "HelpdeskAdmin"), new Claim("roles", "HelpdeskAdmin")]
+                : []);
             var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, LocalAuthenticationOptions.Scheme));
             await context.SignInAsync(LocalAuthenticationOptions.Scheme, principal, new AuthenticationProperties
             {
