@@ -192,6 +192,7 @@ if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not Bootstra
     builder.Services.AddSingleton<BootstrapSessionService>();
     builder.Services.AddSingleton<BootstrapInitializationService>();
     builder.Services.AddSingleton<PostgreSqlSetupPreflightService>();
+    builder.Services.AddProblemDetails();
     builder.Services.AddRateLimiter(options =>
     {
         options.AddPolicy("SetupUnlock", context =>

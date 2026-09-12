@@ -705,6 +705,23 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
         await harness.SeedAsync(db =>
         {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Allowed tenant" },
+                new Organization { Id = "org-2", Name = "Other tenant" });
+            db.Customers.Add(new Customer
+            {
+                Id = "customer-request-manager",
+                Name = "Request manager",
+                Email = "operator@example.test",
+                OrganizationId = "org-1"
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-request-manager",
+                OidcIssuer = "https://id.example.test",
+                OidcSubject = "operator",
+                InviteStatus = CustomerInviteStatus.Active
+            });
             db.Requests.AddRange(
                 new Request { Id = "req-1", TrackingId = "REQ-1", Title = "Tenant request", State = TicketState.InProgress, OrganizationId = "org-1" },
                 new Request { Id = "req-2", TrackingId = "REQ-2", Title = "Other tenant request", State = TicketState.InProgress, OrganizationId = "org-2" });
@@ -1565,6 +1582,8 @@ public sealed class LiveHistoryFilteringEndpointsTests
             {
                 new Claim(ClaimTypes.NameIdentifier, "admin-1"),
                 new Claim(ClaimTypes.Name, "Admin One"),
+                new Claim("iss", "https://id.example.test"),
+                new Claim("sub", "operator"),
                 new Claim("organization_id", "org-1"),
                 new Claim(ClaimTypes.Role, role),
                 new Claim("roles", role)

@@ -250,7 +250,7 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
             if (!Request.Headers.TryGetValue("X-Chat-Test-Role", out var role)) return Task.FromResult(AuthenticateResult.NoResult());
-            var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "operator"), new Claim(ClaimTypes.Role, role.ToString()), new Claim("tid", Request.Headers["X-Chat-Test-Tenant"].ToString()) }, Scheme.Name);
+            var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "operator"), new Claim(ClaimTypes.Role, role.ToString()), new Claim("organization_id", Request.Headers["X-Chat-Test-Tenant"].ToString()) }, Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name)));
         }
     }
