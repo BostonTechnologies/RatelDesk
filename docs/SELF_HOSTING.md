@@ -96,6 +96,14 @@ docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.ext
   dotnet Helpdesk.API.dll --initialize-unattended
 ```
 
+After successful initialization, remove the bootstrap credential variables from the operator environment or secret injection and redeploy with only the base Compose file. Do not remove volumes: the durable bootstrap descriptor, key ring, attachments, and database state remain required.
+
+```bash
+docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.external-postgres.yml down
+unset RATELDESK_POSTGRES_CONNECTION_STRING RATELDESK_BOOTSTRAP_ADMIN_EMAIL RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME RATELDESK_BOOTSTRAP_ADMIN_PASSWORD RATELDESK_BOOTSTRAP_ORGANIZATION_NAME
+docker compose -f docker/docker-compose.release.yml up -d
+```
+
 For a new instance, the target must be empty. RatelDesk tests the connection with bounded timeouts before it creates schema. It identifies a historical RatelDesk schema separately from an unrelated non-empty database, but refuses setup for both so an existing installation cannot be modified by a first-run session. The setup principal must be able to apply the existing migrations but does not need superuser access. A database administrator must install the required `vector` and `pg_trgm` extensions in the target database before setup, and should enforce TLS, least-privilege credentials, and provider-managed backups. Deployment-managed `ConnectionStrings__HelpdeskDb` remains the compatibility path for established installations.
 
 Back up an external deployment as a complete recovery set: a consistent PostgreSQL backup (including required extensions and roles according to the database provider's procedure), the bootstrap state directory, the shared data-protection key ring, and attachments. Test restoring that set into an isolated target before relying on it. To upgrade, take and verify this backup, deploy one versioned image release, and let the API apply its existing migration chain. If the migration fails, stop the new image and restore the complete recovery set; never point the original initialized descriptor at a new empty database to recover it.
