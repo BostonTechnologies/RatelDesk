@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
@@ -7,13 +8,40 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Helpdesk.Infrastructure.Auth.Rbac;
 
-public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUserAccessService
+public sealed class CurrentUserAccessService : ICurrentUserAccessService
 {
+    private readonly HelpdeskDbContext _db;
+    private readonly RatelDeskIdentityDbContext? _identityDb;
+
+    public CurrentUserAccessService(HelpdeskDbContext db)
+        : this(db, null)
+    {
+    }
+
+    public CurrentUserAccessService(HelpdeskDbContext db, RatelDeskIdentityDbContext? identityDb)
+    {
+        _db = db;
+        _identityDb = identityDb;
+    }
+
     public async Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
     {
         if (user.Identity?.IsAuthenticated != true)
         {
             return Empty(false);
+        }
+
+        var localAccountId = IsLocalAccount(user)
+            ? user.FindFirstValue(ClaimTypes.NameIdentifier)
+            : null;
+        if (_identityDb is not null && !string.IsNullOrWhiteSpace(localAccountId))
+        {
+            var isEnabled = await _identityDb.Users.AsNoTracking()
+                .AnyAsync(account => account.Id == localAccountId && account.IsEnabled, ct);
+            if (!isEnabled)
+            {
+                return Empty(true);
+            }
         }
 
         var groups = ClaimValues(user, "groups", ClaimTypes.Role, "roles").ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -54,23 +82,20 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         Organization? organization = null;
         if (link is not null)
         {
-            customer = await db.Customers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == link.CustomerId, ct);
+            customer = await _db.Customers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == link.CustomerId, ct);
             if (customer?.IsEnabled == true)
             {
-                organization = await db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == customer.OrganizationId, ct);
+                organization = await _db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == customer.OrganizationId, ct);
             }
         }
 
         var hasActiveCustomer = customer?.IsEnabled == true && organization?.IsEnabled == true;
-        var localAccountId = IsLocalAccount(user)
-            ? user.FindFirstValue(ClaimTypes.NameIdentifier)
-            : null;
         var localDomainUser = string.IsNullOrWhiteSpace(localAccountId)
             ? null
-            : await db.Users.AsNoTracking().FirstOrDefaultAsync(domainUser => domainUser.Id == localAccountId, ct);
+            : await _db.Users.AsNoTracking().FirstOrDefaultAsync(domainUser => domainUser.Id == localAccountId, ct);
         var localOrganization = localDomainUser is null || string.IsNullOrWhiteSpace(localDomainUser.OrganizationId)
             ? null
-            : await db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == localDomainUser.OrganizationId, ct);
+            : await _db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == localDomainUser.OrganizationId, ct);
         var hasActiveLocalDomainUser = localDomainUser is not null && localOrganization?.IsEnabled == true;
         if (hasActiveCustomer)
         {
@@ -92,8 +117,8 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         else if (hasActiveLocalDomainUser)
         {
             var assignments = await (
-                    from assignment in db.ScopedRoleAssignments.AsNoTracking()
-                    join assignmentOrganization in db.Organizations.AsNoTracking()
+                    from assignment in _db.ScopedRoleAssignments.AsNoTracking()
+                    join assignmentOrganization in _db.Organizations.AsNoTracking()
                         on assignment.OrganizationId equals assignmentOrganization.Id
                     where assignment.UserId == localDomainUser!.Id && assignmentOrganization.IsEnabled
                     select assignment)
@@ -103,7 +128,7 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
                 .Select(assignment => assignment.RoleKey)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            var rolePermissions = await db.Roles.AsNoTracking()
+            var rolePermissions = await _db.Roles.AsNoTracking()
                 .Where(role => assignedRoleKeys.Contains(role.Key) && role.Scope != RoleScopeKind.Instance)
                 .Select(role => new
                 {
@@ -157,7 +182,7 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         var isTechnical = bundles.Contains(HelpdeskRoleBundles.Technical);
         if (isTechnical && !string.IsNullOrWhiteSpace(primaryOrganizationId))
         {
-            var managed = await db.Organizations.AsNoTracking()
+            var managed = await _db.Organizations.AsNoTracking()
                 .Where(x => x.State == Helpdesk.Shared.Models.EntityState.Enabled && x.ItSupportOrganizationId == primaryOrganizationId)
                 .Select(x => x.Id)
                 .ToListAsync(ct);
@@ -194,14 +219,14 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
     {
         if (!string.IsNullOrWhiteSpace(issuer) && !string.IsNullOrWhiteSpace(subject))
         {
-            var link = await db.CustomerAuthLinks.AsNoTracking()
+            var link = await _db.CustomerAuthLinks.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.OidcIssuer == issuer && x.OidcSubject == subject, ct);
             if (link is not null) return link;
         }
 
         if (!string.IsNullOrWhiteSpace(authentikUserId))
         {
-            var link = await db.CustomerAuthLinks.AsNoTracking()
+            var link = await _db.CustomerAuthLinks.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.AuthentikUserId == authentikUserId, ct);
             if (link is not null) return link;
         }

@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Helpdesk.Infrastructure.Auth.Rbac;
+using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
@@ -199,6 +200,46 @@ public class CurrentUserAccessServiceTests
     }
 
     [Fact]
+    public async Task Disabled_local_identity_account_has_no_effective_access()
+    {
+        await using var db = CreateDb();
+        await using var identityDb = CreateIdentityDb();
+        db.Organizations.Add(new Organization { Id = "org-a", Name = "Organization A" });
+        db.Users.Add(new User { Id = "disabled-local-user", Name = "Disabled local user", Email = "disabled@example.test", OrganizationId = "org-a", Role = "Technician" });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "disabled-local-user",
+            OrganizationId = "org-a",
+            RoleKey = ScopedRoleCatalog.Technician
+        });
+        identityDb.Users.Add(new ApplicationUser
+        {
+            Id = "disabled-local-user",
+            UserName = "disabled@example.test",
+            Email = "disabled@example.test",
+            DisplayName = "Disabled local user",
+            IsEnabled = false
+        });
+        await db.SaveChangesAsync();
+        await identityDb.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "disabled-local-user"),
+                new Claim(ClaimTypes.Email, "disabled@example.test"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db, identityDb).ResolveAsync(principal);
+
+        Assert.True(access.IsAuthenticated);
+        Assert.False(access.CanManageIncident("org-a"));
+        Assert.Empty(access.Permissions);
+        Assert.Empty(access.AllowedOrganizationIds);
+    }
+
+    [Fact]
     public async Task Persisted_custom_role_permissions_are_scoped_to_the_assigned_tenant()
     {
         await using var db = CreateDb();
@@ -301,6 +342,14 @@ public class CurrentUserAccessServiceTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
         return new HelpdeskDbContext(options, new EmptyTenantContext(), new HttpContextAccessor());
+    }
+
+    private static RatelDeskIdentityDbContext CreateIdentityDb()
+    {
+        var options = new DbContextOptionsBuilder<RatelDeskIdentityDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        return new RatelDeskIdentityDbContext(options);
     }
 
     private sealed class EmptyTenantContext : ITenantContext
