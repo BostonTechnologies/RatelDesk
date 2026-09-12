@@ -16,6 +16,7 @@ web_base_url="${RATELDESK_WEB_URL:-http://127.0.0.1:8111}"
 setup_provider="${RATELDESK_SETUP_PROVIDER:-Sqlite}"
 work_directory="$(mktemp -d)"
 cookie_jar="$work_directory/cookies.txt"
+self_service_cookie_jar="$work_directory/self-service-cookies.txt"
 
 cleanup() {
   rm -rf "$work_directory"
@@ -159,6 +160,52 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   --data '{"state":3,"priority":1}' \
   "$api_base_url/api/v1/changes/$change_id" > /dev/null
 
+self_service_email="rc4-self-service@example.test"
+self_service_password="Rc4-$(openssl rand -hex 24)"
+self_service_account_payload="$(jq -nc --arg email "$self_service_email" --arg organizationId "$organization_id" '{displayName: "RC4 Self-service User", email: $email, organizationId: $organizationId}')"
+self_service_activation="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data "$self_service_account_payload" \
+  "$api_base_url/api/v1/local-auth/users")"
+self_service_activation_token="$(jq -er '.activationToken' <<< "$self_service_activation")"
+self_service_activate_payload="$(jq -nc --arg email "$self_service_email" --arg token "$self_service_activation_token" --arg password "$self_service_password" '{email: $email, activationToken: $token, newPassword: $password}')"
+curl --fail --silent --show-error \
+  --header 'Content-Type: application/json' \
+  --data "$self_service_activate_payload" \
+  "$api_base_url/api/v1/local-auth/activate" > /dev/null
+
+self_service_login_payload="$(jq -nc --arg email "$self_service_email" --arg password "$self_service_password" '{email: $email, password: $password, rememberMe: false}')"
+curl --fail --silent --show-error \
+  --cookie-jar "$self_service_cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data "$self_service_login_payload" \
+  "$api_base_url/api/v1/local-auth/login" > /dev/null
+
+self_service_form_payload="$(jq -nc --arg organizationId "$organization_id" '{serviceId: "rc4-self-service", title: "RC4 self-service request", description: "Production local account validation.", jsonSchema: "{\"title\":\"RC4 self-service request\",\"description\":\"Production local account validation.\",\"fields\":[]}", organizationId: $organizationId, allowedOrganizationIds: [$organizationId], releaseStatus: 1}')"
+self_service_form_id="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data "$self_service_form_payload" \
+  "$api_base_url/api/v1/request-forms" | jq -er '.id')"
+self_service_request_payload="$(jq -nc --arg requestFormId "$self_service_form_id" '{requestFormId: $requestFormId, payloadJson: "{}"}')"
+self_service_request_id="$(curl --fail --silent --show-error \
+  --cookie "$self_service_cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data "$self_service_request_payload" \
+  "$api_base_url/api/v1/self-service/requests" | jq -er '.requestId')"
+curl --fail --silent --show-error --cookie "$self_service_cookie_jar" \
+  "$api_base_url/api/v1/self-service/requests/$self_service_request_id" | jq -e --arg id "$self_service_request_id" '.id == $id' > /dev/null
+
+self_service_attachment_id="$(curl --fail --silent --show-error \
+  --cookie "$self_service_cookie_jar" \
+  --form 'files=@/dev/null;filename=rc4-self-service.txt;type=text/plain' \
+  "$api_base_url/api/v1/tickets/$self_service_request_id/attachments/" | jq -er '.[0].id')"
+curl --fail --silent --show-error --cookie "$self_service_cookie_jar" \
+  "$api_base_url/api/v1/tickets/$self_service_request_id/attachments/" | jq -e --arg id "$self_service_attachment_id" 'any(.[]; .id == $id)' > /dev/null
+curl --fail --silent --show-error --cookie "$self_service_cookie_jar" \
+  "$api_base_url/api/v1/attachments/$self_service_attachment_id" > /dev/null
+
 curl --fail --silent --show-error "$api_base_url/api/v1/setup/status" | jq -e '.state == "Ready"' > /dev/null
 
-echo "First-run $setup_provider setup, local sign-in, core ticket CRUD, and attachment smoke test passed."
+echo "First-run $setup_provider setup, local sign-in, core ticket CRUD, self-service request, and attachment smoke test passed."
