@@ -438,6 +438,51 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Tenant_administrator_can_manage_membership_only_in_its_assigned_organization()
+    {
+        const string organizationId = "tenant-admin-organization";
+        const string otherOrganizationId = "other-tenant-admin-organization";
+        string tenantAdministratorId;
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createTenantAdmin = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "tenant.admin@example.test", Email = "tenant.admin@example.test", DisplayName = "Tenant Admin" },
+                "correct horse battery staple");
+            Assert.True(createTenantAdmin.Succeeded);
+            tenantAdministratorId = (await identityUsers.FindByEmailAsync("tenant.admin@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = organizationId, Name = "Tenant admin organization" },
+                new Organization { Id = otherOrganizationId, Name = "Other tenant organization" });
+            db.Users.Add(new User { Id = tenantAdministratorId, Name = "Tenant Admin", Email = "tenant.admin@example.test", OrganizationId = organizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = tenantAdministratorId, OrganizationId = organizationId, RoleKey = ScopedRoleCatalog.TenantAdministrator });
+            await db.SaveChangesAsync();
+        }
+
+        using var instanceAdministrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await instanceAdministrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+        var createTarget = await instanceAdministrator.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
+            "Tenant Target", "tenant.target@example.test") { OrganizationId = organizationId });
+        var target = await createTarget.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
+
+        using var tenantAdministrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await tenantAdministrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "tenant.admin@example.test", "correct horse battery staple"))).StatusCode);
+        var ownRoute = $"/api/v1/tenant-admin/organizations/{organizationId}/users/{target!.UserId}/assignments";
+        var otherRoute = $"/api/v1/tenant-admin/organizations/{otherOrganizationId}/users/{target.UserId}/assignments";
+        var ownTenant = await tenantAdministrator.PutAsJsonAsync(ownRoute,
+            new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([ScopedRoleCatalog.SelfServiceUser]));
+        var otherTenant = await tenantAdministrator.PutAsJsonAsync(otherRoute,
+            new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([ScopedRoleCatalog.SelfServiceUser]));
+
+        Assert.Equal(HttpStatusCode.NoContent, ownTenant.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, otherTenant.StatusCode);
+    }
+
+    [Fact]
     public async Task Local_login_requires_an_authenticator_code_after_two_factor_is_enabled()
     {
         using var setupClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
