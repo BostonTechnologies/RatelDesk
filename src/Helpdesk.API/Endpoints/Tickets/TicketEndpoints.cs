@@ -152,9 +152,13 @@ public static class TicketEndpoints
 
         group.MapGet("/{id:guid}/suggest-knowledge", async (
             Guid id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketViewAsync("incidents", id.ToString(), context.User, accessService, db, ct);
+            if (authorizationFailure is not null) return authorizationFailure;
             var row = await db.TicketAiSuggestions.AsNoTracking().FirstOrDefaultAsync(x => x.TicketId == id.ToString(), ct);
             if (row is null) return Results.NoContent();
 
@@ -164,15 +168,14 @@ public static class TicketEndpoints
 
         group.MapGet("/{id:guid}/ai-feedback", async (
             Guid id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var exists = await db.Tickets.AsNoTracking().AnyAsync(x => x.Id == ticketId, ct);
-            if (!exists)
-            {
-                return Results.NotFound();
-            }
+            var authorizationFailure = await AuthorizeTicketViewAsync("incidents", ticketId, context.User, accessService, db, ct);
+            if (authorizationFailure is not null) return authorizationFailure;
 
             var items = await db.TicketAiFeedback
                 .AsNoTracking()
@@ -199,15 +202,14 @@ public static class TicketEndpoints
 
         group.MapGet("/{id:guid}/ai-audit", async (
             Guid id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var exists = await db.Tickets.AsNoTracking().AnyAsync(x => x.Id == ticketId, ct);
-            if (!exists)
-            {
-                return Results.NotFound();
-            }
+            var authorizationFailure = await AuthorizeTicketViewAsync("incidents", ticketId, context.User, accessService, db, ct);
+            if (authorizationFailure is not null) return authorizationFailure;
 
             var items = await db.AiOperationAuditRecords
                 .AsNoTracking()
