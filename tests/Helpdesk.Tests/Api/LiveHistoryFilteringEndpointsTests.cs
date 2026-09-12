@@ -819,6 +819,56 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task RequestTasks_CreateDoesNotLinkAnAccessibleTenantToAnotherTenantsRequest()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Allowed tenant" },
+                new Organization { Id = "org-2", Name = "Other tenant" });
+            db.Customers.Add(new Customer
+            {
+                Id = "customer-request-manager",
+                Name = "Request manager",
+                Email = "operator@example.test",
+                OrganizationId = "org-1"
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-request-manager",
+                OidcIssuer = "https://id.example.test",
+                OidcSubject = "operator",
+                InviteStatus = CustomerInviteStatus.Active
+            });
+            db.Requests.Add(new Request
+            {
+                Id = "req-other",
+                TrackingId = "REQ-OTHER",
+                Title = "Other tenant request",
+                State = TicketState.InProgress,
+                OrganizationId = "org-2"
+            });
+        });
+        harness.UseRole("Request.Manager");
+
+        var response = await harness.Client.PostAsJsonAsync("/api/v1/request-tasks", new
+        {
+            Title = "Cross-tenant task",
+            Description = "Must not be created",
+            RequestId = "req-other",
+            OrganizationId = "org-1"
+        });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        await harness.WithDbAsync(db =>
+        {
+            Assert.Empty(db.RequestTasks);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
     public async Task RequestTasks_PatchUpdatesOnlyTheBoundedMetadataFields()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();

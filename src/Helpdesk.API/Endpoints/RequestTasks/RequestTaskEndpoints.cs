@@ -259,15 +259,34 @@ public static class RequestTaskEndpoints
 
         group.MapPost("/", async (
             [FromBody] CreateRequestTaskDto dto,
+            [FromServices] HelpdeskDbContext db,
             [FromServices] IRequestSender sender,
             [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanManageTasks(access) || !CanAccessOrganization(access, dto.OrganizationId))
+            if (!CanManageTasks(access))
             {
                 return Results.Forbid();
+            }
+
+            var parent = await db.Requests.AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(request => request.Id == dto.RequestId)
+                .Select(request => new { request.OrganizationId, request.CustomerId })
+                .FirstOrDefaultAsync(token);
+            if (parent is null || !CanAccessOrganization(access, parent.OrganizationId))
+            {
+                return Results.NotFound();
+            }
+
+            if ((!string.IsNullOrWhiteSpace(dto.OrganizationId) &&
+                 !string.Equals(dto.OrganizationId, parent.OrganizationId, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(dto.CustomerId) &&
+                 !string.Equals(dto.CustomerId, parent.CustomerId, StringComparison.OrdinalIgnoreCase)))
+            {
+                return Results.BadRequest("Request-task organization and customer must match the parent request.");
             }
 
             var command = new CreateRequestTaskCommand(
@@ -275,8 +294,8 @@ public static class RequestTaskEndpoints
                 dto.Description,
                 dto.RequestId,
                 dto.Priority,
-                dto.CustomerId,
-                dto.OrganizationId,
+                parent.CustomerId,
+                parent.OrganizationId,
                 dto.LinkedAssetIds,
                 dto.Attachments,
                 dto.DueDate);
