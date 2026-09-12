@@ -4,6 +4,7 @@ using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
@@ -21,6 +22,7 @@ public static class LocalAuthenticationEndpoints
         group.MapPost("/login", async (
             [FromBody] LocalLoginRequest request,
             [FromServices] UserManager<ApplicationUser> users,
+            [FromServices] ICurrentUserAccessService accessService,
             HttpContext context) =>
         {
             var user = await users.FindByEmailAsync(request.Email);
@@ -48,7 +50,25 @@ public static class LocalAuthenticationEndpoints
             }.Concat(user.IsInstanceAdministrator
                 ? [new Claim(ClaimTypes.Role, "HelpdeskAdmin"), new Claim("roles", "HelpdeskAdmin")]
                 : []);
-            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, LocalAuthenticationOptions.Scheme));
+            var identity = new ClaimsIdentity(
+                claims,
+                LocalAuthenticationOptions.Scheme,
+                ClaimTypes.Name,
+                ClaimTypes.Role);
+            var principal = new ClaimsPrincipal(identity);
+            var access = await accessService.ResolveAsync(principal, context.RequestAborted);
+            foreach (var role in access.RoleBundles.Concat(access.Permissions).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!identity.HasClaim(ClaimTypes.Role, role))
+                {
+                    identity.AddClaim(new Claim(ClaimTypes.Role, role));
+                }
+
+                if (!identity.HasClaim("roles", role))
+                {
+                    identity.AddClaim(new Claim("roles", role));
+                }
+            }
             await context.SignInAsync(LocalAuthenticationOptions.Scheme, principal, new AuthenticationProperties
             {
                 IsPersistent = request.RememberMe,

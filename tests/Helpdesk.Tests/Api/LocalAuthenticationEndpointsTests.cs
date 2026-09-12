@@ -12,6 +12,8 @@ using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Auth;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
@@ -21,6 +23,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace Helpdesk.Tests.Api;
 
@@ -100,6 +103,49 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, currentUser.StatusCode);
         var access = await currentUser.Content.ReadFromJsonAsync<CurrentUserAccessDto>();
         Assert.True(access!.IsHelpdeskAdmin);
+    }
+
+    [Fact]
+    public async Task Local_login_cookie_contains_the_resolved_scoped_role_permissions()
+    {
+        const string email = "scoped.technician@example.test";
+        const string organizationId = "scoped-technician-organization";
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var create = await users.CreateAsync(
+                new ApplicationUser { UserName = email, Email = email, DisplayName = "Scoped technician" },
+                "correct horse battery staple");
+            Assert.True(create.Succeeded, string.Join(", ", create.Errors.Select(error => error.Description)));
+            var account = await users.FindByEmailAsync(email);
+
+            var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.Add(new Organization { Id = organizationId, Name = "Scoped technician organization" });
+            db.Users.Add(new User { Id = account!.Id, Name = "Scoped technician", Email = email, OrganizationId = organizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = account.Id,
+                OrganizationId = organizationId,
+                RoleKey = ScopedRoleCatalog.Technician
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var login = await client.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            email, "correct horse battery staple"));
+
+        Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+        var cookieHeader = Assert.Single(login.Headers.GetValues("Set-Cookie"), header => header.StartsWith("RatelDesk.Local=", StringComparison.Ordinal));
+        var cookieValue = cookieHeader["RatelDesk.Local=".Length..].Split(';', 2)[0];
+        var cookieOptions = _factory.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(LocalAuthenticationOptions.Scheme);
+        var ticket = cookieOptions.TicketDataFormat.Unprotect(cookieValue);
+
+        Assert.NotNull(ticket);
+        Assert.True(ticket!.Principal.IsInRole(HelpdeskPermissions.IncidentManager));
+        Assert.True(ticket.Principal.IsInRole(HelpdeskPermissions.RequestManager));
+        Assert.True(ticket.Principal.IsInRole(HelpdeskPermissions.ChangeManager));
     }
 
     [Fact]
