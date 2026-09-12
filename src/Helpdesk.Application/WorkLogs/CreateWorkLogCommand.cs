@@ -28,7 +28,8 @@ public record CreateWorkLogCommand(
     TimelineEventType EventType = TimelineEventType.Worklog,
     string? EventCreatedByUserId = null,
     string? EventCreatedByUserName = null,
-    bool IsInternalNote = false) : IRequest<WorkLog>;
+    bool IsInternalNote = false,
+    Ticket? AuthorizedTicket = null) : IRequest<WorkLog>;
 
 /// <summary>
 /// Handles the creation of a work log entry for a ticket and performs related updates, such as notifying customers and
@@ -128,8 +129,8 @@ public class CreateWorkLogCommandHandler(
             IsRetryable = timelineEvent.IsRetryable
         });
 
-        var ticketDetails = await ticketRepo.GetAsync(request.TicketId);
-        var incident = await incidents.GetAsync(request.TicketId);
+        var ticketDetails = request.AuthorizedTicket ?? await ticketRepo.GetAsync(request.TicketId);
+        var incident = ticketDetails as Incident ?? await incidents.GetAsync(request.TicketId);
         var ticketForUpdate = incident as Ticket ?? ticketDetails;
         if (ticketForUpdate is not null)
         {
@@ -165,7 +166,10 @@ public class CreateWorkLogCommandHandler(
         {
             if (_ticketSlaService is not null && !string.IsNullOrWhiteSpace(request.TechnicianId))
             {
-                await _ticketSlaService.PauseAsync(request.TicketId, request.TechnicianId, "AgentResponded");
+                if (ticketForUpdate is not null)
+                    await _ticketSlaService.PauseAsync(ticketForUpdate, request.TechnicianId, "AgentResponded");
+                else
+                    await _ticketSlaService.PauseAsync(request.TicketId, request.TechnicianId, "AgentResponded");
             }
         }
         catch (Exception exception)
@@ -177,7 +181,7 @@ public class CreateWorkLogCommandHandler(
         {
             if (_slaEscalationEvaluator is not null && _ticketSlaRepository is not null)
             {
-                var ticketForSla = await ticketRepo.GetAsync(request.TicketId);
+                var ticketForSla = ticketForUpdate ?? await ticketRepo.GetAsync(request.TicketId);
                 var slaState = await _ticketSlaRepository.GetByTicketIdAsync(request.TicketId);
                 if (ticketForSla is not null && slaState is not null)
                 {

@@ -94,7 +94,8 @@ public static class WorkLogEndpoints
                 techId,
                 techName,
                 NotifyCustomer: !dto.IsInternalNote,
-                IsInternalNote: dto.IsInternalNote));
+                IsInternalNote: dto.IsInternalNote,
+                AuthorizedTicket: authorization.Incident));
 
             var response = new WorkLogDto
             {
@@ -271,13 +272,11 @@ public static class WorkLogEndpoints
         bool requireManager,
         CancellationToken cancellationToken)
     {
-        var incident = await db.Incidents.AsNoTracking()
-            .Where(candidate => candidate.Id == incidentId)
-            .Select(candidate => new IncidentScope(candidate.OrganizationId, candidate.CustomerId, candidate.RequesterEmail))
-            .FirstOrDefaultAsync(cancellationToken);
+        var incident = await db.Incidents.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.Id == incidentId, cancellationToken);
         if (incident is null)
         {
-            return new IncidentAuthorization(null, null, Results.NotFound());
+            return new IncidentAuthorization(null, null, null, Results.NotFound());
         }
 
         var customer = !string.IsNullOrWhiteSpace(incident.CustomerId)
@@ -294,8 +293,8 @@ public static class WorkLogEndpoints
                 customer?.Id ?? incident.CustomerId,
                 customer?.Email ?? incident.RequesterEmail);
         return allowed
-            ? new IncidentAuthorization(access, incident.OrganizationId, null)
-            : new IncidentAuthorization(null, null, Results.Forbid());
+            ? new IncidentAuthorization(access, incident.OrganizationId, incident, null)
+            : new IncidentAuthorization(null, null, null, Results.Forbid());
     }
 
     private sealed record IncidentScope(string? OrganizationId, string? CustomerId, string? RequesterEmail);
@@ -303,6 +302,7 @@ public static class WorkLogEndpoints
     private sealed record IncidentAuthorization(
         CurrentUserAccessProfile? Access,
         string? OrganizationId,
+        Incident? Incident,
         IResult? Failure);
 
     private static string SanitizePathSegment(string value)
