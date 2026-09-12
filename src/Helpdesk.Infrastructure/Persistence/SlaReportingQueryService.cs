@@ -22,17 +22,24 @@ public class SlaReportingQueryService(
     public async Task<SlaComplianceSummaryDto> GetComplianceSummaryAsync(SlaComplianceQuery query, CancellationToken ct)
     {
         var completedQuery = BuildCompletedQuery(query.TenantId, query.TicketType)
-            .Where(x => x.Sla.CompletedAt.HasValue)
-            .Where(x => x.Sla.CompletedAt!.Value >= query.FromUtc && x.Sla.CompletedAt!.Value <= query.ToUtc);
+            .Where(x => x.Sla.CompletedAt.HasValue);
 
-        var rows = await completedQuery
+        if (!IsSqlite)
+        {
+            completedQuery = completedQuery.Where(x =>
+                x.Sla.CompletedAt!.Value >= query.FromUtc && x.Sla.CompletedAt!.Value <= query.ToUtc);
+        }
+
+        var rows = (await completedQuery
             .Select(x => new
             {
                 CompletedAt = x.Sla.CompletedAt!.Value,
                 x.Sla.CompletedWithinResolutionSla,
                 x.Sla.CompletedWithinResponseSla
             })
-            .ToListAsync(ct);
+            .ToListAsync(ct))
+            .Where(x => !IsSqlite || (x.CompletedAt >= query.FromUtc && x.CompletedAt <= query.ToUtc))
+            .ToList();
 
         var completedTotal = rows.Count;
         var withinResolution = rows.Count(x => x.CompletedWithinResolutionSla);
@@ -75,12 +82,19 @@ public class SlaReportingQueryService(
 
         var total = await baseQuery.CountAsync(ct);
 
-        var rows = await baseQuery
-            .OrderBy(x => x.Sla.ResolutionDueAt)
-            .ThenBy(x => x.Sla.ResponseDueAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(ct);
+        var rows = IsSqlite
+            ? (await baseQuery.ToListAsync(ct))
+                .OrderBy(x => x.Sla.ResolutionDueAt)
+                .ThenBy(x => x.Sla.ResponseDueAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToList()
+            : await baseQuery
+                .OrderBy(x => x.Sla.ResolutionDueAt)
+                .ThenBy(x => x.Sla.ResponseDueAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync(ct);
         var calendarCache = await BuildCalendarCacheAsync(rows.Select(x => x.Ticket.OrganizationId), ct);
 
         return new PagedResult<SlaTicketRowDto>
@@ -101,13 +115,25 @@ public class SlaReportingQueryService(
 
         var candidatesQuery = BuildActiveQuery(query.TenantId, query.TicketType)
             .Where(x => x.Sla.Status != SlaStatus.Completed);
-        candidatesQuery = query.Metric == SlaMetricType.Response
-            ? candidatesQuery.OrderBy(x => x.Sla.ResponseDueAt)
-            : candidatesQuery.OrderBy(x => x.Sla.ResolutionDueAt);
-
-        candidatesQuery = candidatesQuery.Take(_nearBreachCandidateLimit);
-
-        var candidates = await candidatesQuery.ToListAsync(ct);
+        List<ActiveSlaQueryRow> candidates;
+        if (IsSqlite)
+        {
+            candidates = (await candidatesQuery.ToListAsync(ct))
+                .OrderBy(x => query.Metric == SlaMetricType.Response
+                    ? x.Sla.ResponseDueAt
+                    : x.Sla.ResolutionDueAt)
+                .Take(_nearBreachCandidateLimit)
+                .ToList();
+        }
+        else
+        {
+            candidatesQuery = query.Metric == SlaMetricType.Response
+                ? candidatesQuery.OrderBy(x => x.Sla.ResponseDueAt)
+                : candidatesQuery.OrderBy(x => x.Sla.ResolutionDueAt);
+            candidates = await candidatesQuery
+                .Take(_nearBreachCandidateLimit)
+                .ToListAsync(ct);
+        }
 
         var calendarCache = await BuildCalendarCacheAsync(candidates.Select(x => x.Ticket.OrganizationId), ct);
         var filtered = candidates
@@ -149,34 +175,56 @@ public class SlaReportingQueryService(
         var pageSize = NormalizePageSize(query.PageSize);
 
         var completedQuery = BuildCompletedQuery(query.TenantId, query.TicketType)
-            .Where(x => x.Sla.CompletedAt.HasValue)
-            .Where(x => x.Sla.CompletedAt!.Value >= query.FromUtc && x.Sla.CompletedAt!.Value <= query.ToUtc);
+            .Where(x => x.Sla.CompletedAt.HasValue);
+
+        if (!IsSqlite)
+        {
+            completedQuery = completedQuery.Where(x =>
+                x.Sla.CompletedAt!.Value >= query.FromUtc && x.Sla.CompletedAt!.Value <= query.ToUtc);
+        }
 
         if (query.WithinResolutionSla.HasValue)
         {
             completedQuery = completedQuery.Where(x => x.Sla.CompletedWithinResolutionSla == query.WithinResolutionSla.Value);
         }
 
-        var total = await completedQuery.CountAsync(ct);
+        var projectedQuery = completedQuery.Select(x => new SlaCompletedRowDto
+        {
+            TicketId = x.Ticket.Id,
+            TicketNumber = x.Ticket.TrackingId,
+            Title = x.Ticket.Title,
+            TenantId = x.Ticket.OrganizationId ?? string.Empty,
+            TicketType = ResolveTicketType(x.Discriminator),
+            ServiceId = x.Ticket.ServiceId,
+            Priority = (int)x.Ticket.Priority,
+            CompletedAt = x.Sla.CompletedAt!.Value,
+            WithinResponseSla = x.Sla.CompletedWithinResponseSla,
+            WithinResolutionSla = x.Sla.CompletedWithinResolutionSla
+        });
 
-        var rows = await completedQuery
-            .OrderByDescending(x => x.Sla.CompletedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(x => new SlaCompletedRowDto
-            {
-                TicketId = x.Ticket.Id,
-                TicketNumber = x.Ticket.TrackingId,
-                Title = x.Ticket.Title,
-                TenantId = x.Ticket.OrganizationId ?? string.Empty,
-                TicketType = ResolveTicketType(x.Discriminator),
-                ServiceId = x.Ticket.ServiceId,
-                Priority = (int)x.Ticket.Priority,
-                CompletedAt = x.Sla.CompletedAt!.Value,
-                WithinResponseSla = x.Sla.CompletedWithinResponseSla,
-                WithinResolutionSla = x.Sla.CompletedWithinResolutionSla
-            })
-            .ToListAsync(ct);
+        List<SlaCompletedRowDto> rows;
+        int total;
+        if (IsSqlite)
+        {
+            var sqliteRows = (await projectedQuery.ToListAsync(ct))
+                .Where(x => x.CompletedAt >= query.FromUtc && x.CompletedAt <= query.ToUtc)
+                .OrderByDescending(x => x.CompletedAt)
+                .ToList();
+            total = sqliteRows.Count;
+            rows = sqliteRows
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToList();
+        }
+        else
+        {
+            total = await completedQuery.CountAsync(ct);
+            rows = await projectedQuery
+                .OrderByDescending(x => x.CompletedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync(ct);
+        }
 
         return new PagedResult<SlaCompletedRowDto>
         {
@@ -205,6 +253,8 @@ public class SlaReportingQueryService(
         query = ApplyTicketTypeFilter(query, ticketType);
         return query;
     }
+
+    private bool IsSqlite => _context.Database.IsSqlite();
 
     private IQueryable<ActiveSlaQueryRow> BuildCompletedQuery(string? tenantId, TicketType? ticketType)
     {

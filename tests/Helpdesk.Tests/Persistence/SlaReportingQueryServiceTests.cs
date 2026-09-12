@@ -5,6 +5,7 @@ using Helpdesk.Shared.Enums;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -152,6 +153,44 @@ public class SlaReportingQueryServiceTests
 
         Assert.Single(result.Items);
         Assert.Equal("n1", result.Items[0].TicketId);
+    }
+
+    [Fact]
+    public async Task Sqlite_provider_executes_sla_datetime_filters_and_ordering()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<HelpdeskDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new HelpdeskDbContext(options, new TestTenantContext(), new HttpContextAccessor());
+        await db.Database.EnsureCreatedAsync();
+        var now = DateTimeOffset.UtcNow;
+
+        db.Tickets.AddRange(
+            new Incident { Id = "sqlite-completed-old", Title = "Old", TrackingId = "INC-S1", OrganizationId = "tenant-a", State = TicketState.Resolved },
+            new Incident { Id = "sqlite-completed-new", Title = "New", TrackingId = "INC-S2", OrganizationId = "tenant-a", State = TicketState.Resolved },
+            new Incident { Id = "sqlite-breached-late", Title = "Late", TrackingId = "INC-S3", OrganizationId = "tenant-a", State = TicketState.InProgress },
+            new Incident { Id = "sqlite-breached-early", Title = "Early", TrackingId = "INC-S4", OrganizationId = "tenant-a", State = TicketState.InProgress });
+        db.TicketSlaStates.AddRange(
+            new TicketSlaState { TicketId = "sqlite-completed-old", Status = SlaStatus.Completed, CompletedAt = now.AddHours(-2), CompletedWithinResolutionSla = true },
+            new TicketSlaState { TicketId = "sqlite-completed-new", Status = SlaStatus.Completed, CompletedAt = now.AddHours(-1), CompletedWithinResolutionSla = false },
+            CreateBreachedState("sqlite-breached-late", now.AddHours(-1)),
+            CreateBreachedState("sqlite-breached-early", now.AddHours(-2)));
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db);
+        var completed = await sut.GetCompletedTicketsAsync(new SlaCompletedQuery
+        {
+            TenantId = "tenant-a", FromUtc = now.AddDays(-1), ToUtc = now, Page = 1, PageSize = 20
+        }, CancellationToken.None);
+        var breached = await sut.GetBreachedTicketsAsync(new SlaTicketListQuery
+        {
+            TenantId = "tenant-a", Page = 1, PageSize = 20
+        }, CancellationToken.None);
+
+        Assert.Equal(["sqlite-completed-new", "sqlite-completed-old"], completed.Items.Select(x => x.TicketId));
+        Assert.Equal(["sqlite-breached-early", "sqlite-breached-late"], breached.Items.Select(x => x.TicketId));
     }
 
     private static TicketSlaState CreateBreachedState(string ticketId, DateTimeOffset dueAt)
