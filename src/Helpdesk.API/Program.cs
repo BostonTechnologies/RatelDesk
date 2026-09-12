@@ -1108,6 +1108,7 @@ if (localAuthenticationOptions.SupportsLocalAccounts)
 }
 
 app.MapUserEndpoints();
+app.MapTenantAdministrationEndpoints();
 app.MapCustomerAuthEndpoints();
 app.MapPresenceEndpoints();
 app.MapDashboardEndpoints();

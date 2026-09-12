@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Helpdesk.API;
 using Helpdesk.API.Endpoints.Authentication;
+using Helpdesk.API.Endpoints.Users;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
@@ -403,6 +404,37 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.True(technician.IsBuiltIn);
         Assert.True(technician.IsProtected);
         Assert.Equal(HttpStatusCode.Conflict, deleteBuiltIn.StatusCode);
+    }
+
+    [Fact]
+    public async Task Tenant_membership_route_allows_only_the_self_service_role()
+    {
+        const string organizationId = "tenant-membership-organization";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var setupDb = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            setupDb.Organizations.Add(new Organization { Id = organizationId, Name = "Tenant membership organization" });
+            await setupDb.SaveChangesAsync();
+        }
+
+        using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+        var create = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
+            "Tenant Member", "tenant.member@example.test") { OrganizationId = organizationId });
+        var activation = await create.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+
+        var route = $"/api/v1/tenant-admin/organizations/{organizationId}/users/{activation!.UserId}/assignments";
+        var technician = await administratorClient.PutAsJsonAsync(route,
+            new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([ScopedRoleCatalog.Technician]));
+        var selfService = await administratorClient.PutAsJsonAsync(route,
+            new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([ScopedRoleCatalog.SelfServiceUser]));
+        var membership = await administratorClient.GetFromJsonAsync<TenantAdministrationEndpoints.TenantMembershipResponse>(route);
+
+        Assert.Equal(HttpStatusCode.BadRequest, technician.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, selfService.StatusCode);
+        Assert.Equal([ScopedRoleCatalog.SelfServiceUser], membership!.RoleKeys);
     }
 
     [Fact]
