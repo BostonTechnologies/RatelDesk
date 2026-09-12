@@ -41,10 +41,16 @@ public static class DashboardEndpoints
         .WithDescription("Returns scoped open counts for the authenticated technician.")
         .RequireAuthorization("HelpdeskStaff");
 
-        group.MapGet("/customer-summary", async ([FromServices] IRequestSender sender, ClaimsPrincipal user) =>
+        group.MapGet("/customer-summary", async (
+            [FromServices] IRequestSender sender,
+            [FromServices] ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
+            CancellationToken token) =>
         {
-            var id = user.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            return await sender.Send(new GetCustomerDashboardQuery(id));
+            var access = await accessService.ResolveAsync(user, token);
+            return string.IsNullOrWhiteSpace(access.CustomerId)
+                ? new CustomerDashboardDto(0, 0)
+                : await sender.Send(new GetCustomerDashboardQuery(access.CustomerId), token);
         })
         .WithName("GetCustomerDashboard")
         .WithSummary("Customer dashboard metrics.")

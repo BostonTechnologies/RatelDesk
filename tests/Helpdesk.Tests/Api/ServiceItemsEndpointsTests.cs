@@ -6,6 +6,8 @@ using Helpdesk.API.Endpoints.Categories;
 using Helpdesk.API.Endpoints.Dashboard;
 using Helpdesk.API.Endpoints.Services;
 using Helpdesk.API.Services;
+using Helpdesk.Application.Dashboard;
+using Helpdesk.Application.Messaging;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs;
@@ -127,23 +129,58 @@ public sealed class ServiceItemsEndpointsTests
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, customerDashboardResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task CustomerDashboard_UsesTheResolvedCustomerLink_NotTheIdentitySubject()
+    {
+        await using var harness = await ServiceItemsTestHarness.CreateAsync();
+
+        var response = await harness.Client.GetFromJsonAsync<CustomerDashboardDto>(
+            "/api/v1/dashboard/customer-summary");
+
+        Assert.NotNull(response);
+        Assert.Equal(2, response!.OpenTicketsCount);
+        Assert.Equal(1, response.ResolvedTicketsCount);
+        Assert.Equal("customer-1", harness.DashboardSender.CustomerId);
+    }
+
+    [Fact]
+    public async Task CustomerDashboard_ReturnsEmptyCounts_WhenNoCustomerLinkExists()
+    {
+        await using var harness = await ServiceItemsTestHarness.CreateAsync(customerId: null);
+
+        var response = await harness.Client.GetFromJsonAsync<CustomerDashboardDto>(
+            "/api/v1/dashboard/customer-summary");
+
+        Assert.NotNull(response);
+        Assert.Equal(0, response!.OpenTicketsCount);
+        Assert.Equal(0, response.ResolvedTicketsCount);
+        Assert.Null(harness.DashboardSender.CustomerId);
+    }
+
     private sealed class ServiceItemsTestHarness : IAsyncDisposable
     {
         private readonly SqliteConnection _connection;
         private readonly WebApplication _app;
 
-        private ServiceItemsTestHarness(SqliteConnection connection, WebApplication app, HttpClient client)
+        private ServiceItemsTestHarness(
+            SqliteConnection connection,
+            WebApplication app,
+            HttpClient client,
+            TestDashboardSender dashboardSender)
         {
             _connection = connection;
             _app = app;
             Client = client;
+            DashboardSender = dashboardSender;
         }
 
         public HttpClient Client { get; }
+        public TestDashboardSender DashboardSender { get; }
 
         public static async Task<ServiceItemsTestHarness> CreateAsync(
             bool isHelpdeskAdmin = false,
-            bool selfServiceAccess = true)
+            bool selfServiceAccess = true,
+            string? customerId = "customer-1")
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -160,6 +197,9 @@ public sealed class ServiceItemsEndpointsTests
             builder.Services.AddScoped<IRepository<RequestForm>, EfRepository<RequestForm>>();
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("tenant-1", "user-1", isHelpdeskAdmin));
             builder.Services.AddScoped<ISelfServiceAudienceService, TestSelfServiceAudienceService>();
+            var dashboardSender = new TestDashboardSender();
+            builder.Services.AddSingleton<IRequestSender>(dashboardSender);
+            builder.Services.AddSingleton<ICurrentUserAccessService>(new TestCurrentUserAccessService(customerId));
             builder.Services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = "Test";
@@ -208,7 +248,7 @@ public sealed class ServiceItemsEndpointsTests
                 : selfServiceAccess ? "SelfService" : "NoSelfService";
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", actor);
 
-            return new ServiceItemsTestHarness(connection, app, client);
+            return new ServiceItemsTestHarness(connection, app, client, dashboardSender);
         }
 
         public async ValueTask DisposeAsync()
@@ -247,6 +287,28 @@ public sealed class ServiceItemsEndpointsTests
         public string? TenantId { get; } = tenantId;
         public string? UserId { get; } = userId;
         public bool IsHelpdeskAdmin { get; } = isHelpdeskAdmin;
+    }
+
+    private sealed class TestCurrentUserAccessService(string? customerId) : ICurrentUserAccessService
+    {
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default) =>
+            Task.FromResult(CurrentUserAccessProfile.FromClaims(user) with { CustomerId = customerId });
+    }
+
+    private sealed class TestDashboardSender : IRequestSender
+    {
+        public string? CustomerId { get; private set; }
+
+        public Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
+        {
+            if (request is GetCustomerDashboardQuery customerDashboardQuery)
+            {
+                CustomerId = customerDashboardQuery.CustomerId;
+                return Task.FromResult((TResponse)(object)new CustomerDashboardDto(2, 1));
+            }
+
+            throw new InvalidOperationException($"Unexpected request type: {request.GetType().Name}");
+        }
     }
 
     private sealed class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
