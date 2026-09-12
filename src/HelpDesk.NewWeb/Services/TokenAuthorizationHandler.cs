@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 
 
 namespace HelpDesk.NewWeb.Services;
@@ -6,10 +8,19 @@ namespace HelpDesk.NewWeb.Services;
 public class TokenAuthorizationHandler : DelegatingHandler
 {
     private readonly ITokenService _tokenService;
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly string _localCookieName;
 
-    public TokenAuthorizationHandler(ITokenService tokenService)
+    public TokenAuthorizationHandler(
+        ITokenService tokenService,
+        IHttpContextAccessor httpContextAccessor,
+        IConfiguration configuration)
     {
         _tokenService = tokenService;
+        _httpContextAccessor = httpContextAccessor;
+        _localCookieName = configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost")
+            ? "RatelDesk.Local"
+            : "__Host-RatelDesk.Local";
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -19,6 +30,10 @@ public class TokenAuthorizationHandler : DelegatingHandler
         if (!string.IsNullOrWhiteSpace(token))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+        else
+        {
+            ForwardLocalSessionCookie(request);
         }
 
         try
@@ -36,6 +51,22 @@ public class TokenAuthorizationHandler : DelegatingHandler
                 RequestMessage = request,
                 ReasonPhrase = "Request timed out"
             };
+        }
+    }
+
+    private void ForwardLocalSessionCookie(HttpRequestMessage request)
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context?.User.Identity?.IsAuthenticated != true ||
+            !context.User.HasClaim("auth_mode", "local") ||
+            request.Headers.Contains("Cookie"))
+        {
+            return;
+        }
+
+        if (context.Request.Cookies.TryGetValue(_localCookieName, out var cookie) && !string.IsNullOrWhiteSpace(cookie))
+        {
+            request.Headers.TryAddWithoutValidation("Cookie", $"{_localCookieName}={cookie}");
         }
     }
 }

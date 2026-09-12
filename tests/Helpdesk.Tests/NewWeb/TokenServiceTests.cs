@@ -506,6 +506,60 @@ public class TokenServiceTests
             Arg.Any<AuthenticationProperties?>());
     }
 
+    [Fact]
+    public async Task Local_Session_Does_Not_Require_An_Oidc_Access_Token()
+    {
+        var (context, authService) = CreateContext(
+            accessToken: string.Empty,
+            expiresAtUtc: DateTime.UtcNow.AddHours(1),
+            claims: [new Claim("auth_mode", "local")]);
+        var accessor = new HttpContextAccessor { HttpContext = context };
+        var service = new TokenService(
+            accessor,
+            Substitute.For<IHttpClientFactory>(),
+            new ConfigurationBuilder().Build(),
+            Substitute.For<ISystemTokenService>());
+
+        var token = await service.GetValidAccessTokenAsync();
+
+        Assert.Null(token);
+        await authService.DidNotReceive().SignOutAsync(
+            context,
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            Arg.Any<AuthenticationProperties?>());
+    }
+
+    [Fact]
+    public async Task Local_Session_Cookie_Is_Relayed_To_The_Api()
+    {
+        const string cookieValue = "protected-local-session";
+        var context = new DefaultHttpContext();
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim("auth_mode", "local")],
+            "RatelDeskLocal"));
+        context.Request.Headers.Cookie = $"__Host-RatelDesk.Local={cookieValue}";
+        var accessor = new HttpContextAccessor { HttpContext = context };
+        var tokenService = Substitute.For<ITokenService>();
+        tokenService.GetValidAccessTokenAsync().Returns((string?)null);
+        string? forwardedCookie = null;
+        var handler = new TokenAuthorizationHandler(
+            tokenService,
+            accessor,
+            new ConfigurationBuilder().Build())
+        {
+            InnerHandler = new StubMessageHandler(request =>
+            {
+                forwardedCookie = request.Headers.GetValues("Cookie").Single();
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            })
+        };
+
+        using var client = new HttpClient(handler);
+        await client.GetAsync("https://api.example.test/api/v1/auth/me");
+
+        Assert.Equal($"__Host-RatelDesk.Local={cookieValue}", forwardedCookie);
+    }
+
     private sealed class StubMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler = handler;

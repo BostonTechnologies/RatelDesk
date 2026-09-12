@@ -28,12 +28,19 @@ using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 var webAuthenticationMode = builder.Configuration["Authentication:Mode"] ?? "Oidc";
+const string localAuthenticationScheme = "RatelDeskLocal";
 var webSupportsLocalAccounts = string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase)
     || string.Equals(webAuthenticationMode, "Hybrid", StringComparison.OrdinalIgnoreCase);
-var webCookieScheme = webSupportsLocalAccounts ? "RatelDeskLocal" : CookieAuthenticationDefaults.AuthenticationScheme;
-var webCookieName = webSupportsLocalAccounts
-    ? (builder.Configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost") ? "RatelDesk.Local" : "__Host-RatelDesk.Local")
-    : "__Host-Helpdesk.Auth";
+var webUsesOidc = !string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase);
+var webIsHybrid = string.Equals(webAuthenticationMode, "Hybrid", StringComparison.OrdinalIgnoreCase);
+var localCookieName = builder.Configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost")
+    ? "RatelDesk.Local"
+    : "__Host-RatelDesk.Local";
+var webDefaultScheme = webIsHybrid
+    ? "RatelDeskWeb"
+    : webSupportsLocalAccounts
+        ? localAuthenticationScheme
+        : CookieAuthenticationDefaults.AuthenticationScheme;
 
 builder.AddServiceDefaults();
 
@@ -112,33 +119,62 @@ if (string.IsNullOrWhiteSpace(apiBaseUrl))
     throw new InvalidOperationException("ApiBaseUrl is required. Set it through configuration or an environment variable.");
 }
 
-builder.Services.AddAuthentication(options =>
+var authentication = builder.Services.AddAuthentication(options =>
 {
-    options.DefaultScheme = webCookieScheme;
-    options.DefaultChallengeScheme = webSupportsLocalAccounts ? webCookieScheme : "Authentik";
-})
-.AddCookie(webCookieScheme, options =>
-{
-    options.Cookie.Name = webCookieName;
-    options.Cookie.HttpOnly = true;
-    options.Cookie.SameSite = SameSiteMode.Lax;
-    options.Cookie.Path = "/";
-    options.Cookie.SecurePolicy = builder.Configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost") || builder.Environment.IsDevelopment()
-        ? CookieSecurePolicy.SameAsRequest
-        : CookieSecurePolicy.Always;
-    options.LoginPath = "/login";
-    options.AccessDeniedPath = "/access-denied";
-    options.SlidingExpiration = true;
-    options.ExpireTimeSpan = TimeSpan.FromHours(8);
-    if (!webSupportsLocalAccounts)
-    {
-        options.EventsType = typeof(CookieOidcSessionEvents);
-    }
+    options.DefaultScheme = webDefaultScheme;
+    options.DefaultChallengeScheme = webUsesOidc ? "Authentik" : localAuthenticationScheme;
 });
 
-if (!string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase))
+if (webUsesOidc)
 {
-    builder.Services.AddAuthentication().AddOpenIdConnect("Authentik", options =>
+    authentication.AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
+    {
+        options.Cookie.Name = "__Host-Helpdesk.Auth";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.Path = "/";
+        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
+        options.LoginPath = "/login";
+        options.AccessDeniedPath = "/access-denied";
+        options.SlidingExpiration = true;
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.EventsType = typeof(CookieOidcSessionEvents);
+    });
+}
+
+if (webSupportsLocalAccounts)
+{
+    authentication.AddCookie(localAuthenticationScheme, options =>
+    {
+        options.Cookie.Name = localCookieName;
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.Path = "/";
+        options.Cookie.SecurePolicy = builder.Configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost") || builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
+        options.LoginPath = "/login";
+        options.AccessDeniedPath = "/access-denied";
+        options.SlidingExpiration = true;
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+    });
+}
+
+if (webIsHybrid)
+{
+    authentication.AddPolicyScheme("RatelDeskWeb", "RatelDesk browser session", options =>
+    {
+        options.ForwardDefaultSelector = context => context.Request.Cookies.ContainsKey(localCookieName)
+            ? localAuthenticationScheme
+            : CookieAuthenticationDefaults.AuthenticationScheme;
+    });
+}
+
+if (webUsesOidc)
+{
+    authentication.AddOpenIdConnect("Authentik", options =>
 {
     builder.Configuration.GetSection("Authentication:Authentik").Bind(options);
     var humanOidc = HumanOidcRuntimeOptionsResolver.Resolve(builder.Configuration);
@@ -166,6 +202,7 @@ if (!string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnor
 
     options.CallbackPath = humanOidc.CallbackPath!;
     options.SignedOutCallbackPath = humanOidc.SignedOutCallbackPath!;
+    options.SignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
 
     // (optional) belt & suspenders: build an HTTPS redirect using forwarded headers if present
     options.Events = new OpenIdConnectEvents
@@ -187,7 +224,7 @@ if (!string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnor
             return Task.CompletedTask;
         }
     };
-});
+    });
 }
 
 // Web & System API clients
@@ -432,7 +469,7 @@ app.MapControllers();
 
 app.MapGet("/login-authentik", async (HttpContext ctx) =>
 {
-    if (webSupportsLocalAccounts)
+    if (!webUsesOidc)
     {
         return Results.LocalRedirect("/login");
     }
@@ -598,8 +635,15 @@ app.MapGet("/auth/development", async (
 
 app.MapGet("/logout", async (HttpContext ctx) =>
 {
-    await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    if (string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "ai_agent", StringComparison.OrdinalIgnoreCase))
+    var isLocalSession = string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "local", StringComparison.OrdinalIgnoreCase);
+    await ctx.SignOutAsync(localAuthenticationScheme);
+    if (webUsesOidc)
+    {
+        await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    }
+
+    if (isLocalSession || !webUsesOidc ||
+        string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "ai_agent", StringComparison.OrdinalIgnoreCase))
     {
         return Results.LocalRedirect("/login");
     }

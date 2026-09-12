@@ -161,6 +161,26 @@ public class WebAuthRoutesTests
     }
 
     [Fact]
+    public async Task Hybrid_Mode_Offers_Local_And_Oidc_Login()
+    {
+        using var factory = CreateFactory(authenticationMode: "Hybrid");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var login = await client.GetAsync("/login");
+        var loginContent = await login.Content.ReadAsStringAsync();
+        var oidc = await client.GetAsync("/login-authentik");
+
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.Contains("action=\"/local-login\"", loginContent, StringComparison.Ordinal);
+        Assert.Contains("href=\"/login-authentik\"", loginContent, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Redirect, oidc.StatusCode);
+        Assert.StartsWith("https://id.example.com/application/o/rateldesk/authorize", oidc.Headers.Location?.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Login_Page_Includes_The_Published_Blazor_Bootstrap_Asset()
     {
         var component = File.ReadAllText(Path.Combine(
@@ -271,15 +291,17 @@ public class WebAuthRoutesTests
     private static WebApplicationFactory<TokenService> CreateFactory(
         bool enableTestAuth = false,
         bool useAzureFallback = false,
-        bool localAuthentication = false)
+        bool localAuthentication = false,
+        string? authenticationMode = null)
     {
         return new WebApplicationFactory<TokenService>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Production");
             builder.UseEnvironment("Production");
-            if (localAuthentication)
+            var selectedAuthenticationMode = authenticationMode ?? (localAuthentication ? "Local" : null);
+            if (selectedAuthenticationMode is not null)
             {
-                builder.UseSetting("Authentication:Mode", "Local");
+                builder.UseSetting("Authentication:Mode", selectedAuthenticationMode);
                 builder.UseSetting("Authentication:AllowInsecureLocalhost", "true");
             }
 
@@ -308,9 +330,9 @@ public class WebAuthRoutesTests
                         ["ApiBaseUrl"] = "https://helpdesk-api.test/"
                     };
 
-                if (localAuthentication)
+                if (selectedAuthenticationMode is not null)
                 {
-                    settings["Authentication:Mode"] = "Local";
+                    settings["Authentication:Mode"] = selectedAuthenticationMode;
                     settings["Authentication:AllowInsecureLocalhost"] = "true";
                 }
 

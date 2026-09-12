@@ -36,17 +36,24 @@
                     </MudButton>
                 </form>
             }
-            else
+
+            @if (SupportsLocalAccounts && SupportsOidc)
             {
-            <MudButton Variant="Variant.Filled"
-                       Size="Size.Large"
-                       Color="Color.Primary"
-                       FullWidth="true"
-                       Class="helpdesk-login-primary-action"
-                       StartIcon="@Icons.Material.Filled.Login"
-                       Href="/login-authentik">
-                Sign in to @_branding.ApplicationName
-            </MudButton>
+                <MudDivider Class="my-4" />
+                <MudText Typo="Typo.body2" Align="Align.Center">or use your organization sign-in</MudText>
+            }
+
+            @if (SupportsOidc)
+            {
+                <MudButton Variant="Variant.Filled"
+                           Size="Size.Large"
+                           Color="Color.Primary"
+                           FullWidth="true"
+                           Class="helpdesk-login-primary-action"
+                           StartIcon="@Icons.Material.Filled.Login"
+                           Href="/login-authentik">
+                    Sign in to @_branding.ApplicationName
+                </MudButton>
             }
 
             @if (Env.IsDevelopment())
@@ -96,6 +103,8 @@
     private bool SupportsLocalAccounts =>
         string.Equals(Config["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)
         || string.Equals(Config["Authentication:Mode"], "Hybrid", StringComparison.OrdinalIgnoreCase);
+
+    private bool SupportsOidc => !string.Equals(Config["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase);
 
     private sealed class BrandingSnapshot
     {
