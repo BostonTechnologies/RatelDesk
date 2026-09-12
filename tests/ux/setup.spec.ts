@@ -13,10 +13,9 @@ test('first-run setup unlocks embedded storage and reaches review', async ({ pag
 
   await page.getByLabel('Setup code').fill(setupCode);
   await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByLabel('Storage provider')).toBeVisible();
-  await expect(page.getByText('Embedded SQLite — no database service required')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Prepare storage' }).click();
+  const prepareStorage = page.getByRole('button', { name: 'Prepare storage' });
+  await expect(prepareStorage).toBeVisible();
+  await prepareStorage.click();
   await expect(page.getByLabel('Initial organization')).toBeVisible();
   await page.getByLabel('Initial organization').fill('Browser Wizard Organization');
   await page.getByLabel('Application name').fill('Browser Wizard RatelDesk');
@@ -34,6 +33,7 @@ test('first-run setup unlocks embedded storage and reaches review', async ({ pag
   await expect(page.getByLabel('Keep RatelDesk defaults')).toBeChecked();
   await page.getByRole('button', { name: 'Continue' }).click();
 
+  await expect(page.getByText('Embedded SQLite', { exact: true })).toBeVisible();
   await expect(page.getByText('Browser Wizard Organization', { exact: true })).toBeVisible();
   await expect(page.getByText('Browser Wizard Administrator (browser.wizard.admin@example.test)', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Initialize instance' })).toBeVisible();
