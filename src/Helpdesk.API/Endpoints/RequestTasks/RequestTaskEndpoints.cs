@@ -81,8 +81,8 @@ public static class RequestTaskEndpoints
 
             if (!access.IsHelpdeskAdmin)
             {
-                var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                if (allowedOrganizationIds.Length == 0)
+                var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+                if (requestManagerOrganizationIds.Length == 0)
                 {
                     return Results.Ok(new PagedResponse<RequestTaskListItemDto>
                     {
@@ -93,7 +93,7 @@ public static class RequestTaskEndpoints
                     });
                 }
 
-                query = query.Where(x => x.Task.OrganizationId != null && allowedOrganizationIds.Contains(x.Task.OrganizationId));
+                query = query.Where(x => x.Task.OrganizationId != null && requestManagerOrganizationIds.Contains(x.Task.OrganizationId));
             }
 
             if (shouldFilterAssignedToMe)
@@ -785,14 +785,14 @@ public static class RequestTaskEndpoints
     }
 
     private static bool CanManageTasks(CurrentUserAccessProfile access) =>
-        access.IsHelpdeskAdmin
-        || access.HasPermission(HelpdeskPermissions.IncidentManager)
-        || access.HasPermission(HelpdeskPermissions.RequestManager)
-        || access.HasPermission(HelpdeskPermissions.ChangeManager);
+        access.IsHelpdeskAdmin || RequestManagerOrganizationIds(access).Count > 0;
 
     private static bool CanAccessOrganization(CurrentUserAccessProfile access, string? organizationId) =>
         access.IsHelpdeskAdmin
-        || (!string.IsNullOrWhiteSpace(organizationId) && access.AllowedOrganizationIds.Contains(organizationId));
+        || (!string.IsNullOrWhiteSpace(organizationId) && RequestManagerOrganizationIds(access).Contains(organizationId));
+
+    private static IReadOnlySet<string> RequestManagerOrganizationIds(CurrentUserAccessProfile access) =>
+        access.OrganizationIdsFor(HelpdeskPermissions.RequestManager);
 
     private static async Task<bool> CanAccessTaskAsync(
         HelpdeskDbContext db,
@@ -827,13 +827,13 @@ public static class RequestTaskEndpoints
         var query = db.RequestTasks.AsNoTracking().Where(x => ids.Contains(x.Id));
         if (!access.IsHelpdeskAdmin)
         {
-            var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-            if (allowedOrganizationIds.Length == 0)
+            var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+            if (requestManagerOrganizationIds.Length == 0)
             {
                 return new List<string>();
             }
 
-            query = query.Where(x => x.OrganizationId != null && allowedOrganizationIds.Contains(x.OrganizationId));
+            query = query.Where(x => x.OrganizationId != null && requestManagerOrganizationIds.Contains(x.OrganizationId));
         }
 
         return await query.Select(x => x.Id).ToListAsync(token);

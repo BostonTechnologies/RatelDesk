@@ -152,10 +152,10 @@ public static class WorkflowOpsEndpoints
 
             if (!access.IsHelpdeskAdmin)
             {
-                var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                notifications = allowedOrganizationIds.Length == 0
+                var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+                notifications = requestManagerOrganizationIds.Length == 0
                     ? notifications.Where(_ => false)
-                    : notifications.Where(n => n.TenantId != null && allowedOrganizationIds.Contains(n.TenantId));
+                    : notifications.Where(n => n.TenantId != null && requestManagerOrganizationIds.Contains(n.TenantId));
             }
 
             var totalCount = await notifications.CountAsync(ct);
@@ -205,10 +205,10 @@ public static class WorkflowOpsEndpoints
 
             if (!access.IsHelpdeskAdmin)
             {
-                var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                bindings = allowedOrganizationIds.Length == 0
+                var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+                bindings = requestManagerOrganizationIds.Length == 0
                     ? bindings.Where(_ => false)
-                    : bindings.Where(b => allowedOrganizationIds.Contains(b.OrganizationId));
+                    : bindings.Where(b => requestManagerOrganizationIds.Contains(b.OrganizationId));
             }
 
             var query =
@@ -411,10 +411,10 @@ public static class WorkflowOpsEndpoints
     }
 
     private static bool CanManageWorkflowOps(CurrentUserAccessProfile access) =>
-        access.IsHelpdeskAdmin
-        || access.HasPermission(HelpdeskPermissions.IncidentManager)
-        || access.HasPermission(HelpdeskPermissions.RequestManager)
-        || access.HasPermission(HelpdeskPermissions.ChangeManager);
+        access.IsHelpdeskAdmin || RequestManagerOrganizationIds(access).Count > 0;
+
+    private static IReadOnlySet<string> RequestManagerOrganizationIds(CurrentUserAccessProfile access) =>
+        access.OrganizationIdsFor(HelpdeskPermissions.RequestManager);
 
     private static IQueryable<RequestTask> ApplyAllowedOrganizationFilter(
         IQueryable<RequestTask> query,
@@ -425,10 +425,10 @@ public static class WorkflowOpsEndpoints
             return query;
         }
 
-        var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-        return allowedOrganizationIds.Length == 0
+        var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+        return requestManagerOrganizationIds.Length == 0
             ? query.Where(_ => false)
-            : query.Where(t => t.OrganizationId != null && allowedOrganizationIds.Contains(t.OrganizationId));
+            : query.Where(t => t.OrganizationId != null && requestManagerOrganizationIds.Contains(t.OrganizationId));
     }
 
     private static IQueryable<NotificationEntity> ApplyAllowedNotificationFilter(
@@ -440,10 +440,10 @@ public static class WorkflowOpsEndpoints
             return query;
         }
 
-        var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-        return allowedOrganizationIds.Length == 0
+        var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+        return requestManagerOrganizationIds.Length == 0
             ? query.Where(_ => false)
-            : query.Where(n => n.TenantId != null && allowedOrganizationIds.Contains(n.TenantId));
+            : query.Where(n => n.TenantId != null && requestManagerOrganizationIds.Contains(n.TenantId));
     }
 
     private static IQueryable<AutomationBinding> ApplyAllowedAutomationBindingFilter(
@@ -455,10 +455,10 @@ public static class WorkflowOpsEndpoints
             return query;
         }
 
-        var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-        return allowedOrganizationIds.Length == 0
+        var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+        return requestManagerOrganizationIds.Length == 0
             ? query.Where(_ => false)
-            : query.Where(b => allowedOrganizationIds.Contains(b.OrganizationId));
+            : query.Where(b => requestManagerOrganizationIds.Contains(b.OrganizationId));
     }
 
     private static OrchestrationCallbackRejectionOpsDto MapOrchestrationCallbackRejection(dynamic notification)
