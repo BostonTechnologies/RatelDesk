@@ -973,10 +973,18 @@ public static class IncidentEndpoints
 
         group.MapPost("/bulk/delete", async (
             [FromBody] BulkIncidentIdsRequest req,
-            [FromServices] IRepository<Incident> repo) =>
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] IRepository<Incident> repo,
+            CancellationToken cancellationToken) =>
         {
             var ids = NormalizeBulkIds(req.Ids);
             if (ids.Count == 0) return Results.BadRequest("No ids");
+
+            var idSet = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var incidents = (await repo.GetAllAsync()).Where(incident => idSet.Contains(incident.Id)).ToList();
+            var access = await accessService.ResolveAsync(user, cancellationToken);
+            if (incidents.Any(incident => !access.CanManageIncident(incident.OrganizationId))) return Results.Forbid();
 
             var deleted = 0;
             var missing = 0;
@@ -1002,14 +1010,19 @@ public static class IncidentEndpoints
 
         group.MapPost("/bulk/marketing-spam", async (
             [FromBody] BulkIncidentIdsRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] IRepository<Incident> repo,
-            [FromServices] ITicketSlaCompletionService ticketSlaCompletionService) =>
+            [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
+            CancellationToken cancellationToken) =>
         {
             var ids = NormalizeBulkIds(req.Ids);
             if (ids.Count == 0) return Results.BadRequest("No ids");
 
             var idSet = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var incidents = (await repo.GetAllAsync()).Where(i => idSet.Contains(i.Id)).ToList();
+            var access = await accessService.ResolveAsync(user, cancellationToken);
+            if (incidents.Any(incident => !access.CanManageIncident(incident.OrganizationId))) return Results.Forbid();
             var now = DateTimeOffset.UtcNow;
 
             foreach (var inc in incidents)
