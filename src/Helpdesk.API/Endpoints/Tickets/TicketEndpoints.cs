@@ -154,7 +154,7 @@ public static class TicketEndpoints
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var authorizationFailure = await AuthorizeTicketViewAsync("incidents", ticketId, context.User, accessService, db, ct);
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, context.User, accessService, db, ct);
             if (authorizationFailure is not null) return authorizationFailure;
 
             var orgId = await db.Tickets.Where(t => t.Id == ticketId).Select(t => t.OrganizationId).FirstAsync(ct);

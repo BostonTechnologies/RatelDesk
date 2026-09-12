@@ -748,6 +748,51 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Read_only_incident_user_cannot_queue_a_knowledge_suggestion()
+    {
+        const string organizationId = "knowledge-suggestion-reader-organization";
+        const string ticketId = "22222222-2222-2222-2222-222222222222";
+        const string email = "knowledge.suggestion.reader@example.test";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = email, Email = email, DisplayName = "Knowledge Suggestion Reader" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync(email))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.Add(new Organization { Id = organizationId, Name = "Knowledge suggestion reader organization" });
+            db.Users.Add(new User
+            {
+                Id = userId,
+                Name = "Knowledge Suggestion Reader",
+                Email = email,
+                OrganizationId = organizationId,
+                Role = "User"
+            });
+            db.Incidents.Add(new Incident
+            {
+                Id = ticketId,
+                OrganizationId = organizationId,
+                RequesterEmail = email,
+                Title = "Reader-owned incident",
+                Description = "A reader must not queue AI processing."
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var reader = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await reader.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            email, "correct horse battery staple"))).StatusCode);
+
+        var enqueue = await reader.PostAsJsonAsync($"/api/v1/tickets/{ticketId}/suggest-knowledge", new { });
+
+        Assert.Equal(HttpStatusCode.Forbidden, enqueue.StatusCode);
+    }
+
+    [Fact]
     public async Task Scoped_technician_management_access_is_limited_to_the_assigned_tenant()
     {
         const string assignedOrganizationId = "ticket-management-assigned-organization";
