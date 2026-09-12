@@ -66,7 +66,7 @@ public class CurrentUserAccessServiceTests
     }
 
     [Fact]
-    public async Task Client_admin_group_gets_data_management_permission_for_claim_tenant()
+    public async Task Client_admin_group_does_not_treat_identity_provider_tenant_as_application_scope()
     {
         await using var db = CreateDb();
 
@@ -78,8 +78,37 @@ public class CurrentUserAccessServiceTests
 
         Assert.Contains(HelpdeskRoleBundles.DataManagementAdmin, access.RoleBundles);
         Assert.Contains(HelpdeskPermissions.DataManagementAdmin, access.Permissions);
-        Assert.Contains("org-alpha", access.AllowedOrganizationIds);
+        Assert.Empty(access.AllowedOrganizationIds);
         Assert.False(access.IsHelpdeskAdmin);
+    }
+
+    [Fact]
+    public async Task Email_match_without_a_verified_identity_link_does_not_grant_access()
+    {
+        await using var db = CreateDb();
+        var organization = new Organization { Id = "org-alpha", Name = "Alpha Organization" };
+        var customer = new Customer { Id = "customer-primary", Name = "Primary User", Email = "primary@example.com", OrganizationId = organization.Id };
+        db.Organizations.Add(organization);
+        db.Customers.Add(customer);
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = customer.Id,
+            OidcIssuer = "https://id.example.com/application/o/rateldesk",
+            OidcSubject = "subject-1",
+            AuthentikEmail = customer.Email,
+            InviteStatus = CustomerInviteStatus.Active
+        });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Email, customer.Email), new Claim("email", customer.Email)],
+            "test"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.Null(access.CustomerId);
+        Assert.Empty(access.AllowedOrganizationIds);
+        Assert.Empty(access.Permissions);
     }
 
     [Fact]

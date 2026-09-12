@@ -49,7 +49,7 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         var subject = FirstClaim(user, "sub");
         var authentikUserId = FirstClaim(user, "authentik_user_id", "ak_user_id");
 
-        var link = await FindCustomerAuthLinkAsync(issuer, subject, authentikUserId, email, ct);
+        var link = await FindCustomerAuthLinkAsync(issuer, subject, authentikUserId, ct);
         Customer? customer = null;
         Organization? organization = null;
         if (link is not null)
@@ -80,7 +80,7 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
             }
         }
 
-        var primaryOrganizationId = hasActiveCustomer ? customer!.OrganizationId : FirstClaim(user, "organization_id", "tenant_id");
+        var primaryOrganizationId = hasActiveCustomer ? customer!.OrganizationId : null;
         var allowedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var managedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -122,7 +122,6 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         string? issuer,
         string? subject,
         string? authentikUserId,
-        string? email,
         CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(issuer) && !string.IsNullOrWhiteSpace(subject))
@@ -137,14 +136,6 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
             var link = await db.CustomerAuthLinks.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.AuthentikUserId == authentikUserId, ct);
             if (link is not null) return link;
-        }
-
-        if (!string.IsNullOrWhiteSpace(email))
-        {
-            var matches = await db.CustomerAuthLinks.AsNoTracking()
-                .Where(x => x.AuthentikEmail == email && x.InviteStatus == CustomerInviteStatus.Active)
-                .ToListAsync(ct);
-            if (matches.Count == 1) return matches[0];
         }
 
         return null;

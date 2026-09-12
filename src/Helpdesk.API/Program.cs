@@ -229,9 +229,7 @@ builder.Services.AddRateLimiter(options =>
 {
     options.AddPolicy("TicketSubmission", httpContext =>
     {
-        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ??
-                 httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault() ??
-                 "unknown";
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
         return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: ip,
@@ -402,7 +400,6 @@ builder.Services.AddAuthentication(options =>
 
     options.IncludeErrorDetails = builder.Environment.IsDevelopment();
 
-    // Optional: log failures to see the exact reason
     options.Events = new JwtBearerEvents
     {
         OnMessageReceived = ctx =>
@@ -418,44 +415,6 @@ builder.Services.AddAuthentication(options =>
                 }
             }
 
-            // Peek header+payload (no signature) to verify token type, aud, iss
-            var raw = ctx.Token ?? ctx.Request.Headers["Authorization"].ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
-            if (!string.IsNullOrEmpty(raw))
-            {
-                try
-                {
-                    var parts = raw.Split('.');
-                    if (parts.Length >= 2)
-                    {
-                        string B64(string s) => s.Replace('-', '+').Replace('_', '/').PadRight((s.Length + 3) / 4 * 4, '=');
-                        var headerJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(B64(parts[0])));
-                        var claimsJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(B64(parts[1])));
-                        Console.WriteLine($"AZURE TOKEN HEADER: {headerJson}");
-                        Console.WriteLine($"AZURE TOKEN CLAIMS: {claimsJson}");
-                    }
-                }
-                catch { /* ignore */ }
-            }
-            return Task.CompletedTask;
-        },
-        OnAuthenticationFailed = ctx =>
-        {
-            Console.WriteLine($"AUTH FAILED (Azure): {ctx.Exception}");
-            return Task.CompletedTask;
-        },
-        OnTokenValidated = ctx =>
-        {
-            // Works with JsonWebToken (default) and JwtSecurityToken (legacy handler)
-            string iss = ctx.SecurityToken?.Issuer
-                         ?? ctx.Principal?.FindFirst("iss")?.Value
-                         ?? "(unknown)";
-
-            var auds =
-                (ctx.SecurityToken as Microsoft.IdentityModel.JsonWebTokens.JsonWebToken)?.Audiences
-                ?? (ctx.SecurityToken as System.IdentityModel.Tokens.Jwt.JwtSecurityToken)?.Audiences
-                ?? Array.Empty<string>();
-
-            Console.WriteLine($"AUTH OK ({ctx.Scheme.Name}): iss={iss} aud={string.Join(",", auds)}");
             return Task.CompletedTask;
         }
     };
@@ -776,42 +735,6 @@ builder.Services.AddAuthorization(opts =>
 
 builder.Logging.AddFilter("Microsoft.AspNetCore.Authentication", LogLevel.Debug);
 builder.Logging.AddFilter("Helpdesk", LogLevel.Warning);
-
-Microsoft.IdentityModel.Logging.IdentityModelEventSource.ShowPII = true;
-
-builder.Services.PostConfigureAll<JwtBearerOptions>(o =>
-{
-    o.Events ??= new JwtBearerEvents();
-    var existingAuthenticationFailed = o.Events.OnAuthenticationFailed;
-    var existingTokenValidated = o.Events.OnTokenValidated;
-
-    o.Events.OnAuthenticationFailed = async ctx =>
-    {
-        if (existingAuthenticationFailed is not null)
-        {
-            await existingAuthenticationFailed(ctx);
-        }
-        Console.WriteLine($"[{ctx.Scheme.Name}] auth failed: {ctx.Exception.Message}");
-    };
-
-    o.Events.OnTokenValidated = async ctx =>
-    {
-        if (existingTokenValidated is not null)
-        {
-            await existingTokenValidated(ctx);
-        }
-        string iss = ctx.SecurityToken?.Issuer
-                     ?? ctx.Principal?.FindFirst("iss")?.Value
-                     ?? "(unknown)";
-
-        var auds =
-            (ctx.SecurityToken as Microsoft.IdentityModel.JsonWebTokens.JsonWebToken)?.Audiences
-            ?? (ctx.SecurityToken as System.IdentityModel.Tokens.Jwt.JwtSecurityToken)?.Audiences
-            ?? Array.Empty<string>();
-
-        Console.WriteLine($"[{ctx.Scheme.Name}] OK aud={string.Join(",", auds)} iss={iss}");
-    };
-});
 
 builder.Services.AddOpenApi(options =>
 {
@@ -1249,7 +1172,7 @@ static void MapCrudEndpoints<T>(WebApplication app, string route) where T : clas
 {
     var group = app.MapGroup(route)
         .WithTags(typeof(T).Name + "s")
-        .RequireAuthorization();
+        .RequireAuthorization("HelpdeskAdmin");
     group.MapGet("/", async ([FromServices] SharedServices.IRepository<T> repo) => await repo.GetAllAsync());
     group.MapGet("/{id}", async ([FromRoute] string id, [FromServices] SharedServices.IRepository<T> repo) =>
         await repo.GetAsync(id) is T entity ? Results.Ok(entity) : Results.Problem("Resource not found", statusCode: 404));

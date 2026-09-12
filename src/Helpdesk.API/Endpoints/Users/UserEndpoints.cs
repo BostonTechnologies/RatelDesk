@@ -16,7 +16,7 @@ public static class UserEndpoints
     {
         var group = app.MapGroup("/api/v1/users")
             .WithTags("Users")
-            .RequireAuthorization();
+            .RequireAuthorization("HelpdeskAdmin");
 
         group.MapGet("/", async ([FromServices] IRepository<User> repo) =>
             (await repo.GetAllAsync()).Select(ToDto));
@@ -49,48 +49,52 @@ public static class UserEndpoints
             return Results.Created($"/api/v1/users/{created.Id}", ToDto(created));
         });
 
-        group.MapPost("/provision", async (
-            [FromBody] ProvisionUserRequest request,
+        app.MapPost("/api/v1/users/provision", async (
             ClaimsPrincipal principal,
             [FromServices] IRepository<User> repo,
             [FromServices] HelpdeskDbContext db,
-            [FromServices] ICurrentUserAccessService accessService,
-            [FromServices] ILoggerFactory loggerFactory) =>
+            [FromServices] ICurrentUserAccessService accessService) =>
         {
-            var logger = loggerFactory.CreateLogger("UserProvisioningEndpoint");
+            var email = FirstClaim(principal, ClaimTypes.Email, "email", "preferred_username");
+            var issuer = FirstClaim(principal, "iss")?.TrimEnd('/');
+            var subject = FirstClaim(principal, "sub");
+            var authentikUserId = FirstClaim(principal, "authentik_user_id", "ak_user_id");
+            var preferredUsername = FirstClaim(principal, "preferred_username");
 
-            if (string.IsNullOrWhiteSpace(request.Email))
+            if (string.IsNullOrWhiteSpace(email) ||
+                (string.IsNullOrWhiteSpace(authentikUserId) &&
+                 (string.IsNullOrWhiteSpace(issuer) || string.IsNullOrWhiteSpace(subject))))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["Email"] = ["Email is required."]
+                    ["identity"] = ["A verified issuer and subject, or provider user identifier, is required."]
                 });
             }
 
             var all = await repo.GetAllAsync();
             var existing = all.FirstOrDefault(u =>
-                string.Equals(u.Email, request.Email, StringComparison.OrdinalIgnoreCase));
+                string.Equals(u.Email, email, StringComparison.OrdinalIgnoreCase));
 
             if (existing is not null)
             {
-                await LinkCustomerLoginAsync(request, db);
-                logger.LogInformation("User already provisioned: {Email}", request.Email);
+                await LinkCustomerLoginAsync(issuer, subject, authentikUserId, preferredUsername, email, db);
                 return Results.Ok(ToAccessDto(await accessService.ResolveAsync(principal)));
             }
 
             var user = new User
             {
                 Id = Uuid.CreateVersion7().ToString(),
-                Name = string.IsNullOrWhiteSpace(request.Name) ? request.Email : request.Name,
-                Email = request.Email,
-                Role = ResolveProvisionedRole(principal)
+                Name = principal.Identity?.Name ?? FirstClaim(principal, "name") ?? email,
+                Email = email,
+                Role = "Customer"
             };
 
-            var created = await repo.CreateAsync(user);
-            await LinkCustomerLoginAsync(request, db);
-            logger.LogInformation("User provisioned successfully: {Email}", request.Email);
+            await repo.CreateAsync(user);
+            await LinkCustomerLoginAsync(issuer, subject, authentikUserId, preferredUsername, email, db);
             return Results.Ok(ToAccessDto(await accessService.ResolveAsync(principal)));
-        });
+        })
+        .RequireAuthorization()
+        .WithTags("Users");
 
         group.MapPut("/{id}", async ([FromRoute] string id, [FromBody] UpdateUserRequest request, [FromServices] IRepository<User> repo) =>
         {
@@ -137,25 +141,28 @@ public static class UserEndpoints
         access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
         access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray());
 
-    private static string ResolveProvisionedRole(ClaimsPrincipal principal)
+    private static string? FirstClaim(ClaimsPrincipal principal, params string[] claimTypes)
     {
-        var roleClaim = principal.Claims.FirstOrDefault(c =>
-            c.Type == ClaimTypes.Role || c.Type == "roles")?.Value;
-
-        if (string.Equals(roleClaim, "helpdeskadmin", StringComparison.OrdinalIgnoreCase))
+        foreach (var claimType in claimTypes)
         {
-            return "HelpdeskAdmin";
+            var value = principal.FindFirst(claimType)?.Value;
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
         }
 
-        return string.IsNullOrWhiteSpace(roleClaim) ? "Customer" : roleClaim;
+        return null;
     }
 
-    private static async Task LinkCustomerLoginAsync(ProvisionUserRequest request, HelpdeskDbContext db)
+    private static async Task LinkCustomerLoginAsync(
+        string? issuer,
+        string? subject,
+        string? authentikUserId,
+        string? preferredUsername,
+        string email,
+        HelpdeskDbContext db)
     {
-        var issuer = string.IsNullOrWhiteSpace(request.Issuer) ? null : request.Issuer.TrimEnd('/');
-        var subject = string.IsNullOrWhiteSpace(request.Subject) ? null : request.Subject;
-        var authentikUserId = string.IsNullOrWhiteSpace(request.AuthentikUserId) ? null : request.AuthentikUserId;
-
         CustomerAuthLink? link = null;
         if (!string.IsNullOrWhiteSpace(issuer) && !string.IsNullOrWhiteSpace(subject))
         {
@@ -169,25 +176,14 @@ public static class UserEndpoints
 
         if (link is null)
         {
-            var pendingMatches = await db.CustomerAuthLinks
-                .Where(x => x.InviteStatus == CustomerInviteStatus.Pending && x.AuthentikEmail == request.Email)
-                .ToListAsync();
-            if (pendingMatches.Count == 1)
-            {
-                link = pendingMatches[0];
-            }
-        }
-
-        if (link is null)
-        {
             return;
         }
 
         link.OidcIssuer ??= issuer;
         link.OidcSubject ??= subject;
         link.AuthentikUserId ??= authentikUserId;
-        link.AuthentikUsername = request.PreferredUsername ?? request.Email;
-        link.AuthentikEmail = request.Email;
+        link.AuthentikUsername = preferredUsername ?? email;
+        link.AuthentikEmail = email;
         link.LastLoginAtUtc = DateTimeOffset.UtcNow;
         if (link.InviteStatus == CustomerInviteStatus.Pending)
         {
@@ -197,12 +193,4 @@ public static class UserEndpoints
 
         await db.SaveChangesAsync();
     }
-
-    private sealed record ProvisionUserRequest(
-        string Email,
-        string? Name,
-        string? Issuer,
-        string? Subject,
-        string? AuthentikUserId,
-        string? PreferredUsername);
 }
