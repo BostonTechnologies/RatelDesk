@@ -818,6 +818,53 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Request_workflow_timeline_uses_scoped_manager_grants_instead_of_primary_tenant()
+    {
+        const string homeOrganizationId = "workflow-timeline-home-organization";
+        const string managedOrganizationId = "workflow-timeline-managed-organization";
+        const string foreignOrganizationId = "workflow-timeline-foreign-organization";
+        const string managedRequestId = "workflow-timeline-managed-request";
+        const string foreignRequestId = "workflow-timeline-foreign-request";
+
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "workflow.timeline.manager@example.test", Email = "workflow.timeline.manager@example.test", DisplayName = "Workflow Timeline Manager" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("workflow.timeline.manager@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = homeOrganizationId, Name = "Workflow timeline home organization" },
+                new Organization { Id = managedOrganizationId, Name = "Workflow timeline managed organization" },
+                new Organization { Id = foreignOrganizationId, Name = "Workflow timeline foreign organization" });
+            db.Users.Add(new User { Id = userId, Name = "Workflow Timeline Manager", Email = "workflow.timeline.manager@example.test", OrganizationId = homeOrganizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = userId,
+                OrganizationId = managedOrganizationId,
+                RoleKey = ScopedRoleCatalog.Technician
+            });
+            db.Requests.AddRange(
+                new Request { Id = managedRequestId, OrganizationId = managedOrganizationId, Title = "Managed workflow request", Description = "Managed workflow request" },
+                new Request { Id = foreignRequestId, OrganizationId = foreignOrganizationId, Title = "Foreign workflow request", Description = "Foreign workflow request" });
+            await db.SaveChangesAsync();
+        }
+
+        using var manager = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await manager.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "workflow.timeline.manager@example.test", "correct horse battery staple"))).StatusCode);
+
+        var managed = await manager.GetAsync($"/api/v1/requests/{managedRequestId}/workflow-timeline");
+        var foreign = await manager.GetAsync($"/api/v1/requests/{foreignRequestId}/workflow-timeline");
+
+        Assert.Equal(HttpStatusCode.OK, managed.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
+    }
+
+    [Fact]
     public async Task Incident_activity_is_not_visible_outside_the_principal_tenant_scope()
     {
         const string incidentOrganizationId = "activity-incident-organization";
