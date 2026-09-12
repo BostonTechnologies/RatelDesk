@@ -1056,10 +1056,6 @@ if (!skipDatabaseStartup)
     });
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapAuthenticationEndpoints();
-}
 app.MapCurrentUserAccessEndpoint();
 app.MapGet("/api/v1/setup/status", () => Results.Ok(new { state = "Ready" }))
     .AllowAnonymous()

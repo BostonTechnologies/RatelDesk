@@ -26,7 +26,7 @@ public class AuthenticationEndpointsTests : IClassFixture<WebApplicationFactory<
     }
 
     [Fact]
-    public async Task LoginEndpoint_NotAvailable_WhenNotDevelopment()
+    public async Task Legacy_jwt_login_endpoint_is_not_available()
     {
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Production");
         var prodFactory = _factory.WithWebHostBuilder(builder =>
@@ -62,5 +62,19 @@ public class AuthenticationEndpointsTests : IClassFixture<WebApplicationFactory<
         var resp = await client.PostAsJsonAsync("/api/v1/auth/login", new LoginRequest("prod@example.com", "password"));
         Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
     }
-}
 
+    [Fact]
+    public async Task Legacy_jwt_login_endpoint_is_not_available_in_development()
+    {
+        var developmentFactory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
+            builder.UseEnvironment("Development");
+        });
+        using var client = developmentFactory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/v1/auth/login", new LoginRequest("any@example.test", "password"));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+}
