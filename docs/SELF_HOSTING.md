@@ -18,6 +18,34 @@ docker compose -f docker/docker-compose.yml exec api dotnet Helpdesk.API.dll --r
 
 The replacement is printed once to the operator's terminal, written to the protected `setup-code` file, and invalidates existing setup sessions. The command refuses to run after setup is ready or when recovery is required.
 
+### Operator-invoked unattended setup
+
+An operator can initialize a new instance without rendering the wizard by
+supplying the same first-run values through protected deployment configuration,
+then invoking the explicit command once. It is never performed automatically
+at API startup. For SQLite, set `Bootstrap__Unattended__Provider=Sqlite`,
+`Bootstrap__Unattended__Email`, `Bootstrap__Unattended__DisplayName`,
+`Bootstrap__Unattended__Password`, and
+`Bootstrap__Unattended__OrganizationName`; optional
+`Bootstrap__Unattended__ApplicationName` and
+`Bootstrap__Unattended__ApplicationUrl` use the same branding behavior as the
+wizard. The password belongs in an operator-controlled secret input, not a
+committed Compose file.
+
+Run the command in the API container:
+
+```bash
+docker compose -f docker/docker-compose.yml exec api \
+  dotnet Helpdesk.API.dll --initialize-unattended
+```
+
+For PostgreSQL, set `Bootstrap__Unattended__Provider=PostgreSql` and
+`Bootstrap__Unattended__PostgreSqlConnectionString` instead. The same bounded
+preflight accepts only an empty target with `vector` and `pg_trgm` available.
+Completion writes the normal durable marker and descriptor. A restricted API
+host observes that descriptor, exits, and Compose restarts it into the normal
+runtime; it does not retain the unattended password.
+
 For the documented localhost HTTP profile, both services set `Authentication__AllowInsecureLocalhost=true`; this intentionally uses the `RatelDesk.Local` cookie rather than a `__Host-` cookie. Public deployments must use HTTPS, set a durable shared `DataProtection__KeyRingPath`, and remove that localhost-only setting.
 
 Back up the SQLite data directory, including both `rateldesk.db` and the durable `rateldesk.hangfire.db` scheduler database, together with the bootstrap state directory, shared key ring, and attachment directory as one recovery set. Restoring a SQLite file without its initialization descriptor or data-protection key material can require operator recovery.

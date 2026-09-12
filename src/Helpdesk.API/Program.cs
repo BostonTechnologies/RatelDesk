@@ -148,6 +148,36 @@ var localAuthenticationCookieName = localAuthenticationOptions.AllowInsecureLoca
     ? "RatelDesk.Local"
     : "__Host-RatelDesk.Local";
 
+if (args is ["--initialize-unattended"])
+{
+    if (bootstrapDescriptor is null)
+    {
+        await Console.Error.WriteLineAsync("Unattended initialization is available only for a bootstrap-managed, unconfigured instance.");
+        return;
+    }
+
+    var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
+                              ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    var bootstrapApplicationName = builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring";
+    var dataProtection = DataProtectionProvider.Create(
+        new DirectoryInfo(bootstrapKeyRingPath),
+        configuration => configuration.SetApplicationName(bootstrapApplicationName));
+    var command = new UnattendedBootstrapCommand(
+        bootstrapStateStore,
+        bootstrapOptions,
+        dataProtection,
+        new PostgreSqlSetupPreflightService());
+    var result = await command.InitializeAsync(bootstrapDescriptor, CancellationToken.None);
+    if (!result.Succeeded)
+    {
+        await Console.Error.WriteLineAsync(result.Error ?? "Unattended initialization could not be completed.");
+        return;
+    }
+
+    await Console.Out.WriteLineAsync("RatelDesk initialization completed. Start the API normally to serve the application.");
+    return;
+}
+
 if (args is ["--recover-local-admin", var recoveryEmail])
 {
     var recoveryToken = await LocalAdminRecoveryCommand.GenerateActivationTokenAsync(builder.Configuration, recoveryEmail);
@@ -193,6 +223,7 @@ if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not Bootstra
     builder.Services.AddSingleton<BootstrapSessionService>();
     builder.Services.AddSingleton<BootstrapInitializationService>();
     builder.Services.AddSingleton<PostgreSqlSetupPreflightService>();
+    builder.Services.AddHostedService<BootstrapRuntimeTransitionWatcher>();
     builder.Services.AddProblemDetails();
     builder.Services.AddRateLimiter(options =>
     {

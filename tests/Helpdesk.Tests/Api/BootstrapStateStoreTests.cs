@@ -290,6 +290,59 @@ public sealed class BootstrapStateStoreTests
     }
 
     [Fact]
+    public async Task Unattended_initialization_uses_the_same_sqlite_bootstrap_pipeline()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-unattended-{Guid.NewGuid():N}");
+        var dataDirectory = Path.Combine(directory, "data");
+        try
+        {
+            var options = new BootstrapOptions
+            {
+                StateDirectory = directory,
+                DataDirectory = dataDirectory,
+                SetupCode = "operator-provided-code",
+                Unattended = new BootstrapUnattendedOptions
+                {
+                    Provider = "Sqlite",
+                    Email = "admin@example.test",
+                    DisplayName = "Instance Admin",
+                    Password = "correct horse battery staple",
+                    OrganizationName = "Example Organization",
+                    ApplicationName = "Example Desk",
+                    ApplicationUrl = "https://desk.example.test"
+                }
+            };
+            var store = new FileBootstrapStateStore(options);
+            var descriptor = await store.LoadOrCreateAsync();
+            var dataProtection = DataProtectionProvider.Create(
+                new DirectoryInfo(Path.Combine(directory, "keys")),
+                configuration => configuration.SetApplicationName("Helpdesk-Keyring"));
+            var command = new UnattendedBootstrapCommand(
+                store,
+                options,
+                dataProtection,
+                new PostgreSqlSetupPreflightService());
+
+            var result = await command.InitializeAsync(descriptor, CancellationToken.None);
+
+            Assert.True(result.Succeeded, result.Error);
+            Assert.Equal(BootstrapState.Ready, result.Descriptor!.State);
+            var identityOptions = new DbContextOptionsBuilder<RatelDeskIdentityDbContext>()
+                .UseSqlite($"Data Source={Path.Combine(dataDirectory, "rateldesk.db")}")
+                .Options;
+            await using var identity = new RatelDeskIdentityDbContext(identityOptions);
+            Assert.True(await identity.Users.AnyAsync(user => user.Email == "admin@example.test" && user.IsInstanceAdministrator));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Legacy_adoption_marks_only_a_database_with_organization_and_user_evidence()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"rateldesk-adoption-{Guid.NewGuid():N}.db");

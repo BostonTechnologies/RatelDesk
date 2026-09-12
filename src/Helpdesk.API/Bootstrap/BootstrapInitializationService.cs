@@ -207,6 +207,7 @@ public sealed record BootstrapInitializationResult(bool Succeeded, string? Error
 {
     public static BootstrapInitializationResult InvalidState { get; } = new(false, "Setup is not ready for initialization.", null);
     public static BootstrapInitializationResult InvalidRequest { get; } = new(false, "Required setup values are missing.", null);
+    public static BootstrapInitializationResult InvalidUnattendedConfiguration { get; } = new(false, "The unattended setup configuration is incomplete or invalid.", null);
     public static BootstrapInitializationResult AlreadyInitialized { get; } = new(false, "The selected database already contains initialization data.", null);
     public static BootstrapInitializationResult PasswordRejected { get; } = new(false, "The password does not meet the configured requirements.", null);
 }
