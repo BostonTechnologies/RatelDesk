@@ -171,6 +171,69 @@ public sealed class BootstrapStateStoreTests
     }
 
     [Fact]
+    public async Task Local_admin_recovery_reenables_an_instance_administrator_in_postgresql()
+    {
+        await using var postgres = new PostgreSqlBuilder()
+            .WithImage("pgvector/pgvector:pg16")
+            .Build();
+        await postgres.StartAsync();
+
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-recovery-{Guid.NewGuid():N}");
+        try
+        {
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Database:Provider"] = "PostgreSql",
+                ["ConnectionStrings:HelpdeskDb"] = postgres.GetConnectionString(),
+                ["DataProtection:KeyRingPath"] = Path.Combine(directory, "keys")
+            }).Build();
+
+            await using (var provider = CreateRecoveryServiceProvider(configuration))
+            await using (var scope = provider.CreateAsyncScope())
+            {
+                var identity = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
+                await identity.Database.MigrateAsync();
+                var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+                var result = await users.CreateAsync(new ApplicationUser
+                {
+                    UserName = "admin@example.test",
+                    Email = "admin@example.test",
+                    DisplayName = "Recovered administrator",
+                    IsEnabled = false,
+                    DisabledAtUtc = DateTimeOffset.UtcNow,
+                    IsInstanceAdministrator = true,
+                    AuthorizationRevision = 7
+                }, "correct horse battery staple");
+                Assert.True(result.Succeeded, string.Join(", ", result.Errors.Select(error => error.Description)));
+            }
+
+            var token = await LocalAdminRecoveryCommand.GenerateActivationTokenAsync(configuration, "admin@example.test");
+
+            Assert.False(string.IsNullOrWhiteSpace(token));
+            await using var recoveryProvider = CreateRecoveryServiceProvider(configuration);
+            await using var recoveryScope = recoveryProvider.CreateAsyncScope();
+            var recoveryUsers = recoveryScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var administrator = await recoveryUsers.FindByEmailAsync("admin@example.test");
+            Assert.NotNull(administrator);
+            Assert.True(administrator.IsEnabled);
+            Assert.Null(administrator.DisabledAtUtc);
+            Assert.Equal(8, administrator.AuthorizationRevision);
+
+            var reset = await recoveryUsers.ResetPasswordAsync(administrator, token!, "another secure passphrase");
+
+            Assert.True(reset.Succeeded, string.Join(", ", reset.Errors.Select(error => error.Description)));
+            Assert.True(await recoveryUsers.CheckPasswordAsync(administrator, "another secure passphrase"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Generated_operator_code_unlocks_a_new_unconfigured_descriptor()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-bootstrap-{Guid.NewGuid():N}");
