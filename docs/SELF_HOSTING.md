@@ -4,6 +4,8 @@
 
 RatelDesk has an ASP.NET Core API and a Blazor web application. The default installation uses embedded SQLite and local accounts; PostgreSQL, OIDC, and MCP hosting are optional. The Web application proxies `/api` traffic to the API. Run both application services behind a TLS-terminating reverse proxy in production.
 
+For built-in roles, scoped custom roles, and the bounded tenant-member delegation workflow, see [Roles and tenant-scoped access](rbac.md).
+
 ## First use and Docker
 
 Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. After the first API start, retrieve the operator-only setup code from `/var/lib/rateldesk/bootstrap/setup-code` in the API container and complete `http://localhost:8111/setup`. The code is consumed at completion and is never returned by HTTP APIs.
