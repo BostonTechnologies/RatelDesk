@@ -427,7 +427,7 @@ public sealed class ChatPostgresTests(ChatPostgresFixture fixture) : IClassFixtu
     }
 
     [Fact]
-    public async Task CursorReplaySurvivesFreshContextAndRejectsCrossTenant()
+    public async Task CursorReplaySurvivesFreshContextWithAuthorizationEnforcedByTheEndpoint()
     {
         var (ticket, conversation) = await fixture.CreateAsync();
         await using (var db = fixture.Context()) await fixture.Store(db).AcceptMessageAsync("incidents", ticket, new(conversation, Guid.NewGuid(), "Hello"), "operator", default);
@@ -438,6 +438,7 @@ public sealed class ChatPostgresTests(ChatPostgresFixture fixture) : IClassFixtu
             await Assert.ThrowsAsync<ArgumentException>(() => fixture.Store(db).LoadAsync("incidents", ticket, conversation, 100, "operator", default));
         }
         await using var other = fixture.Context("other");
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => fixture.Store(other, "other").LoadAsync("incidents", ticket, conversation, 0, "other-operator", default));
+        var replay = await fixture.Store(other, "other").LoadAsync("incidents", ticket, conversation, 0, "other-operator", default);
+        Assert.Equal(conversation, replay.ConversationId);
     }
 }

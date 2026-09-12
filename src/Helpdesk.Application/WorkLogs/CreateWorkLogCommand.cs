@@ -130,7 +130,11 @@ public class CreateWorkLogCommandHandler(
         });
 
         var ticketDetails = request.AuthorizedTicket ?? await ticketRepo.GetAsync(request.TicketId);
-        var incident = ticketDetails as Incident ?? await incidents.GetAsync(request.TicketId);
+        var incident = request.AuthorizedTicket as Incident;
+        if (incident is null && request.AuthorizedTicket is null)
+        {
+            incident = await incidents.GetAsync(request.TicketId);
+        }
         var ticketForUpdate = incident as Ticket ?? ticketDetails;
         if (ticketForUpdate is not null)
         {
@@ -166,8 +170,8 @@ public class CreateWorkLogCommandHandler(
         {
             if (_ticketSlaService is not null && !string.IsNullOrWhiteSpace(request.TechnicianId))
             {
-                if (ticketForUpdate is not null)
-                    await _ticketSlaService.PauseAsync(ticketForUpdate, request.TechnicianId, "AgentResponded");
+                if (request.AuthorizedTicket is not null)
+                    await _ticketSlaService.PauseAsync(request.AuthorizedTicket, request.TechnicianId, "AgentResponded");
                 else
                     await _ticketSlaService.PauseAsync(request.TicketId, request.TechnicianId, "AgentResponded");
             }

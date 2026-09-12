@@ -954,7 +954,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             "admin@example.test", "correct horse battery staple"))).StatusCode);
         var permitted = await administrator.GetAsync($"/api/v1/incidents/{incidentId}/activity");
 
-        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         Assert.Equal(HttpStatusCode.OK, permitted.StatusCode);
     }
 
@@ -1006,7 +1006,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             new { Reason = "Attempted cross-tenant mutation" });
 
         Assert.Equal(HttpStatusCode.NoContent, ownMutation.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, foreignMutation.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, foreignMutation.StatusCode);
         await using var verificationScope = _factory.Services.CreateAsyncScope();
         var foreignState = await verificationScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().TicketSlaStates
             .SingleAsync(state => state.TicketId == foreignIncidentId);
@@ -1227,7 +1227,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             "admin@example.test", "correct horse battery staple"))).StatusCode);
         var permitted = await administrator.GetAsync($"/api/v1/incidents/{incidentId}/timeline/count");
 
-        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         Assert.Equal(HttpStatusCode.OK, permitted.StatusCode);
         Assert.Equal("1", await permitted.Content.ReadAsStringAsync());
     }

@@ -404,6 +404,7 @@ public sealed class RequestCreateEndpointsTests
             builder.Services.AddSingleton<ITicketNotificationService>(notification);
             builder.Services.AddSingleton<IHtmlSanitizerService, HtmlSanitizerService>();
             builder.Services.AddSingleton<IHtmlToPlainTextConverter, HtmlToPlainTextConverter>();
+            builder.Services.AddScoped<ICurrentUserAccessService, ClaimsCurrentUserAccessService>();
             builder.Services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = "Test";
