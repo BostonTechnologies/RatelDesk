@@ -166,7 +166,7 @@ public static class ServiceEndpoints
         // -------- Services CRUD + helpers --------
         var services = app.MapGroup("/api/v1/services")
             .WithTags("Services")
-            .RequireAuthorization();
+            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
 
         services.MapGet("/", async ([FromServices] IRepository<Service> repo) =>
         {
@@ -291,7 +291,7 @@ public static class ServiceEndpoints
 
         var formsTop = app.MapGroup("/api/v1/request-forms")
             .WithTags("Request Forms")
-            .RequireAuthorization();
+            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
 
         formsTop.MapGet("/{id}", async (
             string id,

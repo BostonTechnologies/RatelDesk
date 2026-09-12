@@ -95,13 +95,17 @@ public sealed class ServiceItemsEndpointsTests
     }
 
     [Fact]
-    public async Task ServiceItems_RequireSelfServiceAccess()
+    public async Task ServiceCatalog_RequiresSelfServiceAccess()
     {
         await using var harness = await ServiceItemsTestHarness.CreateAsync(selfServiceAccess: false);
 
-        var response = await harness.Client.GetAsync("/api/v1/service-items");
+        var serviceItemsResponse = await harness.Client.GetAsync("/api/v1/service-items");
+        var serviceResponse = await harness.Client.GetAsync("/api/v1/services/root-a");
+        var requestFormResponse = await harness.Client.GetAsync("/api/v1/request-forms/form-root");
 
-        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, serviceItemsResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, serviceResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, requestFormResponse.StatusCode);
     }
 
     private sealed class ServiceItemsTestHarness : IAsyncDisposable
