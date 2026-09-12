@@ -66,6 +66,19 @@ public sealed class ServiceItemsEndpointsTests
     }
 
     [Fact]
+    public async Task SearchServiceItems_UsesSqliteCompatibleCaseInsensitiveSearch()
+    {
+        await using var harness = await ServiceItemsTestHarness.CreateAsync(isHelpdeskAdmin: true);
+
+        var response = await harness.Client.GetFromJsonAsync<PagedResponse<ServiceItemDto>>(
+            "/api/v1/service-items/search?q=ROOT&pageSize=10");
+
+        Assert.NotNull(response);
+        Assert.Contains(response!.Items, item => item.Id == "root-a");
+        Assert.Contains(response.Items, item => item.Id == "form-root");
+    }
+
+    [Fact]
     public async Task SearchServiceItems_FiltersServiceAllowedOrganizationsInMemory_ForTenantUsers()
     {
         await using var harness = await ServiceItemsTestHarness.CreateAsync();

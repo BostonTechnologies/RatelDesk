@@ -2,6 +2,7 @@
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Resources;
 using Helpdesk.Application.RequestTasks;
+using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.RequestForm;
@@ -26,6 +27,7 @@ public static class ServiceEndpoints
         itemsGroup.MapGet("/search", async (
             [FromServices] IRepository<Service> servicesRepo,
             [FromServices] IRepository<RequestForm> formsRepo,
+            [FromServices] HelpdeskDbContext db,
             [FromServices] ITenantContext tenant,
             [FromServices] ISelfServiceAudienceService selfServiceAudienceService,
             [FromQuery] string? q,
@@ -49,12 +51,24 @@ public static class ServiceEndpoints
             if (!string.IsNullOrWhiteSpace(term))
             {
                 var like = $"%{term}%";
-                servicesQuery = servicesQuery.Where(s =>
-                    EF.Functions.ILike(s.Name, like) ||
-                    EF.Functions.ILike(s.Description, like));
-                formsQuery = formsQuery.Where(f =>
-                    EF.Functions.ILike(f.Title, like) ||
-                    EF.Functions.ILike(f.Description!, like));
+                if (db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+                {
+                    servicesQuery = servicesQuery.Where(s =>
+                        EF.Functions.ILike(s.Name, like) ||
+                        EF.Functions.ILike(s.Description, like));
+                    formsQuery = formsQuery.Where(f =>
+                        EF.Functions.ILike(f.Title, like) ||
+                        EF.Functions.ILike(f.Description!, like));
+                }
+                else
+                {
+                    servicesQuery = servicesQuery.Where(s =>
+                        EF.Functions.Like(s.Name, like) ||
+                        EF.Functions.Like(s.Description, like));
+                    formsQuery = formsQuery.Where(f =>
+                        EF.Functions.Like(f.Title, like) ||
+                        EF.Functions.Like(f.Description!, like));
+                }
             }
 
             var serviceItems = await servicesQuery.Select(s => new ServiceItemDto
