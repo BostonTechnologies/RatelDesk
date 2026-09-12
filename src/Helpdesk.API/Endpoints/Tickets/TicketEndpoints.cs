@@ -250,122 +250,7 @@ public static class TicketEndpoints
         .WithSummary("List AI audit activity for a ticket")
         .WithDescription("Returns persisted AI operation audit records for the ticket, including generation, approval, and automation actions.");
 
-        group.MapPost("/{id:guid}/ai-feedback", async (
-            Guid id,
-            [FromBody] SubmitTicketAiFeedbackDto dto,
-            HelpdeskDbContext db,
-            ICurrentUserAccessService accessService,
-            IRequestSender sender,
-            ClaimsPrincipal user,
-            CancellationToken ct) =>
-        {
-            var ticketId = id.ToString();
-            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
-            if (authorizationFailure is not null)
-            {
-                return authorizationFailure;
-            }
-
-            var feedbackType = dto.FeedbackType?.Trim().ToLowerInvariant();
-            var feedbackValue = dto.FeedbackValue?.Trim().ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(feedbackType) || string.IsNullOrWhiteSpace(feedbackValue))
-            {
-                return Results.BadRequest("FeedbackType and FeedbackValue are required.");
-            }
-
-            if (feedbackType is not ("suggestion" or "automation"))
-            {
-                return Results.BadRequest("FeedbackType must be 'suggestion' or 'automation'.");
-            }
-
-            if (feedbackType == "suggestion" && string.IsNullOrWhiteSpace(dto.ArticleId))
-            {
-                return Results.BadRequest("ArticleId is required for suggestion feedback.");
-            }
-
-            if (feedbackType == "automation" && string.IsNullOrWhiteSpace(dto.RequestId))
-            {
-                return Results.BadRequest("RequestId is required for automation feedback.");
-            }
-
-            var entry = new TicketAiFeedback
-            {
-                TicketId = ticketId,
-                FeedbackType = feedbackType,
-                FeedbackValue = feedbackValue,
-                ArticleId = string.IsNullOrWhiteSpace(dto.ArticleId) ? null : dto.ArticleId.Trim(),
-                RequestId = string.IsNullOrWhiteSpace(dto.RequestId) ? null : dto.RequestId.Trim(),
-                Notes = string.IsNullOrWhiteSpace(dto.Notes) ? null : dto.Notes.Trim(),
-                CreatedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier),
-                CreatedByName = user.Identity?.Name
-            };
-
-            db.TicketAiFeedback.Add(entry);
-            await db.SaveChangesAsync(ct);
-
-            var techId = user.FindFirstValue(ClaimTypes.NameIdentifier);
-            var techName = user.Identity?.Name;
-
-            string feedbackNote;
-            if (feedbackType == "suggestion")
-            {
-                var articleTitle = string.IsNullOrWhiteSpace(entry.ArticleId)
-                    ? null
-                    : await db.KnowledgeBaseArticles
-                        .AsNoTracking()
-                        .Where(x => x.Id.ToString() == entry.ArticleId)
-                        .Select(x => x.Title)
-                        .FirstOrDefaultAsync(ct);
-
-                feedbackNote = string.IsNullOrWhiteSpace(articleTitle)
-                    ? $"Recorded AI suggestion feedback: {feedbackValue.Replace('_', ' ')}."
-                    : $"Recorded AI suggestion feedback: {feedbackValue.Replace('_', ' ')} for KB article '{articleTitle}'.";
-            }
-            else
-            {
-                var requestTrackingId = string.IsNullOrWhiteSpace(entry.RequestId)
-                    ? null
-                    : await db.Requests
-                        .AsNoTracking()
-                        .Where(x => x.Id == entry.RequestId)
-                        .Select(x => x.TrackingId)
-                        .FirstOrDefaultAsync(ct);
-
-                feedbackNote = string.IsNullOrWhiteSpace(requestTrackingId)
-                    ? $"Recorded AI automation outcome: {feedbackValue.Replace('_', ' ')}."
-                    : $"Recorded AI automation outcome: {feedbackValue.Replace('_', ' ')} for request {requestTrackingId}.";
-            }
-
-            if (!string.IsNullOrWhiteSpace(entry.Notes))
-            {
-                feedbackNote = $"{feedbackNote} Notes: {entry.Notes}";
-            }
-
-            await sender.Send(
-                new CreateWorkLogCommand(
-                    ticketId,
-                    0,
-                    feedbackNote,
-                    techId,
-                    techName,
-                    NotifyCustomer: false),
-                ct);
-
-            return Results.Ok(new TicketAiFeedbackDto
-            {
-                Id = entry.Id,
-                FeedbackType = entry.FeedbackType,
-                FeedbackValue = entry.FeedbackValue,
-                ArticleId = entry.ArticleId,
-                RequestId = entry.RequestId,
-                Notes = entry.Notes,
-                CreatedByUserId = entry.CreatedByUserId,
-                CreatedByName = entry.CreatedByName,
-                CreatedAt = entry.CreatedAt
-            });
-        })
-        .WithSummary("Submit AI feedback for a ticket")
-        .WithDescription("Persists operator feedback for AI KB suggestions or automation outcomes on the ticket.");
+        MapTicketAiFeedbackEndpoint(group);
 
         group.MapGet("/{id:guid}/requester-reply-draft", async (
             Guid id,
@@ -783,6 +668,137 @@ public static class TicketEndpoints
         .WithName("GenerateTicketKnowledge")
         .WithSummary("Generate knowledge base article from ticket")
         .WithDescription("Generates or regenerates a knowledge base article draft from a resolved ticket.");
+    }
+
+    internal static RouteHandlerBuilder MapTicketAiFeedbackEndpoint(RouteGroupBuilder ticketGroup)
+    {
+        return ticketGroup.MapPost("/ai-feedback", async (
+            [FromRoute] Guid id,
+            [FromBody] SubmitTicketAiFeedbackDto dto,
+            HelpdeskDbContext db,
+            ICurrentUserAccessService accessService,
+            IRequestSender sender,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            var ticketId = id.ToString();
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
+            var feedbackType = dto.FeedbackType?.Trim().ToLowerInvariant();
+            var feedbackValue = dto.FeedbackValue?.Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(feedbackType) || string.IsNullOrWhiteSpace(feedbackValue))
+            {
+                return Results.BadRequest("FeedbackType and FeedbackValue are required.");
+            }
+
+            if (feedbackType is not ("suggestion" or "automation"))
+            {
+                return Results.BadRequest("FeedbackType must be 'suggestion' or 'automation'.");
+            }
+
+            if (feedbackType == "suggestion" && string.IsNullOrWhiteSpace(dto.ArticleId))
+            {
+                return Results.BadRequest("ArticleId is required for suggestion feedback.");
+            }
+
+            if (feedbackType == "automation" && string.IsNullOrWhiteSpace(dto.RequestId))
+            {
+                return Results.BadRequest("RequestId is required for automation feedback.");
+            }
+
+            var ticketOrganizationId = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
+                .Where(ticket => ticket.Id == ticketId)
+                .Select(ticket => ticket.OrganizationId)
+                .FirstOrDefaultAsync(ct);
+            if (ticketOrganizationId is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (feedbackType == "automation")
+            {
+                var requestOrganizationId = await db.Requests.IgnoreQueryFilters().AsNoTracking()
+                    .Where(request => request.Id == dto.RequestId)
+                    .Select(request => request.OrganizationId)
+                    .FirstOrDefaultAsync(ct);
+                if (!string.Equals(ticketOrganizationId, requestOrganizationId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.BadRequest("Automation feedback must reference a request in the ticket organization.");
+                }
+            }
+
+            var entry = new TicketAiFeedback
+            {
+                TicketId = ticketId,
+                FeedbackType = feedbackType,
+                FeedbackValue = feedbackValue,
+                ArticleId = string.IsNullOrWhiteSpace(dto.ArticleId) ? null : dto.ArticleId.Trim(),
+                RequestId = string.IsNullOrWhiteSpace(dto.RequestId) ? null : dto.RequestId.Trim(),
+                Notes = string.IsNullOrWhiteSpace(dto.Notes) ? null : dto.Notes.Trim(),
+                CreatedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier),
+                CreatedByName = user.Identity?.Name
+            };
+
+            db.TicketAiFeedback.Add(entry);
+            await db.SaveChangesAsync(ct);
+
+            var techId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+            var techName = user.Identity?.Name;
+            string feedbackNote;
+            if (feedbackType == "suggestion")
+            {
+                var articleTitle = string.IsNullOrWhiteSpace(entry.ArticleId)
+                    ? null
+                    : await db.KnowledgeBaseArticles
+                        .AsNoTracking()
+                        .Where(x => x.Id.ToString() == entry.ArticleId)
+                        .Select(x => x.Title)
+                        .FirstOrDefaultAsync(ct);
+                feedbackNote = string.IsNullOrWhiteSpace(articleTitle)
+                    ? $"Recorded AI suggestion feedback: {feedbackValue.Replace('_', ' ')}."
+                    : $"Recorded AI suggestion feedback: {feedbackValue.Replace('_', ' ')} for KB article '{articleTitle}'.";
+            }
+            else
+            {
+                var requestTrackingId = string.IsNullOrWhiteSpace(entry.RequestId)
+                    ? null
+                    : await db.Requests.AsNoTracking()
+                        .Where(x => x.Id == entry.RequestId && x.OrganizationId == ticketOrganizationId)
+                        .Select(x => x.TrackingId)
+                        .FirstOrDefaultAsync(ct);
+                feedbackNote = string.IsNullOrWhiteSpace(requestTrackingId)
+                    ? $"Recorded AI automation outcome: {feedbackValue.Replace('_', ' ')}."
+                    : $"Recorded AI automation outcome: {feedbackValue.Replace('_', ' ')} for request {requestTrackingId}.";
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.Notes))
+            {
+                feedbackNote = $"{feedbackNote} Notes: {entry.Notes}";
+            }
+
+            await sender.Send(
+                new CreateWorkLogCommand(ticketId, 0, feedbackNote, techId, techName, NotifyCustomer: false),
+                ct);
+
+            return Results.Ok(new TicketAiFeedbackDto
+            {
+                Id = entry.Id,
+                FeedbackType = entry.FeedbackType,
+                FeedbackValue = entry.FeedbackValue,
+                ArticleId = entry.ArticleId,
+                RequestId = entry.RequestId,
+                Notes = entry.Notes,
+                CreatedByUserId = entry.CreatedByUserId,
+                CreatedByName = entry.CreatedByName,
+                CreatedAt = entry.CreatedAt
+            });
+        })
+        .WithSummary("Submit AI feedback for a ticket")
+        .WithDescription("Persists operator feedback for AI KB suggestions and automation outcomes.");
     }
 
     public static RouteHandlerBuilder MapTicketCustomerEndpoint(RouteGroupBuilder ticketGroup)
