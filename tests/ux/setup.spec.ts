@@ -7,11 +7,22 @@ test('first-run setup unlocks embedded storage and reaches review', async ({ pag
     throw new Error('HELPDESK_E2E_SETUP_CODE is required for first-run setup validation.');
   }
 
-  const interactiveConnection = page.waitForResponse(response =>
-    response.url().includes('/_blazor/negotiate') && response.ok());
+  const circuitReady = new Promise<void>(resolve => {
+    page.on('websocket', socket => {
+      if (!socket.url().includes('/_blazor')) {
+        return;
+      }
+
+      socket.on('framereceived', frame => {
+        if (typeof frame.payload === 'string' && frame.payload.startsWith('{}')) {
+          resolve();
+        }
+      });
+    });
+  });
 
   await page.goto('/setup');
-  await interactiveConnection;
+  await circuitReady;
   await expect(page.getByRole('heading', { name: 'Set up RatelDesk' })).toBeVisible();
   await expect(page.getByText('operator-only setup code')).toBeVisible();
 
