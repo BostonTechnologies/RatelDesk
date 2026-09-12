@@ -1,0 +1,114 @@
+@page "/setup"
+@attribute [AllowAnonymous]
+
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Set up RatelDesk</PageTitle>
+
+<section class="helpdesk-login-page">
+    <MudPaper Elevation="2" Class="helpdesk-login-panel">
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.h4" HtmlTag="h1">Set up RatelDesk</MudText>
+            <MudText Typo="Typo.body1">Enter the operator setup code, then create the first local instance administrator.</MudText>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <MudAlert Severity="Severity.Error">@_error</MudAlert>
+            }
+
+            <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" InputType="InputType.Password" Required="true" />
+            <MudTextField T="string" @bind-Value="_organizationName" Label="Initial organization" Required="true" />
+            <MudTextField T="string" @bind-Value="_applicationName" Label="Application name (optional)" />
+            <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL (optional)" InputType="InputType.Url" />
+            <MudDivider />
+            <MudText Typo="Typo.h6">First administrator</MudText>
+            <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" />
+            <MudTextField T="string" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" />
+            <MudTextField T="string" @bind-Value="_password" Label="Password" InputType="InputType.Password" Required="true" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="InitializeAsync">
+                @(_busy ? "Initializing…" : "Initialize instance")
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+</section>
+
+@code {
+    private string _setupCode = string.Empty;
+    private string _organizationName = string.Empty;
+    private string _applicationName = string.Empty;
+    private string _applicationUrl = string.Empty;
+    private string _displayName = string.Empty;
+    private string _email = string.Empty;
+    private string _password = string.Empty;
+    private string? _error;
+    private bool _busy;
+
+    private async Task InitializeAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("SystemApiNoAuth");
+            using var sessionResponse = await client.PostAsJsonAsync("/api/v1/setup/session", new { setupCode = _setupCode });
+            if (!sessionResponse.IsSuccessStatusCode)
+            {
+                _error = "The setup code was not accepted.";
+                return;
+            }
+
+            var session = await sessionResponse.Content.ReadFromJsonAsync<SetupSession>();
+            if (string.IsNullOrWhiteSpace(session?.Session))
+            {
+                _error = "A setup session could not be created.";
+                return;
+            }
+
+            using var storageRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/storage")
+            {
+                Content = JsonContent.Create(new { provider = "Sqlite" })
+            };
+            storageRequest.Headers.Add("X-RatelDesk-Setup-Session", session.Session);
+            using var storageResponse = await client.SendAsync(storageRequest);
+            if (!storageResponse.IsSuccessStatusCode)
+            {
+                _error = "SQLite storage could not be prepared.";
+                return;
+            }
+
+            using var initializeRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize")
+            {
+                Content = JsonContent.Create(new
+                {
+                    email = _email,
+                    displayName = _displayName,
+                    password = _password,
+                    organizationName = _organizationName,
+                    applicationName = string.IsNullOrWhiteSpace(_applicationName) ? null : _applicationName,
+                    applicationUrl = string.IsNullOrWhiteSpace(_applicationUrl) ? null : _applicationUrl
+                })
+            };
+            initializeRequest.Headers.Add("X-RatelDesk-Setup-Session", session.Session);
+            using var initializeResponse = await client.SendAsync(initializeRequest);
+            if (!initializeResponse.IsSuccessStatusCode)
+            {
+                _error = "Initialization could not be completed. Check the administrator password and setup details.";
+                return;
+            }
+
+            _password = string.Empty;
+            Navigation.NavigateTo("/login", forceLoad: true);
+        }
+        catch (HttpRequestException)
+        {
+            _error = "The setup service is unavailable. Please retry.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed record SetupSession(string Session);
+}

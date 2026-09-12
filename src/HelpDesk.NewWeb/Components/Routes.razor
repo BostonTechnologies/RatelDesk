@@ -2,7 +2,7 @@
 @using HelpDesk.NewWeb.Components.Shared
 <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
-        @if (routeData.PageType == typeof(PublicPortal) || routeData.PageType == typeof(Login))
+        @if (routeData.PageType == typeof(PublicPortal) || routeData.PageType == typeof(Login) || routeData.PageType == typeof(Setup))
         {
             <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.PublicLayout)" />
         }

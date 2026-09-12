@@ -25,6 +25,19 @@
                 Continue to @_branding.ApplicationName using your authorised account.
             </MudText>
 
+            @if (SupportsLocalAccounts)
+            {
+                <form method="post" action="/local-login" class="helpdesk-login-local-form">
+                    <MudTextField T="string" Name="email" Label="Email" InputType="InputType.Email" Required="true" Variant="Variant.Outlined" FullWidth="true" />
+                    <MudTextField T="string" Name="password" Label="Password" InputType="InputType.Password" Required="true" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" />
+                    <MudCheckBox T="bool" Name="rememberMe" Label="Keep me signed in" Color="Color.Primary" Class="mt-2" />
+                    <MudButton Variant="Variant.Filled" ButtonType="ButtonType.Submit" Size="Size.Large" Color="Color.Primary" FullWidth="true" Class="mt-3" StartIcon="@Icons.Material.Filled.Login">
+                        Sign in to @_branding.ApplicationName
+                    </MudButton>
+                </form>
+            }
+            else
+            {
             <MudButton Variant="Variant.Filled"
                        Size="Size.Large"
                        Color="Color.Primary"
@@ -34,6 +47,7 @@
                        Href="/login-authentik">
                 Sign in to @_branding.ApplicationName
             </MudButton>
+            }
 
             @if (Env.IsDevelopment())
             {
@@ -78,6 +92,10 @@
         Config["LoginUi:EnvironmentLabel"]?.Trim() is { Length: > 0 } label
             ? label
             : "Production system";
+
+    private bool SupportsLocalAccounts =>
+        string.Equals(Config["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Config["Authentication:Mode"], "Hybrid", StringComparison.OrdinalIgnoreCase);
 
     private sealed class BrandingSnapshot
     {

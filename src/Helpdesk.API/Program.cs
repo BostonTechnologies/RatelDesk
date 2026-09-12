@@ -125,7 +125,7 @@ if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not Bootstra
     Directory.CreateDirectory(bootstrapKeyRingPath);
     builder.Services.AddDataProtection()
         .PersistKeysToFileSystem(new DirectoryInfo(bootstrapKeyRingPath))
-        .SetApplicationName(builder.Configuration["DataProtection:ApplicationName"] ?? "RatelDesk");
+        .SetApplicationName(builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring");
     builder.Services.AddSingleton(bootstrapOptions);
     builder.Services.AddSingleton<IBootstrapStateStore>(bootstrapStateStore);
     builder.Services.AddSingleton<BootstrapSessionService>();

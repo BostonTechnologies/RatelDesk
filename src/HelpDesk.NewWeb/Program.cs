@@ -27,6 +27,13 @@ using System.Security.Claims;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
+var webAuthenticationMode = builder.Configuration["Authentication:Mode"] ?? "Oidc";
+var webSupportsLocalAccounts = string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase)
+    || string.Equals(webAuthenticationMode, "Hybrid", StringComparison.OrdinalIgnoreCase);
+var webCookieScheme = webSupportsLocalAccounts ? "RatelDeskLocal" : CookieAuthenticationDefaults.AuthenticationScheme;
+var webCookieName = webSupportsLocalAccounts
+    ? (builder.Configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost") ? "RatelDesk.Local" : "__Host-RatelDesk.Local")
+    : "__Host-Helpdesk.Auth";
 
 builder.AddServiceDefaults();
 
@@ -84,10 +91,13 @@ builder.Services.AddSingleton<NotificationEventBus>();
 builder.Services.AddScoped<IUserProvisioningService, UserProvisioningService>();
 builder.Services.AddScoped<IGlobalSearchService, GlobalSearchService>();
 builder.Services.AddScoped<IAppBarVersionApiClient, AppBarVersionApiClient>();
-builder.Services.AddSingleton<IValidateOptions<AuthentikOidcOptions>, AuthentikOidcOptionsValidator>();
-builder.Services.AddOptions<AuthentikOidcOptions>()
-    .Bind(builder.Configuration.GetSection("Authentication:Authentik"))
-    .ValidateOnStart();
+if (!string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<IValidateOptions<AuthentikOidcOptions>, AuthentikOidcOptionsValidator>();
+    builder.Services.AddOptions<AuthentikOidcOptions>()
+        .Bind(builder.Configuration.GetSection("Authentication:Authentik"))
+        .ValidateOnStart();
+}
 builder.Services.AddSingleton<IValidateOptions<AuthentikAiAgentOptions>, AuthentikAiAgentOptionsValidator>();
 builder.Services.AddOptions<AuthentikAiAgentOptions>()
     .Bind(builder.Configuration.GetSection("Authentication:AuthentikAiAgent"))
@@ -104,24 +114,31 @@ if (string.IsNullOrWhiteSpace(apiBaseUrl))
 
 builder.Services.AddAuthentication(options =>
 {
-    options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = "Authentik";
+    options.DefaultScheme = webCookieScheme;
+    options.DefaultChallengeScheme = webSupportsLocalAccounts ? webCookieScheme : "Authentik";
 })
-.AddCookie(options =>
+.AddCookie(webCookieScheme, options =>
 {
-    options.Cookie.Name = "__Host-Helpdesk.Auth";
+    options.Cookie.Name = webCookieName;
     options.Cookie.HttpOnly = true;
     options.Cookie.SameSite = SameSiteMode.Lax;
-    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+    options.Cookie.Path = "/";
+    options.Cookie.SecurePolicy = builder.Configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost") || builder.Environment.IsDevelopment()
         ? CookieSecurePolicy.SameAsRequest
         : CookieSecurePolicy.Always;
     options.LoginPath = "/login";
     options.AccessDeniedPath = "/access-denied";
     options.SlidingExpiration = true;
     options.ExpireTimeSpan = TimeSpan.FromHours(8);
-    options.EventsType = typeof(CookieOidcSessionEvents);
-})
-.AddOpenIdConnect("Authentik", options =>
+    if (!webSupportsLocalAccounts)
+    {
+        options.EventsType = typeof(CookieOidcSessionEvents);
+    }
+});
+
+if (!string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddAuthentication().AddOpenIdConnect("Authentik", options =>
 {
     builder.Configuration.GetSection("Authentication:Authentik").Bind(options);
     var humanOidc = HumanOidcRuntimeOptionsResolver.Resolve(builder.Configuration);
@@ -171,6 +188,7 @@ builder.Services.AddAuthentication(options =>
         }
     };
 });
+}
 
 // Web & System API clients
 var helpdeskApiClient = builder.Services.AddHttpClient("HelpdeskApi", client =>
@@ -414,10 +432,52 @@ app.MapControllers();
 
 app.MapGet("/login-authentik", async (HttpContext ctx) =>
 {
+    if (webSupportsLocalAccounts)
+    {
+        return Results.LocalRedirect("/login");
+    }
+
     await ctx.ChallengeAsync("Authentik", new AuthenticationProperties { RedirectUri = "/home" });
+    return Results.Empty;
 });
 
 app.MapGet("/login-azure", () => Results.LocalRedirect("/login-authentik"));
+
+app.MapPost("/local-login", async (HttpContext context, IHttpClientFactory httpClientFactory) =>
+{
+    if (!webSupportsLocalAccounts)
+    {
+        return Results.NotFound();
+    }
+
+    var form = await context.Request.ReadFormAsync(context.RequestAborted);
+    var email = form["email"].ToString();
+    var password = form["password"].ToString();
+    var rememberMe = string.Equals(form["rememberMe"], "on", StringComparison.OrdinalIgnoreCase);
+    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+    {
+        return Results.LocalRedirect("/login?status=Email%20and%20password%20are%20required");
+    }
+
+    using var response = await httpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync(
+        "/api/v1/local-auth/login",
+        new { email, password, rememberMe },
+        context.RequestAborted);
+    if (!response.IsSuccessStatusCode)
+    {
+        return Results.LocalRedirect("/login?status=Sign-in%20failed");
+    }
+
+    if (response.Headers.TryGetValues("Set-Cookie", out var setCookies))
+    {
+        foreach (var cookie in setCookies)
+        {
+            context.Response.Headers.Append("Set-Cookie", cookie);
+        }
+    }
+
+    return Results.LocalRedirect("/home");
+}).AllowAnonymous();
 
 app.MapGet("/login-ai-agent", (IOptions<AuthentikAiAgentOptions> options) =>
 {

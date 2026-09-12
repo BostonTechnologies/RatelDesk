@@ -131,6 +131,36 @@ public class WebAuthRoutesTests
     }
 
     [Fact]
+    public async Task Local_Mode_Login_Page_Uses_The_Local_Credentials_Form()
+    {
+        using var factory = CreateFactory(localAuthentication: true);
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/login");
+        var content = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("action=\"/local-login\"", content, StringComparison.Ordinal);
+        Assert.Contains("Sign in to RatelDesk", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("href=\"/login-authentik\"", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Local_Mode_Authentik_Login_Route_Returns_To_Local_Login()
+    {
+        using var factory = CreateFactory(localAuthentication: true);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var response = await client.GetAsync("/login-authentik");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/login", response.Headers.Location?.OriginalString);
+    }
+
+    [Fact]
     public void Login_Page_Includes_The_Published_Blazor_Bootstrap_Asset()
     {
         var component = File.ReadAllText(Path.Combine(
@@ -238,12 +268,20 @@ public class WebAuthRoutesTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    private static WebApplicationFactory<TokenService> CreateFactory(bool enableTestAuth = false, bool useAzureFallback = false)
+    private static WebApplicationFactory<TokenService> CreateFactory(
+        bool enableTestAuth = false,
+        bool useAzureFallback = false,
+        bool localAuthentication = false)
     {
         return new WebApplicationFactory<TokenService>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Production");
             builder.UseEnvironment("Production");
+            if (localAuthentication)
+            {
+                builder.UseSetting("Authentication:Mode", "Local");
+                builder.UseSetting("Authentication:AllowInsecureLocalhost", "true");
+            }
 
             builder.ConfigureAppConfiguration((_, cfg) =>
             {
@@ -269,6 +307,12 @@ public class WebAuthRoutesTests
                         ["Authentication:Authentik:SignedOutCallbackPath"] = "/signout-authentik",
                         ["ApiBaseUrl"] = "https://helpdesk-api.test/"
                     };
+
+                if (localAuthentication)
+                {
+                    settings["Authentication:Mode"] = "Local";
+                    settings["Authentication:AllowInsecureLocalhost"] = "true";
+                }
 
                 cfg.AddInMemoryCollection(settings);
             });
