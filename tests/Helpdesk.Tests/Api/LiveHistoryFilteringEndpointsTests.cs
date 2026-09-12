@@ -1240,6 +1240,30 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task IncidentDetail_ResolvesScopedAccessFromPersistedGrants()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Organization One" },
+                new Organization { Id = "org-2", Name = "Organization Two" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Incidents.AddRange(
+                new Incident { Id = "inc-self-service-detail", TrackingId = "INC-SELF-DETAIL", Title = "Self-service incident", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Incident { Id = "inc-foreign-detail", TrackingId = "INC-FOREIGN-DETAIL", Title = "Foreign incident", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+        });
+        harness.UseRole("SelfService");
+
+        var own = await harness.Client.GetAsync("/api/v1/incidents/inc-self-service-detail");
+        var foreign = await harness.Client.GetAsync("/api/v1/incidents/inc-foreign-detail");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, own.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreign.StatusCode);
+    }
+
+    [Fact]
     public async Task RequestAndChangeMutations_RequireScopedManagerAccess()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();

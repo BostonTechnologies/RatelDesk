@@ -276,6 +276,7 @@ public static class IncidentEndpoints
             [FromServices] IDomainEventPublisher domainEvents,
             [FromServices] ICorrelationContext correlationContext,
             [FromServices] ILoggerFactory loggerFactory,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -326,7 +327,7 @@ public static class IncidentEndpoints
                 .Select(x => x.Name)
                 .FirstOrDefaultAsync();
 
-            var access = CurrentUserAccessProfile.FromClaims(user);
+            var access = await accessService.ResolveAsync(user, token);
             if (!access.CanViewIncident(incident.OrganizationId, customer?.Id ?? incident.CustomerId, customer?.Email ?? incident.RequesterEmail))
             {
                 return Results.Forbid();
