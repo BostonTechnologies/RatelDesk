@@ -1,5 +1,5 @@
 @page "/assets/{Id}"
-@attribute [Authorize]
+@attribute [Authorize(Roles = "Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin")]
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
 
