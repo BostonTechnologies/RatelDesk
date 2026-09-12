@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.DataProtection;
+using System.Reflection;
 
 namespace Helpdesk.API.Bootstrap;
 
@@ -22,7 +23,8 @@ public sealed class BootstrapInitializationService(
         CancellationToken cancellationToken)
     {
         if (descriptor.State is not BootstrapState.Configuring ||
-            !IsSupportedConfiguredProvider(descriptor))
+            !IsSupportedConfiguredProvider(descriptor) ||
+            descriptor.OperationId is null)
         {
             return BootstrapInitializationResult.InvalidState;
         }
@@ -73,6 +75,23 @@ public sealed class BootstrapInitializationService(
         await identityDb.Database.MigrateAsync(cancellationToken);
         await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
 
+        var initialization = await db.InstanceInitializations
+            .SingleOrDefaultAsync(initialization => initialization.Id == InstanceInitialization.SingletonId, cancellationToken);
+        if (initialization is not null)
+        {
+            if (initialization.InstanceId == descriptor.InstanceId && initialization.OperationId == descriptor.OperationId)
+            {
+                var readyDescriptor = await stateStore.UpdateAsync(current => current with
+                {
+                    State = BootstrapState.Ready,
+                    CompletedAtUtc = initialization.CompletedAtUtc
+                }, cancellationToken);
+                return new BootstrapInitializationResult(true, null, readyDescriptor);
+            }
+
+            return BootstrapInitializationResult.AlreadyInitialized;
+        }
+
         if (await identityDb.Users.AnyAsync(cancellationToken) ||
             await db.Organizations.AnyAsync(cancellationToken))
         {
@@ -94,6 +113,7 @@ public sealed class BootstrapInitializationService(
             return BootstrapInitializationResult.PasswordRejected;
         }
 
+        var completedAtUtc = DateTimeOffset.UtcNow;
         try
         {
             var organization = new Organization { Name = request.OrganizationName.Trim() };
@@ -105,6 +125,14 @@ public sealed class BootstrapInitializationService(
                 Email = administrator.Email!,
                 OrganizationId = organization.Id,
                 Role = "HelpdeskAdmin"
+            });
+            db.InstanceInitializations.Add(new InstanceInitialization
+            {
+                Id = InstanceInitialization.SingletonId,
+                InstanceId = descriptor.InstanceId,
+                OperationId = descriptor.OperationId.Value,
+                SetupVersion = GetSetupVersion(),
+                CompletedAtUtc = completedAtUtc
             });
             if (!string.IsNullOrWhiteSpace(request.ApplicationName) || !string.IsNullOrWhiteSpace(request.ApplicationUrl))
             {
@@ -128,7 +156,7 @@ public sealed class BootstrapInitializationService(
         var ready = await stateStore.UpdateAsync(current => current with
         {
             State = BootstrapState.Ready,
-            CompletedAtUtc = DateTimeOffset.UtcNow
+            CompletedAtUtc = completedAtUtc
         }, cancellationToken);
         return new BootstrapInitializationResult(true, null, ready);
     }
@@ -150,6 +178,11 @@ public sealed class BootstrapInitializationService(
                (applicationUri.Scheme == Uri.UriSchemeHttps ||
                 (applicationUri.Scheme == Uri.UriSchemeHttp && applicationUri.IsLoopback));
     }
+
+    private static string GetSetupVersion() =>
+        typeof(BootstrapInitializationService).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? "unknown";
 }
 
 public sealed record FirstAdministratorRequest(

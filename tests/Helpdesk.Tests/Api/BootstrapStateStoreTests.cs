@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Data.Sqlite;
 using System.Text;
+using Helpdesk.Shared.Models;
 
 namespace Helpdesk.Tests.Api;
 
@@ -191,13 +192,14 @@ public sealed class BootstrapStateStoreTests
                 configuration => configuration.SetApplicationName("Helpdesk-Keyring"));
             var initializer = new BootstrapInitializationService(store, options, dataProtection);
 
-            var result = await initializer.InitializeAsync(configured, new FirstAdministratorRequest(
+            var request = new FirstAdministratorRequest(
                 "admin@example.test",
                 "Instance Admin",
                 "correct horse battery staple",
                 "Example Organization",
                 "Example Desk",
-                "https://desk.example.test"), CancellationToken.None);
+                "https://desk.example.test");
+            var result = await initializer.InitializeAsync(configured, request, CancellationToken.None);
 
             Assert.True(result.Succeeded, result.Error);
             Assert.Equal(BootstrapState.Ready, result.Descriptor!.State);
@@ -208,6 +210,31 @@ public sealed class BootstrapStateStoreTests
                 .Options;
             await using var identity = new RatelDeskIdentityDbContext(identityOptions);
             Assert.True(await identity.Users.AnyAsync(user => user.Email == "admin@example.test" && user.IsInstanceAdministrator));
+
+            var applicationOptions = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
+                .UseSqlite($"Data Source={Path.Combine(dataDirectory, "rateldesk.db")}")
+                .Options;
+            await using var application = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
+                applicationOptions,
+                new TestTenantContext(),
+                new HttpContextAccessor());
+            var initialization = await application.InstanceInitializations.SingleAsync();
+            Assert.Equal(InstanceInitialization.SingletonId, initialization.Id);
+            Assert.Equal(configured.InstanceId, initialization.InstanceId);
+            Assert.Equal(configured.OperationId, initialization.OperationId);
+            Assert.NotEqual("unknown", initialization.SetupVersion);
+
+            var interruptedDescriptor = await store.UpdateAsync(current => current with
+            {
+                State = BootstrapState.Configuring,
+                CompletedAtUtc = null
+            });
+            var recovered = await initializer.InitializeAsync(interruptedDescriptor, request, CancellationToken.None);
+
+            Assert.True(recovered.Succeeded, recovered.Error);
+            Assert.Equal(BootstrapState.Ready, recovered.Descriptor!.State);
+            Assert.Single(await identity.Users.Where(user => user.Email == "admin@example.test").ToListAsync());
+            Assert.Single(await application.InstanceInitializations.ToListAsync());
 
             await using var connection = new SqliteConnection($"Data Source={Path.Combine(dataDirectory, "rateldesk.db")}");
             await connection.OpenAsync();
@@ -221,6 +248,7 @@ public sealed class BootstrapStateStoreTests
             }
 
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("InitialSqliteApplication", StringComparison.Ordinal));
+            Assert.Contains(appliedMigrations, migration => migration.EndsWith("AddInstanceInitialization", StringComparison.Ordinal));
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("InitialSqliteIdentity", StringComparison.Ordinal));
         }
         finally
@@ -274,5 +302,12 @@ public sealed class BootstrapStateStoreTests
                 Directory.Delete(directory, recursive: true);
             }
         }
+    }
+
+    private sealed class TestTenantContext : Helpdesk.Shared.Services.ITenantContext
+    {
+        public string? TenantId { get; set; }
+        public string? UserId => null;
+        public bool IsHelpdeskAdmin => true;
     }
 }

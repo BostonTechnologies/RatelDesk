@@ -69,6 +69,7 @@ public class HelpdeskDbContext(
     public DbSet<EmailLayout> EmailLayouts => Set<EmailLayout>();
     public DbSet<TenantBranding> TenantBrandings => Set<TenantBranding>();
     public DbSet<InstanceBranding> InstanceBrandings => Set<InstanceBranding>();
+    public DbSet<InstanceInitialization> InstanceInitializations => Set<InstanceInitialization>();
     public DbSet<Service> Services => Set<Service>();
     public DbSet<RequestForm> RequestForms => Set<RequestForm>();
     public DbSet<AiProvider> AiProviders => Set<AiProvider>();
@@ -98,6 +99,13 @@ public class HelpdeskDbContext(
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         var isPostgreSql = Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL";
+        modelBuilder.Entity<InstanceInitialization>(entity =>
+        {
+            entity.ToTable("InstanceInitializations");
+            entity.HasKey(initialization => initialization.Id);
+            entity.Property(initialization => initialization.SetupVersion).HasMaxLength(64);
+            entity.HasIndex(initialization => initialization.InstanceId).IsUnique();
+        });
         modelBuilder.Entity<Helpdesk.Shared.AiAssistant.Chat.AiAssistantChatConversation>(entity =>
         {
             entity.ToTable("AiAssistantChatConversations");
