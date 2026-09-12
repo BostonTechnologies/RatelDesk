@@ -53,8 +53,10 @@ The API remains authoritative for the page and all direct requests:
   within the delegation ceiling; it preserves every non-delegable assignment.
 
 Membership changes increment the target local account's authorization revision
-and security stamp. Its next API request is rejected until it signs in again,
-so revoked tenant access does not persist in an existing API session.
+and security stamp. Its next API request is rejected until it signs in again.
+The Web application validates a local browser session against that API decision
+on its next HTTP request and removes a rejected cookie, so revoked tenant
+access does not persist in an existing API or Web session.
 Invitation and membership-change audit records contain the actor, target, and
 tenant-scoped action, but never the activation token or a credential.
 

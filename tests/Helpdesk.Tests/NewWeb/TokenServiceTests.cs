@@ -477,6 +477,43 @@ public class TokenServiceTests
     }
 
     [Fact]
+    public async Task Local_cookie_validation_rejects_a_session_rejected_by_the_API()
+    {
+        const string cookieName = "__Host-RatelDesk.Local";
+        const string cookieValue = "protected-local-session";
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "local-user"), new Claim("auth_mode", "local")],
+            "RatelDeskLocal"));
+        var properties = new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8) };
+        var ticket = new AuthenticationTicket(principal, properties, "RatelDeskLocal");
+        var authentication = Substitute.For<IAuthenticationService>();
+        var services = new ServiceCollection();
+        services.AddSingleton(authentication);
+        var context = new DefaultHttpContext { RequestServices = services.BuildServiceProvider(), User = principal };
+        context.Request.Headers.Cookie = $"{cookieName}={cookieValue}";
+        var scheme = new AuthenticationScheme("RatelDeskLocal", "RatelDeskLocal", typeof(CookieAuthenticationHandler));
+        var validation = new CookieValidatePrincipalContext(context, scheme, new CookieAuthenticationOptions(), ticket);
+        var factory = Substitute.For<IHttpClientFactory>();
+        string? forwardedCookie = null;
+        factory.CreateClient("SystemApiNoAuth").Returns(new HttpClient(new StubMessageHandler(request =>
+        {
+            forwardedCookie = request.Headers.GetValues("Cookie").Single();
+            return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+        }))
+        { BaseAddress = new Uri("https://api.example.test") });
+        var events = new CookieLocalSessionEvents(
+            factory,
+            new ConfigurationBuilder().Build(),
+            NullLogger<CookieLocalSessionEvents>.Instance);
+
+        await events.ValidatePrincipal(validation);
+
+        Assert.Equal($"{cookieName}={cookieValue}", forwardedCookie);
+        Assert.True(validation.Principal is null);
+        await authentication.Received().SignOutAsync(context, "RatelDeskLocal", Arg.Any<AuthenticationProperties?>());
+    }
+
+    [Fact]
     public async Task AiAgent_Session_Remains_Valid_Without_Azure_Refresh()
     {
         const string accessToken = "ai-agent-access-token";

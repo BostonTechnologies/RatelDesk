@@ -87,6 +87,7 @@ builder.Services.AddTransient<TokenAuthorizationHandler>();
 builder.Services.AddTransient<SystemTokenAuthorizationHandler>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<CookieOidcSessionEvents>();
+builder.Services.AddScoped<CookieLocalSessionEvents>();
 builder.Services.AddSingleton<ISystemTokenService, SystemTokenService>();
 builder.Services.AddScoped<IErrorLoggingService, ErrorLoggingService>();
 builder.Services.AddScoped<IRequestService, RequestService>();
@@ -164,6 +165,7 @@ if (webSupportsLocalAccounts)
         options.AccessDeniedPath = "/access-denied";
         options.SlidingExpiration = true;
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.EventsType = typeof(CookieLocalSessionEvents);
     });
 }
 
