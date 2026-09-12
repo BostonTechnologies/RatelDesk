@@ -147,7 +147,7 @@ public sealed class RequestCreateEndpointsTests
     }
 
     [Fact]
-    public async Task SelfServicePost_Rejects_WhenAuthenticatedUserHasNoEmail()
+    public async Task SelfServicePost_Rejects_WhenAuthenticatedUserHasNoExplicitCustomerLink()
     {
         await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "NoEmail");
         await harness.SeedRequestFormAsync();
@@ -161,13 +161,13 @@ public sealed class RequestCreateEndpointsTests
 
         var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
         Assert.Equal(0, harness.Notification.SendCount);
     }
 
     [Fact]
-    public async Task SelfServicePost_Uses_SubmittedWebIdentity_WhenTokenHasNoEmail()
+    public async Task SelfServicePost_DoesNotUseBodyEmailToEstablishCustomerAccess()
     {
         await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "NoEmail");
         await harness.SeedRequestFormAsync();
@@ -183,16 +183,13 @@ public sealed class RequestCreateEndpointsTests
 
         var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var created = Assert.Single((await harness.Requests.GetAllAsync()).ToList());
-        Assert.Equal("requester@example.com", created.RequesterEmail);
-        Assert.Equal("customer-1", created.CustomerId);
-        Assert.Equal("requester@example.com", harness.Notification.LastRecipientEmail);
-        Assert.Equal("Example User", harness.Notification.LastRecipientName);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
+        Assert.Equal(0, harness.Notification.SendCount);
     }
 
     [Fact]
-    public async Task SelfServicePost_Creates_The_Submitter_Customer_In_Its_Scoped_Organization()
+    public async Task SelfServicePost_DoesNotProvisionACustomerFromAuthenticatedEmail()
     {
         await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "DifferentDomain");
         await harness.SeedRequestFormAsync();
@@ -204,14 +201,11 @@ public sealed class RequestCreateEndpointsTests
 
         var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var created = Assert.Single((await harness.Requests.GetAllAsync()).ToList());
-        Assert.Equal("local.user@unrelated.example", created.RequesterEmail);
-        Assert.Equal("org-1", created.OrganizationId);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
         await using var scope = harness.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
-        var customer = await db.Customers.SingleAsync(x => x.Email == "local.user@unrelated.example");
-        Assert.Equal("org-1", customer.OrganizationId);
+        Assert.DoesNotContain(await db.Customers.ToListAsync(), customer => customer.Email == "local.user@unrelated.example");
     }
 
     [Fact]
@@ -227,7 +221,7 @@ public sealed class RequestCreateEndpointsTests
             PayloadJson = "{}"
         });
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
     }
 
@@ -348,7 +342,7 @@ public sealed class RequestCreateEndpointsTests
 
         var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
     }
 
@@ -592,6 +586,15 @@ public sealed class RequestCreateEndpointsTests
             {
                 var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
                 await db.Database.EnsureCreatedAsync();
+                db.Customers.Add(new Customer
+                {
+                    Id = "customer-1",
+                    Name = "Example User",
+                    Email = "customer@example.com",
+                    OrganizationId = "org-1",
+                    State = Helpdesk.Shared.Models.EntityState.Enabled
+                });
+                await db.SaveChangesAsync();
             }
 
             await app.StartAsync();
@@ -1015,6 +1018,7 @@ public sealed class RequestCreateEndpointsTests
                     new Claim(ClaimTypes.Name, "Test"),
                     new Claim("name", "Example User"),
                     new Claim("preferred_username", "customer@example.com"),
+                    new Claim("customer_id", "customer-1"),
                     new Claim(ClaimTypes.Role, "SelfService.User"),
                     new Claim("organization_id", "org-1"),
                     new Claim("allowed_organization_id", "org-1")

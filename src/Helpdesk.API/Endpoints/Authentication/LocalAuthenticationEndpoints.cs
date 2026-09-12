@@ -447,6 +447,21 @@ public static class LocalAuthenticationEndpoints
 
             try
             {
+                if (organizationId is not null && role == "User")
+                {
+                    var linkError = await LocalCustomerAccessLinker.LinkAsync(
+                        db,
+                        user.Id,
+                        user.DisplayName,
+                        user.Email!,
+                        organizationId);
+                    if (linkError is not null)
+                    {
+                        await users.DeleteAsync(user);
+                        return Results.Conflict(new { error = "local_customer_link_conflict", message = linkError });
+                    }
+                }
+
                 db.Users.Add(new User
                 {
                     Id = user.Id,
@@ -466,6 +481,7 @@ public static class LocalAuthenticationEndpoints
                             ? ScopedRoleCatalog.Technician
                             : ScopedRoleCatalog.SelfServiceUser
                     });
+
                 }
                 await db.SaveChangesAsync();
             }

@@ -9,6 +9,7 @@ public class CustomerAuthLink
     public string AuthProviderType { get; set; } = "Authentik";
     public string? OidcIssuer { get; set; }
     public string? OidcSubject { get; set; }
+    public string? LocalAccountId { get; set; }
     public string? AuthentikUserId { get; set; }
     public string? AuthentikUsername { get; set; }
     public string? AuthentikEmail { get; set; }

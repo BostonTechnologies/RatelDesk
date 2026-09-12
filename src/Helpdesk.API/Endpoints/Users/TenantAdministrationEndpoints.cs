@@ -1,5 +1,6 @@
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.API.Endpoints.Authentication;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
@@ -95,6 +96,19 @@ public static class TenantAdministrationEndpoints
 
             try
             {
+                var linkError = await LocalCustomerAccessLinker.LinkAsync(
+                    db,
+                    account.Id,
+                    account.DisplayName,
+                    account.Email!,
+                    organizationId,
+                    cancellationToken);
+                if (linkError is not null)
+                {
+                    await users.DeleteAsync(account);
+                    return Results.Conflict(new { error = "local_customer_link_conflict", message = linkError });
+                }
+
                 db.Users.Add(new User
                 {
                     Id = account.Id,

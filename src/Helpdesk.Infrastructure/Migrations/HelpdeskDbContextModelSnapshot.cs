@@ -1038,6 +1038,10 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastLoginAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("LocalAccountId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<string>("OidcIssuer")
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
@@ -1050,7 +1054,9 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("AuthentikUserId");
 
-                    b.HasIndex("CustomerId")
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("LocalAccountId")
                         .IsUnique();
 
                     b.HasIndex("InviteStatus", "InviteSentAtUtc");
@@ -1673,9 +1679,10 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("TimeZoneId")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
                         .HasMaxLength(128)
-                        .HasDefaultValue("UTC")
-                        .HasColumnType("character varying(128)");
+                        .HasColumnType("character varying(128)")
+                        .HasDefaultValue("UTC");
 
                     b.HasKey("Id");
 
@@ -3763,8 +3770,8 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Helpdesk.Shared.Models.CustomerAuthLink", b =>
                 {
                     b.HasOne("Helpdesk.Shared.Models.Customer", null)
-                        .WithOne()
-                        .HasForeignKey("Helpdesk.Shared.Models.CustomerAuthLink", "CustomerId")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -489,6 +489,7 @@ public sealed class BootstrapStateStoreTests
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("InitialSqliteApplication", StringComparison.Ordinal));
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("AddInstanceInitialization", StringComparison.Ordinal));
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("AddInitializationTimeZone", StringComparison.Ordinal));
+            Assert.Contains(appliedMigrations, migration => migration.EndsWith("AddLocalCustomerAccountLinks", StringComparison.Ordinal));
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("InitialSqliteIdentity", StringComparison.Ordinal));
         }
         finally

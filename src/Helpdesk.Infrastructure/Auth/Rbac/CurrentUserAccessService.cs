@@ -77,7 +77,7 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
         var subject = FirstClaim(user, "sub");
         var authentikUserId = FirstClaim(user, "authentik_user_id", "ak_user_id");
 
-        var link = await FindCustomerAuthLinkAsync(issuer, subject, authentikUserId, ct);
+        var link = await FindCustomerAuthLinkAsync(localAccountId, issuer, subject, authentikUserId, ct);
         Customer? customer = null;
         Organization? organization = null;
         if (link is not null)
@@ -114,7 +114,7 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
                 }
             }
         }
-        else if (hasActiveLocalDomainUser)
+        if (hasActiveLocalDomainUser)
         {
             var assignments = await (
                     from assignment in _db.ScopedRoleAssignments.AsNoTracking()
@@ -212,11 +212,19 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
     }
 
     private async Task<CustomerAuthLink?> FindCustomerAuthLinkAsync(
+        string? localAccountId,
         string? issuer,
         string? subject,
         string? authentikUserId,
         CancellationToken ct)
     {
+        if (!string.IsNullOrWhiteSpace(localAccountId))
+        {
+            var link = await _db.CustomerAuthLinks.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.LocalAccountId == localAccountId, ct);
+            if (link is not null) return link;
+        }
+
         if (!string.IsNullOrWhiteSpace(issuer) && !string.IsNullOrWhiteSpace(subject))
         {
             var link = await _db.CustomerAuthLinks.AsNoTracking()

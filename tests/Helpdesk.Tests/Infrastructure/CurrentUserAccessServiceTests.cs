@@ -113,6 +113,36 @@ public class CurrentUserAccessServiceTests
     }
 
     [Fact]
+    public async Task Local_account_link_grants_customer_access_without_using_email_as_an_identity_key()
+    {
+        await using var db = CreateDb();
+        db.Organizations.Add(new Organization { Id = "org-alpha", Name = "Alpha Organization" });
+        db.Customers.Add(new Customer { Id = "customer-primary", Name = "Primary User", Email = "primary@example.com", OrganizationId = "org-alpha" });
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = "customer-primary",
+            LocalAccountId = "local-account-1",
+            AuthProviderType = "Local",
+            InviteStatus = CustomerInviteStatus.Active
+        });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "local-account-1"),
+                new Claim(ClaimTypes.Email, "different-profile-email@example.test"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.Equal("customer-primary", access.CustomerId);
+        Assert.Equal("org-alpha", access.PrimaryOrganizationId);
+        Assert.Contains(HelpdeskPermissions.SelfServiceUser, access.Permissions);
+    }
+
+    [Fact]
     public async Task Disabled_customer_gets_no_tenant_permissions()
     {
         await using var db = CreateDb();

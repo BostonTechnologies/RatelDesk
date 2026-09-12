@@ -235,6 +235,9 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             assignment => assignment.UserId == activation.UserId &&
                           assignment.OrganizationId == organizationId &&
                           assignment.RoleKey == ScopedRoleCatalog.SelfServiceUser);
+        var customerLink = await domainDb.CustomerAuthLinks.SingleAsync(link => link.LocalAccountId == activation.UserId);
+        Assert.Equal("Local", customerLink.AuthProviderType);
+        Assert.Equal(organizationId, (await domainDb.Customers.SingleAsync(customer => customer.Id == customerLink.CustomerId)).OrganizationId);
 
         var activate = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/activate", new LocalAuthenticationEndpoints.ActivateLocalAccountRequest(
             activation.Email, activation.ActivationToken, "another secure passphrase"));
