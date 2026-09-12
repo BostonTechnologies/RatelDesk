@@ -98,9 +98,33 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
                     where assignment.UserId == localDomainUser!.Id && assignmentOrganization.IsEnabled
                     select assignment)
                 .ToListAsync(ct);
+
+            var assignedRoleKeys = assignments
+                .Select(assignment => assignment.RoleKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var rolePermissions = await db.Roles.AsNoTracking()
+                .Where(role => assignedRoleKeys.Contains(role.Key) && role.Scope != RoleScopeKind.Instance)
+                .Select(role => new
+                {
+                    role.Key,
+                    role.OwnerOrganizationId,
+                    Permissions = role.Permissions.Select(permission => permission.Permission).ToArray()
+                })
+                .ToDictionaryAsync(role => role.Key, StringComparer.OrdinalIgnoreCase, ct);
             foreach (var assignment in assignments)
             {
-                foreach (var permission in ScopedRoleCatalog.PermissionsFor(assignment.RoleKey))
+                if (rolePermissions.TryGetValue(assignment.RoleKey, out var persistedRole) &&
+                    persistedRole.OwnerOrganizationId is not null &&
+                    !string.Equals(persistedRole.OwnerOrganizationId, assignment.OrganizationId, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var assignedPermissions = persistedRole is not null
+                    ? (IReadOnlyList<string>)persistedRole.Permissions
+                    : ScopedRoleCatalog.PermissionsFor(assignment.RoleKey);
+                foreach (var permission in assignedPermissions)
                 {
                     permissions.Add(permission);
                     scopedPermissionGrants.Add(new ScopedPermissionGrant(permission, assignment.OrganizationId));

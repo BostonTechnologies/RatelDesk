@@ -26,8 +26,10 @@
                 <MudGrid Spacing="2">
                     <MudItem xs="12" sm="6">
                         <MudSelect T="string" @bind-Value="newRoleKey" Label="Role" Required="true">
-                            <MudSelectItem T="string" Value="@("SelfServiceUser")">Self-service User</MudSelectItem>
-                            <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
+                            @foreach (var role in AvailableRolesForNewAssignment)
+                            {
+                                <MudSelectItem T="string" Value="@role.Key">@role.Name</MudSelectItem>
+                            }
                         </MudSelect>
                     </MudItem>
                     <MudItem xs="12" sm="6">
@@ -102,6 +104,7 @@
     private EditUserModel model = new();
     private List<OrganizationDto> organizations = new();
     private List<LocalScopedRoleAssignment> assignments = new();
+    private List<RoleDefinition> roleDefinitions = new();
     private bool isLocalAccount;
     private bool isInstanceAdministrator;
     private string newRoleKey = "SelfServiceUser";
@@ -132,6 +135,12 @@
             isLocalAccount = true;
             isInstanceAdministrator = response?.IsInstanceAdministrator == true;
             newOrganizationId = organizations.FirstOrDefault()?.Id;
+            var roleResponse = await HelpdeskApi.GetAsync("api/v1/admin/role-definitions/");
+            if (roleResponse.IsSuccessStatusCode)
+            {
+                roleDefinitions = await roleResponse.Content.ReadFromJsonAsync<List<RoleDefinition>>() ?? new();
+                newRoleKey = AvailableRolesForNewAssignment.FirstOrDefault()?.Key ?? newRoleKey;
+            }
         }
     }
 
@@ -183,6 +192,12 @@
             return;
         }
 
+        if (!AvailableRolesForNewAssignment.Any(role => string.Equals(role.Key, newRoleKey, StringComparison.OrdinalIgnoreCase)))
+        {
+            error = "Select a role available to the selected organization.";
+            return;
+        }
+
         if (assignments.Any(assignment =>
                 string.Equals(assignment.RoleKey, newRoleKey, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(assignment.OrganizationId, newOrganizationId, StringComparison.OrdinalIgnoreCase)))
@@ -199,12 +214,13 @@
     private string OrganizationLabel(string organizationId) =>
         organizations.FirstOrDefault(organization => organization.Id == organizationId)?.Name ?? organizationId;
 
-    private static string RoleLabel(string roleKey) => roleKey switch
-    {
-        "SelfServiceUser" => "Self-service User",
-        "Technician" => "Technician",
-        _ => roleKey
-    };
+    private IEnumerable<RoleDefinition> AvailableRolesForNewAssignment => roleDefinitions.Where(role =>
+        role.Scope != RoleScopeKind.Instance &&
+        (string.IsNullOrWhiteSpace(role.OwnerOrganizationId) ||
+         string.Equals(role.OwnerOrganizationId, newOrganizationId, StringComparison.OrdinalIgnoreCase)));
+
+    private string RoleLabel(string roleKey) =>
+        roleDefinitions.FirstOrDefault(role => string.Equals(role.Key, roleKey, StringComparison.OrdinalIgnoreCase))?.Name ?? roleKey;
 
     public class EditUserModel
     {
@@ -226,4 +242,15 @@
         bool IsInstanceAdministrator = false);
 
     private sealed record ReplaceLocalScopedRoleAssignmentsRequest(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
+
+    private sealed record RoleDefinition(
+        string Id,
+        string Key,
+        string Name,
+        RoleScopeKind Scope,
+        string? OwnerOrganizationId,
+        bool IsBuiltIn,
+        bool IsProtected,
+        IReadOnlyList<string> Permissions,
+        int AssignmentCount);
 }

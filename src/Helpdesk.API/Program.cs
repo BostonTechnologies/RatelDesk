@@ -54,6 +54,7 @@ using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Sla;
 using Helpdesk.Application.WorkLogs;
 using Helpdesk.Infrastructure;
+using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Infrastructure.Logging;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Infrastructure.Persistence.SeedData;
@@ -1000,6 +1001,7 @@ if (!skipDatabaseStartup)
         }
         await TicketCategorySeed.SeedAsync(ctx);
         await SlaPolicySeed.SeedAsync(ctx);
+        await RoleDefinitionSeeder.EnsureBuiltInsAsync(ctx);
 
         var legacy = app.Configuration.GetSection("ExchangeEmail").Get<ExchangeEmailOptions>();
         if (legacy?.MailboxAddress?.Length > 0 &&
@@ -1214,6 +1216,7 @@ app.MapGet("/health/vector", async ([FromServices] HelpdeskDbContext db, Cancell
 
 app.MapKbEndpoints();
 app.MapGlobalSearchLookupEndpoints();
+app.MapRoleDefinitionEndpoints();
 MapCrudEndpoints<Role>(app, "/api/v1/roles");
 MapCrudEndpoints<Organization>(app, "/api/v1/organizations");
 MapCrudEndpoints<Customer>(app, "/api/v1/customers");

@@ -198,6 +198,75 @@ public class CurrentUserAccessServiceTests
         Assert.DoesNotContain("disabled-org", access.AllowedOrganizationIds);
     }
 
+    [Fact]
+    public async Task Persisted_custom_role_permissions_are_scoped_to_the_assigned_tenant()
+    {
+        await using var db = CreateDb();
+        db.Organizations.AddRange(
+            new Organization { Id = "org-a", Name = "Organization A" },
+            new Organization { Id = "org-b", Name = "Organization B" });
+        db.Users.Add(new User { Id = "local-user", Name = "Local user", Email = "local@example.test", OrganizationId = "org-a", Role = "User" });
+        db.Roles.Add(new Role
+        {
+            Id = "custom-incident-reader",
+            Key = "custom.incident-reader",
+            Name = "Incident Reader",
+            Scope = RoleScopeKind.Tenant,
+            OwnerOrganizationId = "org-a",
+            Permissions = [new RolePermission { Permission = HelpdeskPermissions.IncidentUser }]
+        });
+        db.ScopedRoleAssignments.AddRange(
+            new ScopedRoleAssignment
+            {
+                UserId = "local-user",
+                OrganizationId = "org-a",
+                RoleKey = "custom.incident-reader"
+            },
+            new ScopedRoleAssignment
+            {
+                UserId = "local-user",
+                OrganizationId = "org-b",
+                RoleKey = "custom.incident-reader"
+            });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "local-user"),
+                new Claim(ClaimTypes.Email, "local@example.test"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-a"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-b"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-a"));
+    }
+
+    [Fact]
+    public async Task Protected_built_in_role_definitions_seed_idempotently()
+    {
+        await using var db = CreateDb();
+
+        await RoleDefinitionSeeder.EnsureBuiltInsAsync(db);
+        await RoleDefinitionSeeder.EnsureBuiltInsAsync(db);
+
+        var roles = await db.Roles.Include(role => role.Permissions).ToListAsync();
+        Assert.Equal(RoleDefinitionCatalog.BuiltIns.Count, roles.Count);
+        Assert.All(roles, role =>
+        {
+            Assert.True(role.IsBuiltIn);
+            Assert.True(role.IsProtected);
+        });
+        Assert.Contains(roles, role =>
+            role.Key == ScopedRoleCatalog.Technician &&
+            role.Permissions.Select(permission => permission.Permission)
+                .OrderBy(permission => permission)
+                .SequenceEqual(HelpdeskPermissions.TechnicalBundle.OrderBy(permission => permission)));
+    }
+
     private static ClaimsPrincipal User(string email, string subject, params string[] groups)
         => User(email, subject, tenantId: null, groups);
 

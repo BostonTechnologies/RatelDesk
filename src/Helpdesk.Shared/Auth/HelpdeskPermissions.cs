@@ -12,6 +12,18 @@ public static class HelpdeskPermissions
     public const string DataManagementAdmin = "DataManagement.Admin";
     public const string HelpdeskAdmin = "HelpdeskAdmin";
 
+    public static readonly string[] AssignablePermissions =
+    [
+        SelfServiceUser,
+        IncidentUser,
+        IncidentManager,
+        RequestUser,
+        RequestManager,
+        ChangeUser,
+        ChangeManager,
+        DataManagementAdmin
+    ];
+
     public static readonly string[] UserBundle =
     [
         SelfServiceUser,
@@ -22,8 +34,11 @@ public static class HelpdeskPermissions
     public static readonly string[] TechnicalBundle =
     [
         SelfServiceUser,
+        IncidentUser,
         IncidentManager,
+        RequestUser,
         RequestManager,
+        ChangeUser,
         ChangeManager
     ];
 }

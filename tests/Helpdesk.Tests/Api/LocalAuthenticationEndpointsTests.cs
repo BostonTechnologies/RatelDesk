@@ -359,6 +359,53 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Role_definition_api_requires_an_administrator_and_protects_built_ins()
+    {
+        const string organizationId = "custom-role-organization";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var setupDb = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            setupDb.Organizations.Add(new Organization { Id = organizationId, Name = "Custom role organization" });
+            await setupDb.SaveChangesAsync();
+        }
+
+        using var anonymous = _factory.CreateClient();
+        var anonymousList = await anonymous.GetAsync("/api/v1/admin/role-definitions/");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousList.StatusCode);
+
+        using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+
+        var invalidWriter = await administratorClient.PostAsJsonAsync("/api/v1/admin/role-definitions/",
+            new RoleDefinitionEndpoints.CreateRoleDefinitionRequest(
+                "Incomplete Incident Writer",
+                null,
+                organizationId,
+                [HelpdeskPermissions.IncidentManager]));
+        var created = await administratorClient.PostAsJsonAsync("/api/v1/admin/role-definitions/",
+            new RoleDefinitionEndpoints.CreateRoleDefinitionRequest(
+                "Incident Reader",
+                null,
+                organizationId,
+                [HelpdeskPermissions.IncidentUser]));
+        var definitions = await administratorClient.GetFromJsonAsync<List<RoleDefinitionEndpoints.RoleDefinitionResponse>>(
+            "/api/v1/admin/role-definitions/");
+        var technician = Assert.Single(definitions!, definition => definition.Key == ScopedRoleCatalog.Technician);
+        var deleteBuiltIn = await administratorClient.DeleteAsync($"/api/v1/admin/role-definitions/{technician.Id}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, invalidWriter.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        Assert.Contains(definitions!, definition =>
+            definition.Key == "custom.incident-reader" &&
+            definition.OwnerOrganizationId == organizationId &&
+            definition.Permissions.SequenceEqual([HelpdeskPermissions.IncidentUser]));
+        Assert.True(technician.IsBuiltIn);
+        Assert.True(technician.IsProtected);
+        Assert.Equal(HttpStatusCode.Conflict, deleteBuiltIn.StatusCode);
+    }
+
+    [Fact]
     public async Task Local_login_requires_an_authenticator_code_after_two_factor_is_enabled()
     {
         using var setupClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });

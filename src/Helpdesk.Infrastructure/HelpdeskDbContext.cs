@@ -32,6 +32,7 @@ public class HelpdeskDbContext(
     public DbSet<InboundEmailProcessingLog> InboundEmailProcessingLogs => Set<InboundEmailProcessingLog>();
 
     public DbSet<Role> Roles => Set<Role>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<User> Users => Set<User>();
     public DbSet<ScopedRoleAssignment> ScopedRoleAssignments => Set<ScopedRoleAssignment>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
@@ -527,6 +528,27 @@ public class HelpdeskDbContext(
             entity.Property(x => x.OrganizationId).HasMaxLength(128).IsRequired();
             entity.HasIndex(x => new { x.UserId, x.RoleKey, x.OrganizationId }).IsUnique();
             entity.HasIndex(x => new { x.OrganizationId, x.RoleKey });
+        });
+
+        modelBuilder.Entity<Role>(entity =>
+        {
+            entity.Property(x => x.Key).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.Scope).HasConversion<int>();
+            entity.Property(x => x.OwnerOrganizationId).HasMaxLength(128);
+            entity.HasIndex(x => x.Key).IsUnique();
+            entity.HasIndex(x => new { x.Scope, x.OwnerOrganizationId });
+        });
+
+        modelBuilder.Entity<RolePermission>(entity =>
+        {
+            entity.HasKey(x => new { x.RoleId, x.Permission });
+            entity.Property(x => x.RoleId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Permission).HasMaxLength(128).IsRequired();
+            entity.HasOne(x => x.Role)
+                .WithMany(x => x.Permissions)
+                .HasForeignKey(x => x.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<CustomerAuthLink>(entity =>

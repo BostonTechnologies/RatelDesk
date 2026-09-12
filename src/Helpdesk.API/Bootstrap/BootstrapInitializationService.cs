@@ -1,4 +1,5 @@
 using Helpdesk.Infrastructure;
+using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Models;
@@ -77,6 +78,7 @@ public sealed class BootstrapInitializationService(
             await db.Database.MigrateAsync(cancellationToken);
             await identityDb.Database.MigrateAsync(cancellationToken);
         }
+        await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
 
         if (await identityDb.Users.AnyAsync(cancellationToken) ||
             await db.Organizations.AnyAsync(cancellationToken))

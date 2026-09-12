@@ -297,13 +297,11 @@ public static class LocalAuthenticationEndpoints
                     assignment.OrganizationId?.Trim() ?? string.Empty))
                 .ToArray();
             if (requestedAssignments.Length == 0 ||
-                requestedAssignments.Any(assignment =>
-                    !ScopedRoleCatalog.IsSupported(assignment.RoleKey) ||
-                    string.IsNullOrWhiteSpace(assignment.OrganizationId)))
+                requestedAssignments.Any(assignment => string.IsNullOrWhiteSpace(assignment.OrganizationId)))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["assignments"] = ["Assign at least one supported local role to an enabled organization."]
+                    ["assignments"] = ["Assign at least one local role to an enabled organization."]
                 });
             }
 
@@ -330,6 +328,28 @@ public static class LocalAuthenticationEndpoints
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
                     ["assignments"] = ["Every local role assignment must reference an enabled organization."]
+                });
+            }
+
+            var requestedRoleKeys = requestedAssignments
+                .Select(assignment => assignment.RoleKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var persistedRoles = await db.Roles.AsNoTracking()
+                .Where(role => requestedRoleKeys.Contains(role.Key))
+                .ToListAsync(cancellationToken);
+            var rolesByKey = persistedRoles.ToDictionary(role => role.Key, StringComparer.OrdinalIgnoreCase);
+            if (requestedAssignments.Any(assignment =>
+                    (!rolesByKey.TryGetValue(assignment.RoleKey, out var role) &&
+                     !ScopedRoleCatalog.IsSupported(assignment.RoleKey)) ||
+                    (role is not null &&
+                     (role.Scope == RoleScopeKind.Instance ||
+                      (role.OwnerOrganizationId is not null &&
+                       !string.Equals(role.OwnerOrganizationId, assignment.OrganizationId, StringComparison.OrdinalIgnoreCase))))))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["assignments"] = ["Each role must exist, support tenant or self-service scope, and be owned by the assigned organization when it is tenant-specific."]
                 });
             }
 
