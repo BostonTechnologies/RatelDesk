@@ -601,6 +601,104 @@ public sealed class BootstrapStateStoreTests
     }
 
     [Fact]
+    public async Task Concurrent_postgresql_initialization_creates_one_instance_and_one_administrator()
+    {
+        await using var postgres = new PostgreSqlBuilder()
+            .WithImage("pgvector/pgvector:pg16")
+            .Build();
+        await postgres.StartAsync();
+
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-concurrent-bootstrap-{Guid.NewGuid():N}");
+        try
+        {
+            await using (var connection = new Npgsql.NpgsqlConnection(postgres.GetConnectionString()))
+            {
+                await connection.OpenAsync();
+                await using var extensions = connection.CreateCommand();
+                extensions.CommandText = "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;";
+                await extensions.ExecuteNonQueryAsync();
+            }
+
+            var options = new BootstrapOptions
+            {
+                StateDirectory = directory,
+                DataDirectory = Path.Combine(directory, "data"),
+                SetupCode = "operator-provided-code"
+            };
+            var firstStore = new FileBootstrapStateStore(options);
+            await firstStore.LoadOrCreateAsync();
+            var dataProtection = DataProtectionProvider.Create(
+                new DirectoryInfo(Path.Combine(directory, "keys")),
+                configuration => configuration.SetApplicationName("Helpdesk-Keyring"));
+            var configured = await firstStore.UpdateAsync(current => current with
+            {
+                State = BootstrapState.Configuring,
+                Provider = "PostgreSql",
+                ProtectedPostgreSqlConnection = dataProtection
+                    .CreateProtector("RatelDesk.Bootstrap.PostgreSqlConnection.v1")
+                    .Protect(postgres.GetConnectionString()),
+                OperationId = Guid.NewGuid()
+            });
+
+            var secondStore = new FileBootstrapStateStore(options);
+            var firstInitializer = new BootstrapInitializationService(firstStore, options, dataProtection);
+            var secondInitializer = new BootstrapInitializationService(secondStore, options, dataProtection);
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var first = Task.Run(async () =>
+            {
+                await start.Task;
+                return await firstInitializer.InitializeAsync(configured, new FirstAdministratorRequest(
+                    "first.admin@example.test",
+                    "First Administrator",
+                    "correct horse battery staple",
+                    "Example Organization",
+                    "Example Desk",
+                    "https://desk.example.test"), CancellationToken.None);
+            });
+            var second = Task.Run(async () =>
+            {
+                await start.Task;
+                return await secondInitializer.InitializeAsync(configured, new FirstAdministratorRequest(
+                    "second.admin@example.test",
+                    "Second Administrator",
+                    "correct horse battery staple",
+                    "Example Organization",
+                    "Example Desk",
+                    "https://desk.example.test"), CancellationToken.None);
+            });
+
+            start.SetResult();
+            var results = await Task.WhenAll(first, second);
+
+            Assert.All(results, result => Assert.True(result.Succeeded, result.Error));
+            Assert.Equal(BootstrapState.Ready, (await firstStore.LoadOrCreateAsync()).State);
+
+            var identityOptions = new DbContextOptionsBuilder<RatelDeskIdentityDbContext>()
+                .UseNpgsql(postgres.GetConnectionString())
+                .Options;
+            await using var identity = new RatelDeskIdentityDbContext(identityOptions);
+            Assert.Single(await identity.Users.Where(user => user.IsInstanceAdministrator).ToListAsync());
+
+            var applicationOptions = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
+                .UseNpgsql(postgres.GetConnectionString(), npgsql => npgsql.UseVector())
+                .Options;
+            await using var application = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
+                applicationOptions,
+                new TestTenantContext(),
+                new HttpContextAccessor());
+            Assert.Single(await application.InstanceInitializations.ToListAsync());
+            Assert.Single(await application.Organizations.ToListAsync());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Legacy_adoption_marks_only_a_database_with_organization_and_user_evidence()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"rateldesk-adoption-{Guid.NewGuid():N}.db");

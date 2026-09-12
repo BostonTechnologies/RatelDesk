@@ -18,6 +18,8 @@ public sealed class BootstrapInitializationService(
     BootstrapOptions options,
     IDataProtectionProvider dataProtection)
 {
+    private const long PostgreSqlBootstrapLockId = 649182743;
+
     public async Task<BootstrapInitializationResult> InitializeAsync(
         BootstrapDescriptor descriptor,
         FirstAdministratorRequest request,
@@ -76,110 +78,131 @@ public sealed class BootstrapInitializationService(
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
         var identityDb = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
-        await db.Database.MigrateAsync(cancellationToken);
-        await identityDb.Database.MigrateAsync(cancellationToken);
-        await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
-
-        var initialization = await db.InstanceInitializations
-            .SingleOrDefaultAsync(initialization => initialization.Id == InstanceInitialization.SingletonId, cancellationToken);
-        if (initialization is not null)
+        var isPostgreSql = string.Equals(descriptor.Provider, "PostgreSql", StringComparison.OrdinalIgnoreCase);
+        if (isPostgreSql)
         {
-            if (initialization.InstanceId == descriptor.InstanceId && initialization.OperationId == descriptor.OperationId)
-            {
-                var readyDescriptor = await stateStore.UpdateAsync(current => current with
-                {
-                    State = BootstrapState.Ready,
-                    CompletedAtUtc = initialization.CompletedAtUtc
-                }, cancellationToken);
-                return new BootstrapInitializationResult(true, null, readyDescriptor);
-            }
-
-            return BootstrapInitializationResult.AlreadyInitialized;
+            await db.Database.OpenConnectionAsync(cancellationToken);
+            await db.Database.ExecuteSqlAsync(
+                $"SELECT pg_advisory_lock({PostgreSqlBootstrapLockId})",
+                cancellationToken);
         }
 
-        if (await identityDb.Users.AnyAsync(cancellationToken) ||
-            await db.Organizations.AnyAsync(cancellationToken))
-        {
-            return BootstrapInitializationResult.AlreadyInitialized;
-        }
-
-        // Identity and application data use the same selected physical
-        // database. Share one connection and transaction so a failed domain
-        // write never leaves an orphaned first local account behind.
-        await db.Database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        identityDb.Database.SetDbConnection(db.Database.GetDbConnection(), contextOwnsConnection: false);
-        await identityDb.Database.UseTransactionAsync(transaction.GetDbTransaction(), cancellationToken);
-
-        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-        var administrator = new ApplicationUser
-        {
-            UserName = request.Email.Trim(),
-            Email = request.Email.Trim(),
-            DisplayName = request.DisplayName.Trim(),
-            IsInstanceAdministrator = true,
-            EmailConfirmed = true
-        };
-        var createUser = await userManager.CreateAsync(administrator, request.Password);
-        if (!createUser.Succeeded)
-        {
-            return BootstrapInitializationResult.PasswordRejected;
-        }
-
-        var completedAtUtc = DateTimeOffset.UtcNow;
         try
         {
-            var organization = new Organization { Name = request.OrganizationName.Trim() };
-            db.Organizations.Add(organization);
-            db.Users.Add(new User
+            await db.Database.MigrateAsync(cancellationToken);
+            await identityDb.Database.MigrateAsync(cancellationToken);
+            await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
+
+            // Identity and application data use the same selected physical
+            // database. Share one connection and transaction so a failed domain
+            // write never leaves an orphaned first local account behind.
+            await db.Database.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            identityDb.Database.SetDbConnection(db.Database.GetDbConnection(), contextOwnsConnection: false);
+            await identityDb.Database.UseTransactionAsync(transaction.GetDbTransaction(), cancellationToken);
+
+            var initialization = await db.InstanceInitializations
+                .SingleOrDefaultAsync(initialization => initialization.Id == InstanceInitialization.SingletonId, cancellationToken);
+            if (initialization is not null)
             {
-                Id = administrator.Id,
-                Name = administrator.DisplayName,
-                Email = administrator.Email!,
-                OrganizationId = organization.Id,
-                Role = "HelpdeskAdmin"
-            });
-            db.InstanceInitializations.Add(new InstanceInitialization
-            {
-                Id = InstanceInitialization.SingletonId,
-                InstanceId = descriptor.InstanceId,
-                OperationId = descriptor.OperationId.Value,
-                SetupVersion = GetSetupVersion(),
-                TimeZoneId = request.TimeZoneId?.Trim() ?? "UTC",
-                CompletedAtUtc = completedAtUtc
-            });
-            if (HasBrandingInput(request))
-            {
-                db.InstanceBrandings.Add(new InstanceBranding
+                if (initialization.InstanceId == descriptor.InstanceId && initialization.OperationId == descriptor.OperationId)
                 {
-                    Id = 1,
-                    ApplicationName = request.ApplicationName?.Trim(),
-                    ApplicationUrl = request.ApplicationUrl?.Trim(),
-                    OrganizationName = organization.Name,
-                    SupportUrl = request.SupportUrl?.Trim(),
-                    SupportEmail = request.SupportEmail?.Trim(),
-                    LogoUrl = request.LogoUrl?.Trim(),
-                    CompactLogoUrl = request.CompactLogoUrl?.Trim(),
-                    EmailFromDisplayName = request.EmailFromDisplayName?.Trim(),
-                    Tagline = request.Tagline?.Trim()
-                });
+                    var readyDescriptor = await stateStore.UpdateAsync(current => current with
+                    {
+                        State = BootstrapState.Ready,
+                        CompletedAtUtc = initialization.CompletedAtUtc
+                    }, cancellationToken);
+                    return new BootstrapInitializationResult(true, null, readyDescriptor);
+                }
+
+                return BootstrapInitializationResult.AlreadyInitialized;
             }
 
-            await db.SaveChangesAsync(cancellationToken);
-        }
-        catch (Exception)
-        {
-            return new BootstrapInitializationResult(false, "Initialization could not be completed.", null);
-        }
+            if (await identityDb.Users.AnyAsync(cancellationToken) ||
+                await db.Organizations.AnyAsync(cancellationToken))
+            {
+                return BootstrapInitializationResult.AlreadyInitialized;
+            }
 
-        await transaction.CommitAsync(cancellationToken);
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var administrator = new ApplicationUser
+            {
+                UserName = request.Email.Trim(),
+                Email = request.Email.Trim(),
+                DisplayName = request.DisplayName.Trim(),
+                IsInstanceAdministrator = true,
+                EmailConfirmed = true
+            };
+            var createUser = await userManager.CreateAsync(administrator, request.Password);
+            if (!createUser.Succeeded)
+            {
+                return BootstrapInitializationResult.PasswordRejected;
+            }
 
-        var ready = await stateStore.UpdateAsync(current => current with
+            var completedAtUtc = DateTimeOffset.UtcNow;
+            try
+            {
+                var organization = new Organization { Name = request.OrganizationName.Trim() };
+                db.Organizations.Add(organization);
+                db.Users.Add(new User
+                {
+                    Id = administrator.Id,
+                    Name = administrator.DisplayName,
+                    Email = administrator.Email!,
+                    OrganizationId = organization.Id,
+                    Role = "HelpdeskAdmin"
+                });
+                db.InstanceInitializations.Add(new InstanceInitialization
+                {
+                    Id = InstanceInitialization.SingletonId,
+                    InstanceId = descriptor.InstanceId,
+                    OperationId = descriptor.OperationId.Value,
+                    SetupVersion = GetSetupVersion(),
+                    TimeZoneId = request.TimeZoneId?.Trim() ?? "UTC",
+                    CompletedAtUtc = completedAtUtc
+                });
+                if (HasBrandingInput(request))
+                {
+                    db.InstanceBrandings.Add(new InstanceBranding
+                    {
+                        Id = 1,
+                        ApplicationName = request.ApplicationName?.Trim(),
+                        ApplicationUrl = request.ApplicationUrl?.Trim(),
+                        OrganizationName = organization.Name,
+                        SupportUrl = request.SupportUrl?.Trim(),
+                        SupportEmail = request.SupportEmail?.Trim(),
+                        LogoUrl = request.LogoUrl?.Trim(),
+                        CompactLogoUrl = request.CompactLogoUrl?.Trim(),
+                        EmailFromDisplayName = request.EmailFromDisplayName?.Trim(),
+                        Tagline = request.Tagline?.Trim()
+                    });
+                }
+
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (Exception)
+            {
+                return new BootstrapInitializationResult(false, "Initialization could not be completed.", null);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+
+            var ready = await stateStore.UpdateAsync(current => current with
+            {
+                State = BootstrapState.Ready,
+                CompletedAtUtc = completedAtUtc
+            }, cancellationToken);
+            return new BootstrapInitializationResult(true, null, ready);
+        }
+        finally
         {
-            State = BootstrapState.Ready,
-            CompletedAtUtc = completedAtUtc
-        }, cancellationToken);
-        return new BootstrapInitializationResult(true, null, ready);
+            if (isPostgreSql)
+            {
+                await db.Database.ExecuteSqlAsync(
+                    $"SELECT pg_advisory_unlock({PostgreSqlBootstrapLockId})",
+                    CancellationToken.None);
+            }
+        }
     }
 
     private FirstAdministratorRequest ApplyDeploymentManagedDefaults(FirstAdministratorRequest request) => request with
