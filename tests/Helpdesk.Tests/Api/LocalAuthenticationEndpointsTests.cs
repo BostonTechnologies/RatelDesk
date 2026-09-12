@@ -154,7 +154,11 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             "admin@example.test", "correct horse battery staple"))).StatusCode);
 
         var create = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
-            "New Operator", "new.operator@example.test", OrganizationId: organizationId, IsTestUser: true));
+            "New Operator", "new.operator@example.test")
+        {
+            OrganizationId = organizationId,
+            IsTestUser = true
+        });
         var activation = await create.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
 
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
@@ -173,10 +177,15 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         using var accountClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         var login = await accountClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
             activation.Email, "another secure passphrase"));
+        var access = await accountClient.GetFromJsonAsync<CurrentUserAccessDto>("/api/v1/auth/me");
 
         Assert.Equal(HttpStatusCode.NoContent, activate.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+        Assert.NotNull(access);
+        Assert.Equal(organizationId, access.PrimaryOrganizationId);
+        Assert.Contains(organizationId, access.AllowedOrganizationIds);
+        Assert.Contains(Helpdesk.Shared.Auth.HelpdeskPermissions.SelfServiceUser, access.Permissions);
     }
 
     [Fact]
@@ -194,9 +203,15 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             "admin@example.test", "correct horse battery staple"))).StatusCode);
 
         var unknownOrganization = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
-            "Unknown Organization Operator", "unknown.organization.operator@example.test", OrganizationId: "missing-organization"));
+            "Unknown Organization Operator", "unknown.organization.operator@example.test")
+        {
+            OrganizationId = "missing-organization"
+        });
         var disabledOrganization = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
-            "Disabled Organization Operator", "disabled.organization.operator@example.test", OrganizationId: "disabled-local-account-organization"));
+            "Disabled Organization Operator", "disabled.organization.operator@example.test")
+        {
+            OrganizationId = "disabled-local-account-organization"
+        });
 
         Assert.Equal(HttpStatusCode.BadRequest, unknownOrganization.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, disabledOrganization.StatusCode);

@@ -62,6 +62,17 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         }
 
         var hasActiveCustomer = customer?.IsEnabled == true && organization?.IsEnabled == true;
+        var localAccountId = IsLocalAccount(user)
+            ? user.FindFirstValue(ClaimTypes.NameIdentifier)
+            : null;
+        var localDomainUser = string.IsNullOrWhiteSpace(localAccountId)
+            ? null
+            : await db.Users.AsNoTracking().FirstOrDefaultAsync(domainUser => domainUser.Id == localAccountId, ct);
+        var localOrganization = localDomainUser is null || string.IsNullOrWhiteSpace(localDomainUser.OrganizationId)
+            ? null
+            : await db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == localDomainUser.OrganizationId, ct);
+        var hasActiveLocalDomainUser = localDomainUser is not null && localOrganization?.IsEnabled == true;
+
         if (hasActiveCustomer)
         {
             bundles.Add(HelpdeskRoleBundles.User);
@@ -79,8 +90,16 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
                 }
             }
         }
+        else if (hasActiveLocalDomainUser)
+        {
+            AddLocalRoleBundle(localDomainUser!.Role, bundles, permissions);
+        }
 
-        var primaryOrganizationId = hasActiveCustomer ? customer!.OrganizationId : null;
+        var primaryOrganizationId = hasActiveCustomer
+            ? customer!.OrganizationId
+            : hasActiveLocalDomainUser
+                ? localDomainUser!.OrganizationId
+                : null;
         var allowedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var managedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -109,7 +128,7 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
             Name: user.Identity?.Name ?? FirstClaim(user, "name", "preferred_username") ?? email,
             Email: email,
             PrimaryOrganizationId: primaryOrganizationId,
-            PrimaryOrganizationName: organization?.Name,
+            PrimaryOrganizationName: organization?.Name ?? localOrganization?.Name,
             CustomerId: hasActiveCustomer ? customer!.Id : null,
             IsHelpdeskAdmin: isAdmin,
             RoleBundles: bundles,
@@ -145,6 +164,34 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         user.IsInRole(HelpdeskPermissions.HelpdeskAdmin) ||
         groups.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
         groups.Contains(AuthentikRbacGroups.HelpdeskAdmin);
+
+    private static bool IsLocalAccount(ClaimsPrincipal user) =>
+        string.Equals(user.FindFirstValue("auth_mode"), "local", StringComparison.OrdinalIgnoreCase);
+
+    private static void AddLocalRoleBundle(
+        string role,
+        HashSet<string> bundles,
+        HashSet<string> permissions)
+    {
+        var bundle = role switch
+        {
+            "User" => HelpdeskRoleBundles.User,
+            "Technician" => HelpdeskRoleBundles.Technical,
+            _ => null
+        };
+        if (bundle is null)
+        {
+            return;
+        }
+
+        bundles.Add(bundle);
+        foreach (var permission in bundle == HelpdeskRoleBundles.User
+                     ? HelpdeskPermissions.UserBundle
+                     : HelpdeskPermissions.TechnicalBundle)
+        {
+            permissions.Add(permission);
+        }
+    }
 
     private static void AddDirectPermissionClaims(HashSet<string> groups, HashSet<string> permissions)
     {

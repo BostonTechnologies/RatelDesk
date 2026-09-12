@@ -326,12 +326,25 @@ public static class LocalAuthenticationEndpoints
 
     public sealed record ChangeLocalPasswordRequest(string CurrentPassword, string NewPassword);
 
-    public sealed record CreateLocalAccountRequest(
-        string DisplayName,
-        string Email,
-        bool IsInstanceAdministrator = false,
-        string? OrganizationId = null,
-        bool IsTestUser = false);
+    public sealed record CreateLocalAccountRequest
+    {
+        public CreateLocalAccountRequest(string displayName, string email, bool isInstanceAdministrator = false)
+        {
+            DisplayName = displayName;
+            Email = email;
+            IsInstanceAdministrator = isInstanceAdministrator;
+        }
+
+        public string DisplayName { get; init; }
+
+        public string Email { get; init; }
+
+        public bool IsInstanceAdministrator { get; init; }
+
+        public string? OrganizationId { get; init; }
+
+        public bool IsTestUser { get; init; }
+    }
 
     public sealed record ActivateLocalAccountRequest(string Email, string ActivationToken, string NewPassword);
 
