@@ -43,6 +43,10 @@ docker compose -f docker/docker-compose.yml exec api \
 
 The command only succeeds for an existing instance-administrator account in the selected identity store. It enables that account, invalidates old sessions, and writes a one-time token only to the command output. Give the administrator the `/activate` page and token through an approved secure channel; the token is consumed when a new passphrase is set.
 
+### Local account security
+
+Signed-in local users can change their passphrase at `/account/change-password` and set up a time-based authenticator at `/account/authenticator`. The authenticator page gives the user a shared key to enter or scan in a TOTP application, requires its current six-digit code to confirm setup, and displays ten recovery codes exactly once. Store recovery codes separately from the authenticator device. After TOTP is enabled, local sign-in requires either an authenticator code or an unused recovery code. An administrator can issue a fresh one-time activation token for a local account through the user administration UI; this is the no-SMTP password-reset path.
+
 ## Email
 
 Microsoft Graph delivery is disabled by default. Enable it only after configuring a tenant ID, client ID, client secret, and mailbox. SMTP and IMAP settings are likewise deployment-owned credentials. Use a mailbox dedicated to RatelDesk and configure sender-domain controls deliberately.
