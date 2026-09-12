@@ -93,6 +93,33 @@ public sealed class FileBootstrapStateStore : IBootstrapStateStore
         }
     }
 
+    public async Task<string?> RotateSetupCodeAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var current = await ReadAsync(cancellationToken);
+            if (current is null || current.State is BootstrapState.Ready or BootstrapState.RecoveryRequired)
+            {
+                return null;
+            }
+
+            var setupCode = GenerateSetupCode();
+            var next = current with
+            {
+                SetupCodeHash = Hash(setupCode),
+                SetupCodeCreatedAtUtc = DateTimeOffset.UtcNow
+            };
+            await WriteAsync(next, cancellationToken);
+            await WriteOperatorSetupCodeAsync(setupCode, cancellationToken);
+            return setupCode;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task<BootstrapDescriptor?> ReadAsync(CancellationToken cancellationToken)
     {
         var descriptorPath = Path.Combine(_options.StateDirectory, DescriptorFileName);

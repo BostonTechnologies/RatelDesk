@@ -6,7 +6,7 @@ namespace Helpdesk.API.Bootstrap;
 
 public sealed class BootstrapSessionService
 {
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SetupSession> _sessions = new(StringComparer.Ordinal);
 
     public bool TryCreate(BootstrapDescriptor descriptor, string? setupCode, out string? session)
     {
@@ -21,19 +21,22 @@ public sealed class BootstrapSessionService
         }
 
         session = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        _sessions[session] = DateTimeOffset.UtcNow.AddMinutes(10);
+        _sessions[session] = new SetupSession(DateTimeOffset.UtcNow.AddMinutes(10), descriptor.SetupCodeHash);
         return true;
     }
 
-    public bool IsValid(string? session)
+    public bool IsValid(string? session, BootstrapDescriptor descriptor)
     {
         if (string.IsNullOrWhiteSpace(session) ||
-            !_sessions.TryGetValue(session, out var expiresAtUtc))
+            !_sessions.TryGetValue(session, out var setupSession))
         {
             return false;
         }
 
-        if (expiresAtUtc > DateTimeOffset.UtcNow)
+        if (setupSession.ExpiresAtUtc > DateTimeOffset.UtcNow &&
+            CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(setupSession.SetupCodeHash),
+                Convert.FromHexString(descriptor.SetupCodeHash)))
         {
             return true;
         }
@@ -41,4 +44,6 @@ public sealed class BootstrapSessionService
         _sessions.TryRemove(session, out _);
         return false;
     }
+
+    private sealed record SetupSession(DateTimeOffset ExpiresAtUtc, string SetupCodeHash);
 }

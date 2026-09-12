@@ -8,6 +8,14 @@ RatelDesk has an ASP.NET Core API and a Blazor web application. The default inst
 
 Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. After the first API start, retrieve the operator-only setup code from `/var/lib/rateldesk/bootstrap/setup-code` in the API container and complete `http://localhost:8111/setup`. The code is consumed at completion and is never returned by HTTP APIs.
 
+Before setup completes, an operator can replace a lost or exposed setup code without reopening a completed instance:
+
+```bash
+docker compose -f docker/docker-compose.yml exec api dotnet Helpdesk.API.dll --rotate-setup-code
+```
+
+The replacement is printed once to the operator's terminal, written to the protected `setup-code` file, and invalidates existing setup sessions. The command refuses to run after setup is ready or when recovery is required.
+
 For the documented localhost HTTP profile, both services set `Authentication__AllowInsecureLocalhost=true`; this intentionally uses the `RatelDesk.Local` cookie rather than a `__Host-` cookie. Public deployments must use HTTPS, set a durable shared `DataProtection__KeyRingPath`, and remove that localhost-only setting.
 
 Back up the SQLite data directory, bootstrap state directory, shared key ring, and attachment directory as one recovery set. Restoring a SQLite file without its initialization descriptor or data-protection key material can require operator recovery.

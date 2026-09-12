@@ -159,6 +159,25 @@ if (args is ["--recover-local-admin", var recoveryEmail])
     return;
 }
 
+if (args is ["--rotate-setup-code"])
+{
+    if (bootstrapDescriptor is null)
+    {
+        await Console.Error.WriteLineAsync("No bootstrap-managed setup state was found for the selected configuration.");
+        return;
+    }
+
+    var setupCode = await bootstrapStateStore.RotateSetupCodeAsync();
+    if (string.IsNullOrWhiteSpace(setupCode))
+    {
+        await Console.Error.WriteLineAsync("The setup code cannot be rotated after setup is complete or while recovery is required.");
+        return;
+    }
+
+    await Console.Out.WriteLineAsync(setupCode);
+    return;
+}
+
 if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not BootstrapState.Ready)
 {
     var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]

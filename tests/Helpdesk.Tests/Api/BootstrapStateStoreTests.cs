@@ -62,7 +62,60 @@ public sealed class BootstrapStateStoreTests
             Assert.NotEqual(setupCode.Trim(), descriptor.SetupCodeHash);
             Assert.False(sessions.TryCreate(descriptor, "incorrect", out _));
             Assert.True(sessions.TryCreate(descriptor, setupCode, out var session));
-            Assert.True(sessions.IsValid(session));
+            Assert.True(sessions.IsValid(session, descriptor));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Rotating_the_setup_code_invalidates_existing_setup_sessions()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-bootstrap-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new FileBootstrapStateStore(new BootstrapOptions { StateDirectory = directory });
+            var descriptor = await store.LoadOrCreateAsync();
+            var originalCode = await File.ReadAllTextAsync(Path.Combine(directory, "setup-code"));
+            var sessions = new BootstrapSessionService();
+            Assert.True(sessions.TryCreate(descriptor, originalCode, out var session));
+
+            var rotatedCode = await store.RotateSetupCodeAsync();
+            var rotatedDescriptor = await store.LoadOrCreateAsync();
+
+            Assert.NotNull(rotatedCode);
+            Assert.NotEqual(originalCode.Trim(), rotatedCode);
+            Assert.False(sessions.IsValid(session, rotatedDescriptor));
+            Assert.False(sessions.TryCreate(rotatedDescriptor, originalCode, out _));
+            Assert.True(sessions.TryCreate(rotatedDescriptor, rotatedCode, out _));
+            Assert.Equal(rotatedCode, (await File.ReadAllTextAsync(Path.Combine(directory, "setup-code"))).Trim());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Setup_code_cannot_be_rotated_after_setup_is_ready()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-bootstrap-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new FileBootstrapStateStore(new BootstrapOptions { StateDirectory = directory });
+            await store.LoadOrCreateAsync();
+            await store.UpdateAsync(current => current with { State = BootstrapState.Ready });
+
+            Assert.Null(await store.RotateSetupCodeAsync());
+            Assert.False(File.Exists(Path.Combine(directory, "setup-code")));
         }
         finally
         {

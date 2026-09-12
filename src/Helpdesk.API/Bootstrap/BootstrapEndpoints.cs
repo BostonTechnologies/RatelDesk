@@ -44,7 +44,8 @@ public static class BootstrapEndpoints
             [FromServices] IDataProtectionProvider dataProtection,
             CancellationToken cancellationToken) =>
         {
-            if (!sessions.IsValid(session))
+            var currentDescriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
+            if (!sessions.IsValid(session, currentDescriptor))
             {
                 return Results.Unauthorized();
             }
@@ -143,12 +144,12 @@ public static class BootstrapEndpoints
             [FromServices] BootstrapInitializationService initializer,
             CancellationToken cancellationToken) =>
         {
-            if (!sessions.IsValid(session))
+            var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
+            if (!sessions.IsValid(session, descriptor))
             {
                 return Results.Unauthorized();
             }
 
-            var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
             var result = await initializer.InitializeAsync(descriptor, request, cancellationToken);
             return result.Succeeded
                 ? Results.Ok(new BootstrapStatusResponse(result.Descriptor!.State, result.Descriptor.Provider))
