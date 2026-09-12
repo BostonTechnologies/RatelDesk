@@ -35,6 +35,8 @@ public sealed class BootstrapInitializationService(
             string.IsNullOrWhiteSpace(request.OrganizationName) ||
             string.IsNullOrWhiteSpace(request.Password) ||
             !IsPermittedApplicationUrl(request.ApplicationUrl) ||
+            !ArePermittedBrandingUrls(request) ||
+            !IsPermittedSupportEmail(request.SupportEmail) ||
             !IsPermittedTimeZone(request.TimeZoneId))
         {
             return BootstrapInitializationResult.InvalidRequest;
@@ -145,14 +147,20 @@ public sealed class BootstrapInitializationService(
                 TimeZoneId = request.TimeZoneId?.Trim() ?? "UTC",
                 CompletedAtUtc = completedAtUtc
             });
-            if (!string.IsNullOrWhiteSpace(request.ApplicationName) || !string.IsNullOrWhiteSpace(request.ApplicationUrl))
+            if (HasBrandingInput(request))
             {
                 db.InstanceBrandings.Add(new InstanceBranding
                 {
                     Id = 1,
                     ApplicationName = request.ApplicationName?.Trim(),
                     ApplicationUrl = request.ApplicationUrl?.Trim(),
-                    OrganizationName = organization.Name
+                    OrganizationName = organization.Name,
+                    SupportUrl = request.SupportUrl?.Trim(),
+                    SupportEmail = request.SupportEmail?.Trim(),
+                    LogoUrl = request.LogoUrl?.Trim(),
+                    CompactLogoUrl = request.CompactLogoUrl?.Trim(),
+                    EmailFromDisplayName = request.EmailFromDisplayName?.Trim(),
+                    Tagline = request.Tagline?.Trim()
                 });
             }
 
@@ -191,6 +199,44 @@ public sealed class BootstrapInitializationService(
                 (applicationUri.Scheme == Uri.UriSchemeHttp && applicationUri.IsLoopback));
     }
 
+    private static bool ArePermittedBrandingUrls(FirstAdministratorRequest request) =>
+        IsPermittedOptionalHttpUrl(request.SupportUrl) &&
+        IsPermittedOptionalHttpUrl(request.LogoUrl) &&
+        IsPermittedOptionalHttpUrl(request.CompactLogoUrl);
+
+    private static bool IsPermittedOptionalHttpUrl(string? value) =>
+        string.IsNullOrWhiteSpace(value) ||
+        (Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+         (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp));
+
+    private static bool IsPermittedSupportEmail(string? supportEmail)
+    {
+        if (string.IsNullOrWhiteSpace(supportEmail))
+        {
+            return true;
+        }
+
+        try
+        {
+            var parsed = new System.Net.Mail.MailAddress(supportEmail);
+            return string.Equals(parsed.Address, supportEmail.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasBrandingInput(FirstAdministratorRequest request) =>
+        !string.IsNullOrWhiteSpace(request.ApplicationName) ||
+        !string.IsNullOrWhiteSpace(request.ApplicationUrl) ||
+        !string.IsNullOrWhiteSpace(request.SupportUrl) ||
+        !string.IsNullOrWhiteSpace(request.SupportEmail) ||
+        !string.IsNullOrWhiteSpace(request.LogoUrl) ||
+        !string.IsNullOrWhiteSpace(request.CompactLogoUrl) ||
+        !string.IsNullOrWhiteSpace(request.EmailFromDisplayName) ||
+        !string.IsNullOrWhiteSpace(request.Tagline);
+
     private static bool IsPermittedTimeZone(string? timeZoneId)
     {
         if (string.IsNullOrWhiteSpace(timeZoneId))
@@ -226,7 +272,13 @@ public sealed record FirstAdministratorRequest(
     string OrganizationName,
     string? ApplicationName,
     string? ApplicationUrl,
-    string? TimeZoneId = null);
+    string? TimeZoneId = null,
+    string? SupportUrl = null,
+    string? SupportEmail = null,
+    string? LogoUrl = null,
+    string? CompactLogoUrl = null,
+    string? EmailFromDisplayName = null,
+    string? Tagline = null);
 
 public sealed record BootstrapInitializationResult(bool Succeeded, string? Error, BootstrapDescriptor? Descriptor)
 {

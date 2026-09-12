@@ -49,8 +49,23 @@
                         <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm passphrase" InputType="InputType.Password" Required="true" FullWidth="true" />
                     </MudStep>
                     <MudStep Title="Branding">
-                        <MudText Typo="Typo.body2">Keep the RatelDesk defaults or apply the application name entered above. Other supported branding fields remain editable after sign-in.</MudText>
+                        <MudText Typo="Typo.body2">Keep the RatelDesk defaults or set supported instance branding now. All fields remain editable after sign-in.</MudText>
                         <MudCheckBox T="bool" @bind-Value="_keepDefaults" Label="Keep RatelDesk defaults" />
+                        @if (!_keepDefaults)
+                        {
+                            <MudTextField T="string" @bind-Value="_logoUrl" Label="Main logo URL" InputType="InputType.Url" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_compactLogoUrl" Label="Compact logo URL" InputType="InputType.Url" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_supportUrl" Label="Support URL" InputType="InputType.Url" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_supportEmail" Label="Support email" InputType="InputType.Email" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_emailFromDisplayName" Label="Email display name" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_tagline" Label="Tagline" FullWidth="true" />
+                            <MudPaper Outlined="true" Class="pa-3">
+                                <MudText Typo="Typo.subtitle2">Preview</MudText>
+                                @if (!string.IsNullOrWhiteSpace(_logoUrl)) { <MudImage Src="@_logoUrl" Alt="Configured RatelDesk logo preview" Height="48" /> }
+                                else { <MudText Typo="Typo.body2">RatelDesk default wordmark</MudText> }
+                                @if (!string.IsNullOrWhiteSpace(_tagline)) { <MudText Typo="Typo.caption">@_tagline</MudText> }
+                            </MudPaper>
+                        }
                     </MudStep>
                     <MudStep Title="Review">
                         <MudSimpleTable Dense="true"><tbody>
@@ -59,6 +74,7 @@
                             <tr><td>Application</td><td>@(_keepDefaults ? "RatelDesk defaults" : _applicationName)</td></tr>
                             <tr><td>Public URL</td><td>@_applicationUrl</td></tr>
                             <tr><td>Time zone</td><td>@_timeZoneId</td></tr>
+                            <tr><td>Branding</td><td>@(_keepDefaults ? "RatelDesk defaults" : "Custom preview configured")</td></tr>
                             <tr><td>Administrator</td><td>@_displayName (@_email)</td></tr>
                         </tbody></MudSimpleTable>
                     </MudStep>
@@ -84,6 +100,7 @@
     private string _setupCode = string.Empty, _provider = "Sqlite", _host = string.Empty, _database = string.Empty, _username = string.Empty, _databasePassword = string.Empty;
     private int _port = 5432;
     private string _organization = string.Empty, _applicationName = "RatelDesk", _applicationUrl = string.Empty, _timeZoneId = "UTC", _displayName = string.Empty, _email = string.Empty, _password = string.Empty, _confirmPassword = string.Empty;
+    private string _logoUrl = string.Empty, _compactLogoUrl = string.Empty, _supportUrl = string.Empty, _supportEmail = string.Empty, _emailFromDisplayName = string.Empty, _tagline = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -148,7 +165,7 @@
         _busy = true; _error = null;
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize") { Content = JsonContent.Create(new { email = _email, displayName = _displayName, password = _password, organizationName = _organization, applicationName = _keepDefaults ? null : _applicationName, applicationUrl = _applicationUrl, timeZoneId = _timeZoneId }) };
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize") { Content = JsonContent.Create(new { email = _email, displayName = _displayName, password = _password, organizationName = _organization, applicationName = _keepDefaults ? null : _applicationName, applicationUrl = _applicationUrl, timeZoneId = _timeZoneId, supportUrl = _keepDefaults ? null : _supportUrl, supportEmail = _keepDefaults ? null : _supportEmail, logoUrl = _keepDefaults ? null : _logoUrl, compactLogoUrl = _keepDefaults ? null : _compactLogoUrl, emailFromDisplayName = _keepDefaults ? null : _emailFromDisplayName, tagline = _keepDefaults ? null : _tagline }) };
             request.Headers.Add("X-RatelDesk-Setup-Session", _session);
             using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
             if (!response.IsSuccessStatusCode) { _error = "Initialization could not be completed. Check the setup details and passphrase."; return; }

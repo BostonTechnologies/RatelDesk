@@ -227,7 +227,13 @@ public sealed class BootstrapStateStoreTests
                 "correct horse battery staple",
                 "Example Organization",
                 "Example Desk",
-                "https://desk.example.test");
+                "https://desk.example.test",
+                LogoUrl: "https://desk.example.test/logo.svg",
+                CompactLogoUrl: "https://desk.example.test/compact.svg",
+                SupportUrl: "https://support.example.test",
+                SupportEmail: "support@example.test",
+                EmailFromDisplayName: "Example Desk Support",
+                Tagline: "The example service desk");
             var result = await initializer.InitializeAsync(configured, request, CancellationToken.None);
 
             Assert.True(result.Succeeded, result.Error);
@@ -253,6 +259,13 @@ public sealed class BootstrapStateStoreTests
             Assert.Equal(configured.OperationId, initialization.OperationId);
             Assert.NotEqual("unknown", initialization.SetupVersion);
             Assert.Equal("UTC", initialization.TimeZoneId);
+            var branding = await application.InstanceBrandings.SingleAsync();
+            Assert.Equal("https://desk.example.test/logo.svg", branding.LogoUrl);
+            Assert.Equal("https://desk.example.test/compact.svg", branding.CompactLogoUrl);
+            Assert.Equal("https://support.example.test", branding.SupportUrl);
+            Assert.Equal("support@example.test", branding.SupportEmail);
+            Assert.Equal("Example Desk Support", branding.EmailFromDisplayName);
+            Assert.Equal("The example service desk", branding.Tagline);
 
             var interruptedDescriptor = await store.UpdateAsync(current => current with
             {
