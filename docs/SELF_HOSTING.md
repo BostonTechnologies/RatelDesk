@@ -10,6 +10,8 @@ For built-in roles, scoped custom roles, and the bounded tenant-member delegatio
 
 Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. After the first API start, retrieve the operator-only setup code from `/var/lib/rateldesk/bootstrap/setup-code` in the API container and complete `http://localhost:8111/setup`. The code is consumed at completion and is never returned by HTTP APIs. On success, the API exits its restricted setup host and Compose restarts it into the normal application host; wait briefly for the sign-in page to become available.
 
+When `StorageOptions__ImageSigningSecret` is unset, a bootstrap-managed installation generates a cryptographically random image and public-ticket link signing key on its first normal runtime start. The value is protected with the same durable Data Protection key ring and stored on the bootstrap volume; it is not written to appsettings or returned by an API. Keep that volume and key ring in the recovery set so existing signed links remain valid. Set `StorageOptions__ImageSigningSecret` only when a deployment deliberately owns and rotates that secret; a deployment-provided value takes precedence over the generated one.
+
 An operator can prefill and lock non-secret interactive values with
 `Bootstrap__Interactive__OrganizationName`,
 `Bootstrap__Interactive__ApplicationName`,
