@@ -227,6 +227,12 @@ public class CurrentUserAccessServiceTests
                 UserId = "local-user",
                 OrganizationId = "org-b",
                 RoleKey = "custom.incident-reader"
+            },
+            new ScopedRoleAssignment
+            {
+                UserId = "local-user",
+                OrganizationId = "org-b",
+                RoleKey = ScopedRoleCatalog.TenantAdministrator
             });
         await db.SaveChangesAsync();
 
@@ -243,6 +249,8 @@ public class CurrentUserAccessServiceTests
         Assert.True(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-a"));
         Assert.False(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-b"));
         Assert.False(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-a"));
+        Assert.True(access.HasPermission(HelpdeskPermissions.TenantUsersManage, "org-b"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.TenantUsersManage, "org-a"));
     }
 
     [Fact]

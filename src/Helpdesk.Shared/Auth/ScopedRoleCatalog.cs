@@ -4,14 +4,21 @@ public static class ScopedRoleCatalog
 {
     public const string SelfServiceUser = "SelfServiceUser";
     public const string Technician = "Technician";
+    public const string TenantAdministrator = "TenantAdministrator";
 
     public static bool IsSupported(string roleKey) =>
-        roleKey is SelfServiceUser or Technician;
+        roleKey is SelfServiceUser or Technician or TenantAdministrator;
 
     public static IReadOnlyList<string> PermissionsFor(string roleKey) => roleKey switch
     {
         SelfServiceUser => HelpdeskPermissions.UserBundle,
         Technician => HelpdeskPermissions.TechnicalBundle,
+        TenantAdministrator =>
+        [
+            HelpdeskPermissions.TenantUsersManage,
+            HelpdeskPermissions.TenantRolesAssign,
+            HelpdeskPermissions.TenantSettingsManage
+        ],
         _ => []
     };
 }

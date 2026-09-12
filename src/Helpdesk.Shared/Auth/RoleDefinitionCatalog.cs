@@ -24,6 +24,15 @@ public static class RoleDefinitionCatalog
             RoleScopeKind.OwnResource,
             HelpdeskPermissions.UserBundle),
         new(
+            ScopedRoleCatalog.TenantAdministrator,
+            "Tenant Administrator",
+            RoleScopeKind.Tenant,
+            [
+                HelpdeskPermissions.TenantUsersManage,
+                HelpdeskPermissions.TenantRolesAssign,
+                HelpdeskPermissions.TenantSettingsManage
+            ]),
+        new(
             ScopedRoleCatalog.Technician,
             "Technician",
             RoleScopeKind.Tenant,
