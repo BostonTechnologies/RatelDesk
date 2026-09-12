@@ -523,6 +523,48 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Tenant_role_assignment_permission_alone_cannot_invite_a_local_account()
+    {
+        const string organizationId = "role-assignment-only-organization";
+        const string roleKey = "role-assignment-only";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "role.assigner@example.test", Email = "role.assigner@example.test", DisplayName = "Role Assigner" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("role.assigner@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            var role = new Role
+            {
+                Id = roleKey,
+                Key = roleKey,
+                Name = "Role assignment only",
+                Scope = RoleScopeKind.Tenant,
+                OwnerOrganizationId = organizationId
+            };
+            role.Permissions.Add(new RolePermission { RoleId = role.Id, Permission = HelpdeskPermissions.TenantRolesAssign });
+            db.Organizations.Add(new Organization { Id = organizationId, Name = "Role assignment only organization" });
+            db.Roles.Add(role);
+            db.Users.Add(new User { Id = userId, Name = "Role Assigner", Email = "role.assigner@example.test", OrganizationId = organizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = userId, OrganizationId = organizationId, RoleKey = roleKey });
+            await db.SaveChangesAsync();
+        }
+
+        using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "role.assigner@example.test", "correct horse battery staple"))).StatusCode);
+
+        var invite = await client.PostAsJsonAsync(
+            $"/api/v1/tenant-admin/organizations/{organizationId}/users/",
+            new TenantAdministrationEndpoints.CreateTenantLocalAccountRequest("Denied invite", "denied.invite@example.test"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, invite.StatusCode);
+    }
+
+    [Fact]
     public async Task Local_login_requires_an_authenticator_code_after_two_factor_is_enabled()
     {
         using var setupClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
