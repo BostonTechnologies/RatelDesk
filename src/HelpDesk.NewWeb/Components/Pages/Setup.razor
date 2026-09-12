@@ -28,12 +28,13 @@
             }
             <MudTextField T="string" @bind-Value="_organizationName" Label="Initial organization" Required="true" />
             <MudTextField T="string" @bind-Value="_applicationName" Label="Application name (optional)" />
-            <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL (optional)" InputType="InputType.Url" />
+            <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL" InputType="InputType.Url" Required="true" HelperText="Use the HTTPS URL that operators and end users will open." />
             <MudDivider />
             <MudText Typo="Typo.h6">First administrator</MudText>
             <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" />
             <MudTextField T="string" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" />
             <MudTextField T="string" @bind-Value="_password" Label="Password" InputType="InputType.Password" Required="true" />
+            <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm password" InputType="InputType.Password" Required="true" HelperText="Use at least 12 characters, including upper- and lowercase letters, a number, and a symbol." />
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="InitializeAsync">
                 @(_busy ? "Initializing…" : "Initialize instance")
             </MudButton>
@@ -51,6 +52,7 @@
     private string _displayName = string.Empty;
     private string _email = string.Empty;
     private string _password = string.Empty;
+    private string _confirmPassword = string.Empty;
     private string? _error;
     private bool _busy;
 
@@ -60,6 +62,19 @@
         _error = null;
         try
         {
+            if (!Uri.TryCreate(_applicationUrl, UriKind.Absolute, out var applicationUri) ||
+                applicationUri.Scheme is not ("https" or "http"))
+            {
+                _error = "Enter a valid public application URL.";
+                return;
+            }
+
+            if (!string.Equals(_password, _confirmPassword, StringComparison.Ordinal))
+            {
+                _error = "The administrator passwords do not match.";
+                return;
+            }
+
             var client = HttpClientFactory.CreateClient("SystemApiNoAuth");
             using var sessionResponse = await client.PostAsJsonAsync("/api/v1/setup/session", new { setupCode = _setupCode });
             if (!sessionResponse.IsSuccessStatusCode)
@@ -102,7 +117,7 @@
                     password = _password,
                     organizationName = _organizationName,
                     applicationName = string.IsNullOrWhiteSpace(_applicationName) ? null : _applicationName,
-                    applicationUrl = string.IsNullOrWhiteSpace(_applicationUrl) ? null : _applicationUrl
+                    applicationUrl = applicationUri.AbsoluteUri
                 })
             };
             initializeRequest.Headers.Add("X-RatelDesk-Setup-Session", session.Session);
@@ -114,6 +129,7 @@
             }
 
             _password = string.Empty;
+            _confirmPassword = string.Empty;
             Navigation.NavigateTo("/login", forceLoad: true);
         }
         catch (HttpRequestException)
