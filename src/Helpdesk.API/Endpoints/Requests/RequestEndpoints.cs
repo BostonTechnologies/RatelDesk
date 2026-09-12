@@ -382,6 +382,8 @@ public static class RequestEndpoints
         group.MapPut("/{id}", async (
             [FromRoute] string id,
             [FromBody] UpdateRequestDto dto,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Request> repo,
             [FromServices] IRepository<KnowledgeBaseArticle> kbRepo,
@@ -399,6 +401,9 @@ public static class RequestEndpoints
         {
             var existing = await repo.GetAsync(id);
             if (existing is null) return Results.Problem("Request not found", statusCode: 404);
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageRequest(existing.OrganizationId)) return Results.Forbid();
 
             var previousState = existing.State;
 
@@ -502,7 +507,8 @@ public static class RequestEndpoints
                 Sla = ToSlaDto(slaSnapshot)
             };
             return Results.Ok(resultDto);
-        });
+        })
+        .RequireAuthorization("RequestManager");
 
         group.MapPost("/bulk/state", async (
             [FromBody] BulkStateChangeRequest req,

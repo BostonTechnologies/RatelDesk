@@ -417,6 +417,8 @@ public static class ChangeEndpoints
         group.MapPut("/{id}", async (
             [FromRoute] string id,
             [FromBody] UpdateChangeDto dto,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Change> repo,
             [FromServices] IRepository<KnowledgeBaseArticle> kbRepo,
@@ -436,6 +438,9 @@ public static class ChangeEndpoints
         {
             var existing = await repo.GetAsync(id);
             if (existing is null) return Results.Problem("Change not found", statusCode: 404);
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageChange(existing.OrganizationId)) return Results.Forbid();
 
             var previousState = existing.State;
             var previousTemplateJson = existing.ChangeTemplateJson;
@@ -465,6 +470,10 @@ public static class ChangeEndpoints
                 if (organization is null)
                 {
                     return Results.BadRequest("The selected organization could not be found.");
+                }
+                if (!access.CanManageChange(organization.Id))
+                {
+                    return Results.Forbid();
                 }
 
                 existing.CustomerId = null;
@@ -859,7 +868,8 @@ public static class ChangeEndpoints
                 Sla = ToSlaDto(slaSnapshot)
             };
             return Results.Ok(resultDto);
-        });
+        })
+        .RequireAuthorization("ChangeManager");
 
         group.MapGet("/{id}/ai-review", async (
             [FromRoute] string id,
@@ -1322,10 +1332,22 @@ public static class ChangeEndpoints
             return Results.Created($"/api/v1/worklogs/{response.Id}", response);
         });
 
-        group.MapDelete("/{id}", async ([FromRoute] string id, [FromServices] IRepository<Change> repo) =>
-            await repo.DeleteAsync(id)
-                ? Results.NoContent()
-                : Results.Problem("Change not found", statusCode: 404));
+        group.MapDelete("/{id}", async (
+            [FromRoute] string id,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] IRepository<Change> repo,
+            CancellationToken token) =>
+        {
+            var change = await repo.GetAsync(id);
+            if (change is null) return Results.Problem("Change not found", statusCode: 404);
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageChange(change.OrganizationId)) return Results.Forbid();
+
+            return await repo.DeleteAsync(id) ? Results.NoContent() : Results.Problem("Change not found", statusCode: 404);
+        })
+        .RequireAuthorization("ChangeManager");
     }
 
     private static async Task<IResult> GetPublicChangeApproval(
