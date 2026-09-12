@@ -851,6 +851,18 @@ public static class NotificationEndpoints
                 var keepAliveTask = Task.Delay(keepAliveInterval, ct);
                 var completedTask = await Task.WhenAny(waitForDataTask, keepAliveTask);
 
+                access = await accessService.ResolveAsync(context.User, ct);
+                if (!access.IsHelpdeskAdmin &&
+                    !string.IsNullOrWhiteSpace(tenantId) &&
+                    !access.AllowedOrganizationIds.Contains(tenantId))
+                {
+                    logger.LogInformation(
+                        "Notification stream authorization revoked. User={UserId} Tenant={TenantId}",
+                        userId,
+                        tenantId);
+                    break;
+                }
+
                 if (completedTask == waitForDataTask)
                 {
                     if (!await waitForDataTask)

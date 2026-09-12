@@ -1586,6 +1586,21 @@ public static class ChangeEndpoints
                 var keepAliveTask = Task.Delay(keepAliveInterval, ct);
                 var completedTask = await Task.WhenAny(waitForDataTask, keepAliveTask);
 
+                var currentAuthorization = await AuthorizeChangeAsync(
+                    id,
+                    context.User,
+                    accessService,
+                    db,
+                    requireManager: false,
+                    ct);
+                if (currentAuthorization.Failure is not null)
+                {
+                    logger.LogInformation("Change timeline stream authorization revoked {TicketId}", id);
+                    break;
+                }
+
+                canManageChange = currentAuthorization.Access!.CanManageChange(currentAuthorization.OrganizationId);
+
                 if (completedTask == waitForDataTask)
                 {
                     if (!await waitForDataTask)

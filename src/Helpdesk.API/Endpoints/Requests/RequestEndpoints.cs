@@ -1261,6 +1261,21 @@ public static class RequestEndpoints
                 var keepAliveTask = Task.Delay(keepAliveInterval, ct);
                 var completedTask = await Task.WhenAny(waitForDataTask, keepAliveTask);
 
+                var currentAuthorization = await AuthorizeRequestAsync(
+                    id,
+                    context.User,
+                    accessService,
+                    db,
+                    requireManager: false,
+                    ct);
+                if (currentAuthorization.Failure is not null)
+                {
+                    logger.LogInformation("Request timeline stream authorization revoked {TicketId}", id);
+                    break;
+                }
+
+                canManageRequest = currentAuthorization.Access!.CanManageRequest(currentAuthorization.OrganizationId);
+
                 if (completedTask == waitForDataTask)
                 {
                     if (!await waitForDataTask)
