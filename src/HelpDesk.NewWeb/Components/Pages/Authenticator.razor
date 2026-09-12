@@ -1,0 +1,105 @@
+@page "/account/authenticator"
+
+@inject IHttpClientFactory HttpClientFactory
+
+<PageTitle>Authenticator app</PageTitle>
+
+<section class="helpdesk-login-page">
+    <MudPaper Elevation="2" Class="helpdesk-login-panel">
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.h4" HtmlTag="h1">Authenticator app</MudText>
+            <MudText Typo="Typo.body1">Set up a time-based authenticator and save the recovery codes somewhere secure.</MudText>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <MudAlert Severity="Severity.Error">@_error</MudAlert>
+            }
+            @if (!string.IsNullOrWhiteSpace(_sharedKey))
+            {
+                <MudAlert Severity="Severity.Warning">Scan or enter this key in your authenticator app, then enter its current six-digit code below.</MudAlert>
+                <MudTextField Value="@_sharedKey" Label="Authenticator key" ReadOnly="true" Variant="Variant.Outlined" FullWidth="true" />
+                <MudTextField T="string" @bind-Value="_code" Label="Authenticator code" InputType="InputType.Password" Required="true" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="EnableAsync">Enable authenticator</MudButton>
+            }
+            else
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="StartSetupAsync">Set up authenticator</MudButton>
+            }
+            @if (_recoveryCodes.Count > 0)
+            {
+                <MudAlert Severity="Severity.Warning">Copy these recovery codes now. They are shown only once.</MudAlert>
+                <MudTextField Value="@string.Join(Environment.NewLine, _recoveryCodes)" Label="Recovery codes" ReadOnly="true" Lines="10" Variant="Variant.Outlined" FullWidth="true" />
+            }
+        </MudStack>
+    </MudPaper>
+</section>
+
+@code {
+    private string? _sharedKey;
+    private string _code = string.Empty;
+    private List<string> _recoveryCodes = [];
+    private string? _error;
+    private bool _busy;
+
+    private async Task StartSetupAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("HelpdeskApi").PostAsync("api/v1/local-auth/two-factor/setup", content: null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = "Authenticator setup could not be started. Sign in again and retry.";
+                return;
+            }
+
+            var setup = await response.Content.ReadFromJsonAsync<AuthenticatorSetupResponse>();
+            if (string.IsNullOrWhiteSpace(setup?.SharedKey))
+            {
+                _error = "Authenticator setup could not be started. Sign in again and retry.";
+                return;
+            }
+
+            _sharedKey = setup.SharedKey;
+        }
+        catch (HttpRequestException)
+        {
+            _error = "The account service is unavailable. Please retry.";
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task EnableAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("HelpdeskApi").PostAsJsonAsync("api/v1/local-auth/two-factor/enable", new { code = _code });
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = "The authenticator code was not accepted.";
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<RecoveryCodesResponse>();
+            if (result is null)
+            {
+                _error = "The authenticator could not be enabled.";
+                return;
+            }
+
+            _recoveryCodes = result.RecoveryCodes;
+            _code = string.Empty;
+        }
+        catch (HttpRequestException)
+        {
+            _error = "The account service is unavailable. Please retry.";
+        }
+        finally { _busy = false; }
+    }
+
+    private sealed record AuthenticatorSetupResponse(string SharedKey, string AuthenticatorUri);
+    private sealed record RecoveryCodesResponse(List<string> RecoveryCodes);
+}
