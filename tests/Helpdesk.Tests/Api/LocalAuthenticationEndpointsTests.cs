@@ -503,7 +503,8 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
             "admin@example.test", "correct horse battery staple"))).StatusCode);
         var create = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
-            "Tenant Member", "tenant.member@example.test") { OrganizationId = organizationId });
+            "Tenant Member", "tenant.member@example.test")
+        { OrganizationId = organizationId });
         var activation = await create.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
 
@@ -708,6 +709,9 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([safeRole!.Key]));
         var visibleRoles = await client.GetFromJsonAsync<List<RoleDefinitionEndpoints.RoleDefinitionResponse>>(
             "/api/v1/admin/role-definitions/");
+        var delegableRolesResponse = await client.GetAsync(
+            $"/api/v1/tenant-admin/organizations/{organizationId}/users/roles");
+        var delegableRoles = await delegableRolesResponse.Content.ReadFromJsonAsync<List<TenantAdministrationEndpoints.TenantDelegableRoleResponse>>();
         var removeAssignment = await client.PutAsJsonAsync(
             $"/api/v1/tenant-admin/organizations/{organizationId}/users/{target!.UserId}/assignments",
             new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([]));
@@ -723,9 +727,13 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, assignment.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, removeAssignment.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, deleteOwnRole.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, delegableRolesResponse.StatusCode);
         Assert.Contains(visibleRoles!, role => role.Key == "custom.tenant-incident-reader" && role.Name == "Tenant incident manager" && role.OwnerOrganizationId == organizationId);
         Assert.DoesNotContain(visibleRoles!, role => role.Key == "custom.other-tenant-reader");
         Assert.Contains(visibleRoles!, role => role.IsBuiltIn);
+        Assert.Contains(delegableRoles!, role => role.Key == safeRole.Key && role.Name == "Tenant incident manager");
+        Assert.Contains(delegableRoles!, role => role.Key == ScopedRoleCatalog.SelfServiceUser);
+        Assert.DoesNotContain(delegableRoles!, role => role.Key == ScopedRoleCatalog.Technician);
         await using var verificationScope = _factory.Services.CreateAsyncScope();
         var roleAudits = await verificationScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().ActivityLogs
             .Where(log => log.RelatedEntityId == safeRole.Id)

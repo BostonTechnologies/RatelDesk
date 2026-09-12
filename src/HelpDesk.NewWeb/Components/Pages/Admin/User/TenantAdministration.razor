@@ -8,7 +8,7 @@
     <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
         <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Tenant members</MudText>
         <MudText Typo="Typo.body2" Class="mb-4">
-            Manage the self-service membership for local accounts in a tenant you administer. Account credentials and all other roles remain instance-administrator actions.
+            Manage delegable tenant roles for local accounts in a tenant you administer. Account credentials and instance-administrator access remain instance-administrator actions.
         </MudText>
 
         @if (!string.IsNullOrWhiteSpace(error))
@@ -60,18 +60,23 @@
                     <HeaderContent>
                         <MudTh>Name</MudTh>
                         <MudTh>Email</MudTh>
-                        <MudTh>Self-service access</MudTh>
+                        <MudTh>Delegable roles</MudTh>
                         <MudTh class="text-end"></MudTh>
                     </HeaderContent>
                     <RowTemplate>
                         <MudTd DataLabel="Name">@context.Name</MudTd>
                         <MudTd DataLabel="Email">@context.Email</MudTd>
-                        <MudTd DataLabel="Self-service access">
-                            <MudSwitch T="bool"
-                                       Value="@HasSelfServiceAccess(context)"
-                                       ValueChanged="enabled => SetSelfServiceAccess(context, enabled)"
-                                       Color="Color.Primary"
-                                       Label="@SelfServiceLabel(context)" />
+                        <MudTd DataLabel="Delegable roles">
+                            <MudStack Spacing="0">
+                                @foreach (var role in availableRoles)
+                                {
+                                    <MudCheckBox T="bool"
+                                                 Value="@HasRole(context, role.Key)"
+                                                 ValueChanged="enabled => SetRole(context, role.Key, enabled)"
+                                                 Color="Color.Primary"
+                                                 Label="@role.Name" />
+                                }
+                            </MudStack>
                         </MudTd>
                         <MudTd Class="text-end">
                             <MudButton Variant="Variant.Text"
@@ -95,7 +100,8 @@
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<TenantOrganization> organizations = new();
     private List<TenantMember> members = new();
-    private readonly Dictionary<string, bool> selfServiceAccess = new(StringComparer.OrdinalIgnoreCase);
+    private List<TenantDelegableRole> availableRoles = new();
+    private readonly Dictionary<string, HashSet<string>> roleAssignments = new(StringComparer.OrdinalIgnoreCase);
     private string? selectedOrganizationId;
     private string? savingUserId;
     private string? error;
@@ -175,6 +181,13 @@
         error = null;
         try
         {
+            var rolesResponse = await HelpdeskApi.GetAsync($"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/roles");
+            if (!rolesResponse.IsSuccessStatusCode)
+            {
+                error = "Delegable tenant roles could not be loaded. Refresh the page and try again.";
+                return;
+            }
+
             var response = await HelpdeskApi.GetAsync($"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/");
             if (!response.IsSuccessStatusCode)
             {
@@ -182,11 +195,14 @@
                 return;
             }
 
+            availableRoles = await rolesResponse.Content.ReadFromJsonAsync<List<TenantDelegableRole>>() ?? new();
             members = await response.Content.ReadFromJsonAsync<List<TenantMember>>() ?? new();
-            selfServiceAccess.Clear();
+            roleAssignments.Clear();
             foreach (var member in members)
             {
-                selfServiceAccess[member.UserId] = member.RoleKeys.Contains(SelfServiceRoleKey, StringComparer.OrdinalIgnoreCase);
+                roleAssignments[member.UserId] = member.RoleKeys
+                    .Where(roleKey => availableRoles.Any(role => string.Equals(role.Key, roleKey, StringComparison.OrdinalIgnoreCase)))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
             }
         }
         finally
@@ -195,16 +211,25 @@
         }
     }
 
-    private bool HasSelfServiceAccess(TenantMember member) =>
-        selfServiceAccess.TryGetValue(member.UserId, out var enabled) && enabled;
+    private bool HasRole(TenantMember member, string roleKey) =>
+        roleAssignments.TryGetValue(member.UserId, out var selectedRoles) && selectedRoles.Contains(roleKey);
 
     private bool IsChanged(TenantMember member) =>
-        HasSelfServiceAccess(member) != member.RoleKeys.Contains(SelfServiceRoleKey, StringComparer.OrdinalIgnoreCase);
+        !CurrentRoleKeys(member).SetEquals(member.RoleKeys
+            .Where(roleKey => availableRoles.Any(role => string.Equals(role.Key, roleKey, StringComparison.OrdinalIgnoreCase))));
 
-    private string SelfServiceLabel(TenantMember member) =>
-        HasSelfServiceAccess(member) ? "Granted" : "Not granted";
-
-    private void SetSelfServiceAccess(TenantMember member, bool enabled) => selfServiceAccess[member.UserId] = enabled;
+    private void SetRole(TenantMember member, string roleKey, bool enabled)
+    {
+        var selectedRoles = CurrentRoleKeys(member);
+        if (enabled)
+        {
+            selectedRoles.Add(roleKey);
+        }
+        else
+        {
+            selectedRoles.Remove(roleKey);
+        }
+    }
 
     private async Task SaveMembership(TenantMember member)
     {
@@ -217,10 +242,11 @@
         error = null;
         try
         {
-            var roles = HasSelfServiceAccess(member) ? new[] { SelfServiceRoleKey } : Array.Empty<string>();
             var response = await HelpdeskApi.PutAsJsonAsync(
                 $"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/{member.UserId}/assignments",
-                new ReplaceTenantMembershipRequest(roles));
+                new ReplaceTenantMembershipRequest(CurrentRoleKeys(member)
+                    .OrderBy(roleKey => roleKey, StringComparer.OrdinalIgnoreCase)
+                    .ToArray()));
             if (!response.IsSuccessStatusCode)
             {
                 error = "Tenant membership could not be saved. Confirm that you still have access to this tenant and try again.";
@@ -235,10 +261,20 @@
         }
     }
 
-    private const string SelfServiceRoleKey = "SelfServiceUser";
+    private HashSet<string> CurrentRoleKeys(TenantMember member)
+    {
+        if (!roleAssignments.TryGetValue(member.UserId, out var selectedRoles))
+        {
+            selectedRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            roleAssignments[member.UserId] = selectedRoles;
+        }
+
+        return selectedRoles;
+    }
 
     private sealed record TenantOrganization(string Id, string Name);
     private sealed record TenantMember(string UserId, string Name, string Email, IReadOnlyList<string> RoleKeys);
+    private sealed record TenantDelegableRole(string Key, string Name);
     private sealed record ReplaceTenantMembershipRequest(IReadOnlyList<string> RoleKeys);
     private sealed record CreateTenantLocalAccountRequest(string DisplayName, string Email);
     private sealed record TenantLocalAccountInvitation(string UserId, string Email, string ActivationToken);

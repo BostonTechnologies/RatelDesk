@@ -188,6 +188,30 @@ public static class TenantAdministrationEndpoints
                 .ToArray());
         });
 
+        group.MapGet("/roles", async (
+            string organizationId,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            if (!await CanManageAsync(context, accessService, organizationId, cancellationToken)) return Results.Forbid();
+
+            var roleKeys = await GetDelegableRoleKeysAsync(organizationId, db, cancellationToken);
+            var customRoleNames = await db.Roles.AsNoTracking()
+                .Where(role => roleKeys.Contains(role.Key))
+                .ToDictionaryAsync(role => role.Key, role => role.Name, StringComparer.OrdinalIgnoreCase, cancellationToken);
+
+            return Results.Ok(roleKeys
+                .Select(roleKey => new TenantDelegableRoleResponse(
+                    roleKey,
+                    customRoleNames.GetValueOrDefault(roleKey) ??
+                    RoleDefinitionCatalog.Find(roleKey)?.Name ??
+                    roleKey))
+                .OrderBy(role => role.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray());
+        });
+
         group.MapGet("/{userId}/assignments", async (
             string organizationId,
             string userId,
@@ -343,6 +367,7 @@ public static class TenantAdministrationEndpoints
     public sealed record TenantMembershipResponse(string UserId, string OrganizationId, IReadOnlyList<string> RoleKeys);
     public sealed record TenantOrganizationResponse(string Id, string Name);
     public sealed record TenantMemberResponse(string UserId, string Name, string Email, IReadOnlyList<string> RoleKeys);
+    public sealed record TenantDelegableRoleResponse(string Key, string Name);
     public sealed record CreateTenantLocalAccountRequest(string DisplayName, string Email);
     public sealed record TenantLocalAccountInvitationResponse(string UserId, string Email, string ActivationToken);
 
