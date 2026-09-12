@@ -1,5 +1,3 @@
-using Helpdesk.Application.ActivityLogs;
-using Helpdesk.Application.Messaging;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -19,13 +17,12 @@ public static class ActivityEndpoints
     {
         app.MapGet("/api/v1/incidents/{id}/activity", async (
             [FromRoute] string id,
-            [FromServices] IRequestSender sender,
             [FromServices] HelpdeskDbContext db,
             [FromServices] ICurrentUserAccessService accessService,
             HttpContext context,
             CancellationToken cancellationToken) =>
         {
-            var incident = await db.Incidents.AsNoTracking()
+            var incident = await db.Incidents.IgnoreQueryFilters().AsNoTracking()
                 .Where(candidate => candidate.Id == id)
                 .Select(candidate => new { candidate.OrganizationId, candidate.CustomerId, candidate.RequesterEmail })
                 .FirstOrDefaultAsync(cancellationToken);
@@ -49,7 +46,11 @@ public static class ActivityEndpoints
                 return Results.Forbid();
             }
 
-            return Results.Ok(await sender.Send(new GetIncidentActivityQuery(id), cancellationToken));
+            var activity = await db.ActivityLogs.IgnoreQueryFilters().AsNoTracking()
+                .Where(log => log.TicketId == id)
+                .OrderBy(log => log.Timestamp)
+                .ToListAsync(cancellationToken);
+            return Results.Ok(activity);
         })
             .RequireAuthorization()
             .WithName("GetIncidentActivity")
