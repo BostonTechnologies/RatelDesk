@@ -96,6 +96,60 @@ curl --fail --silent --show-error \
   --cookie "$cookie_jar" \
   "$web_base_url/api/v1/auth/me" | jq -e '.isAuthenticated == true and .isHelpdeskAdmin == true' > /dev/null
 
+access_payload="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  "$api_base_url/api/v1/auth/me")"
+organization_id="$(jq -er '.primaryOrganizationId' <<< "$access_payload")"
+administrator_id="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  "$api_base_url/api/v1/users/by-email/admin%40example.test" | jq -er '.id')"
+
+customer_payload="$(jq -nc --arg organizationId "$organization_id" '{name: "RC4 Smoke Customer", email: "rc4-smoke-customer@example.test", organizationId: $organizationId}')"
+customer_id="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data "$customer_payload" \
+  "$api_base_url/api/v1/customers" | jq -er '.id')"
+
+incident_payload="$(jq -nc --arg customerId "$customer_id" --arg organizationId "$organization_id" '{title: "RC4 smoke incident", description: "Production first-run incident verification.", priority: 0, customerId: $customerId, organizationId: $organizationId}')"
+incident_id="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data "$incident_payload" \
+  "$api_base_url/api/v1/incidents" | jq -er '.id')"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$api_base_url/api/v1/incidents/$incident_id" | jq -e --arg id "$incident_id" '.id == $id' > /dev/null
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --request PUT --header 'Content-Type: application/json' \
+  --data '{"state":3,"priority":1}' \
+  "$api_base_url/api/v1/incidents/$incident_id" > /dev/null
+
+request_payload="$(jq -nc --arg customerId "$customer_id" --arg organizationId "$organization_id" '{title: "RC4 smoke request", description: "Production first-run request verification.", priority: 0, customerId: $customerId, organizationId: $organizationId}')"
+request_id="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data "$request_payload" \
+  "$api_base_url/api/v1/requests" | jq -er '.id')"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$api_base_url/api/v1/requests/$request_id" | jq -e --arg id "$request_id" '.id == $id' > /dev/null
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --request PUT --header 'Content-Type: application/json' \
+  --data '{"state":3,"priority":1}' \
+  "$api_base_url/api/v1/requests/$request_id" > /dev/null
+
+change_payload="$(jq -nc --arg organizationId "$organization_id" --arg administratorId "$administrator_id" '{title: "RC4 smoke change", description: "Production first-run change verification.", priority: 0, organizationId: $organizationId, requestedForUserId: $administratorId, implementorUserId: $administratorId, changeType: "Standard", implementationStartAt: "2030-01-02T10:00:00Z", implementationEndAt: "2030-01-02T11:00:00Z", changeTemplate: {isPreApproved: true, existingRunbookReference: "RC4-SMOKE", scopeOfChange: "Smoke validation", affectedSystems: ["RatelDesk"], implementationSteps: ["Verify startup"], validationSteps: ["Verify ticket creation"], rollbackPlan: "Revert the smoke change"}}')"
+change_id="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data "$change_payload" \
+  "$api_base_url/api/v1/changes" | jq -er '.id')"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$api_base_url/api/v1/changes/$change_id" | jq -e --arg id "$change_id" '.id == $id' > /dev/null
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --request PUT --header 'Content-Type: application/json' \
+  --data '{"state":3,"priority":1}' \
+  "$api_base_url/api/v1/changes/$change_id" > /dev/null
+
 curl --fail --silent --show-error "$api_base_url/api/v1/setup/status" | jq -e '.state == "Ready"' > /dev/null
 
-echo "First-run $setup_provider setup and local sign-in smoke test passed."
+echo "First-run $setup_provider setup, local sign-in, and core ticket CRUD smoke test passed."
