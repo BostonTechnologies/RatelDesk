@@ -14,11 +14,13 @@ contains the selected provider, protected connection secret reference, durable
 operation ID, and transition journal. It never stores an administrator password.
 
 The setup service prepares the selected provider and schema before it accepts
-the first administrator password. Completion creates the initialization marker,
-organization, Identity principal, protected instance-administrator assignment,
-and role catalog in the application database transaction. The descriptor is
-then activated using the same operation ID. A restart reconciles those two
-boundaries; it neither duplicates the principal nor reopens setup.
+the first administrator password. It creates the Identity principal first so
+the application database can link that stable principal ID. The organization,
+domain-user link, initialization marker, and branding are then persisted
+together in the application database. The descriptor is activated
+only after that marker has committed, using the same operation ID. A restart
+recognizes a matching committed marker and activates the descriptor without
+duplicating the principal or reopening setup.
 
 The normal runtime is composed once, after a persisted state transition. It
 must not mutate the built DI container or select a provider per request. A
@@ -28,4 +30,3 @@ failed or missing selected database after prior initialization is
 Configuration precedence is deployment-owned configuration, durable
 installer/admin configuration, then product defaults. Example values shipped in
 application configuration are not deployment-owned configuration.
-
