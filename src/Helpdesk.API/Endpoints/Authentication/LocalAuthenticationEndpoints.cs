@@ -208,6 +208,43 @@ public static class LocalAuthenticationEndpoints
         })
         .RequireAuthorization("HelpdeskAdmin");
 
+        group.MapPost("/users/{userId}/enable", async (
+            string userId,
+            [FromServices] UserManager<ApplicationUser> users) =>
+        {
+            var target = await users.FindByIdAsync(userId);
+            if (target is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (target.IsEnabled)
+            {
+                return Results.NoContent();
+            }
+
+            target.IsEnabled = true;
+            target.DisabledAtUtc = null;
+            target.AuthorizationRevision++;
+            target.SecurityStamp = Guid.NewGuid().ToString("N");
+            var update = await users.UpdateAsync(target);
+            return update.Succeeded
+                ? Results.NoContent()
+                : Results.Problem("The local account could not be enabled.", statusCode: StatusCodes.Status409Conflict);
+        })
+        .RequireAuthorization("HelpdeskAdmin");
+
+        group.MapGet("/users/{userId}/status", async (
+            string userId,
+            [FromServices] UserManager<ApplicationUser> users) =>
+        {
+            var target = await users.FindByIdAsync(userId);
+            return target is null
+                ? Results.NotFound()
+                : Results.Ok(new LocalAccountStatusResponse(target.IsEnabled));
+        })
+        .RequireAuthorization("HelpdeskAdmin");
+
         group.MapPost("/users", async (
             [FromBody] CreateLocalAccountRequest request,
             [FromServices] UserManager<ApplicationUser> users,
@@ -362,6 +399,8 @@ public static class LocalAuthenticationEndpoints
     public sealed record ActivateLocalAccountRequest(string Email, string ActivationToken, string NewPassword);
 
     public sealed record LocalAccountActivationResponse(string UserId, string Email, string ActivationToken);
+
+    public sealed record LocalAccountStatusResponse(bool IsEnabled);
 
     public sealed record EnableTwoFactorRequest(string Code);
 

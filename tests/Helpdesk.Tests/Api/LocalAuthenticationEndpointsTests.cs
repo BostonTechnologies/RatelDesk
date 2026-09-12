@@ -139,6 +139,32 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Administrator_can_reenable_a_disabled_local_account()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var operatorCreate = await users.CreateAsync(
+            new ApplicationUser { UserName = "reenable.operator@example.test", Email = "reenable.operator@example.test", DisplayName = "Reenable Operator" },
+            "correct horse battery staple");
+        Assert.True(operatorCreate.Succeeded, string.Join(", ", operatorCreate.Errors.Select(error => error.Description)));
+        var operatorUser = await users.FindByEmailAsync("reenable.operator@example.test");
+
+        using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsync($"/api/v1/local-auth/users/{operatorUser!.Id}/disable", content: null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsync($"/api/v1/local-auth/users/{operatorUser.Id}/enable", content: null)).StatusCode);
+
+        using var operatorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var login = await operatorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "reenable.operator@example.test", "correct horse battery staple"));
+
+        Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+        Assert.True((await users.FindByIdAsync(operatorUser.Id))!.IsEnabled);
+    }
+
+    [Fact]
     public async Task Administrator_can_create_and_activate_a_local_account_with_a_single_use_token()
     {
         const string organizationId = "local-account-organization";
