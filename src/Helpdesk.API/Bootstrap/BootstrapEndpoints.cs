@@ -36,6 +36,7 @@ public static class BootstrapEndpoints
             [FromBody] SelectStorageRequest request,
             [FromServices] IBootstrapStateStore stateStore,
             [FromServices] BootstrapSessionService sessions,
+            [FromServices] BootstrapOptions options,
             CancellationToken cancellationToken) =>
         {
             if (!sessions.IsValid(session))
@@ -51,12 +52,30 @@ public static class BootstrapEndpoints
                 });
             }
 
+            if (string.Equals(request.Provider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Problem("PostgreSQL setup preflight is not available yet.", statusCode: StatusCodes.Status501NotImplemented);
+            }
+
+            var sqlitePath = Path.GetFullPath(string.IsNullOrWhiteSpace(request.SqlitePath)
+                ? Path.Combine(options.DataDirectory, "rateldesk.db")
+                : request.SqlitePath);
+            var allowedDataDirectory = Path.GetFullPath(options.DataDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!sqlitePath.StartsWith(allowedDataDirectory, StringComparison.Ordinal))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["sqlitePath"] = ["SQLite data must be stored under the configured bootstrap data directory."]
+                });
+            }
+
             var descriptor = await stateStore.UpdateAsync(current => current.State switch
             {
                 BootstrapState.Unconfigured or BootstrapState.Configuring => current with
                 {
                     State = BootstrapState.Configuring,
                     Provider = request.Provider,
+                    SqlitePath = sqlitePath,
                     OperationId = current.OperationId ?? Guid.NewGuid()
                 },
                 _ => current
@@ -68,11 +87,33 @@ public static class BootstrapEndpoints
         })
         .AllowAnonymous()
         .WithTags("Setup");
+
+        app.MapPost("/api/v1/setup/initialize", async (
+            [FromHeader(Name = "X-RatelDesk-Setup-Session")] string? session,
+            [FromBody] FirstAdministratorRequest request,
+            [FromServices] IBootstrapStateStore stateStore,
+            [FromServices] BootstrapSessionService sessions,
+            [FromServices] BootstrapInitializationService initializer,
+            CancellationToken cancellationToken) =>
+        {
+            if (!sessions.IsValid(session))
+            {
+                return Results.Unauthorized();
+            }
+
+            var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
+            var result = await initializer.InitializeSqliteAsync(descriptor, request, cancellationToken);
+            return result.Succeeded
+                ? Results.Ok(new BootstrapStatusResponse(result.Descriptor!.State, result.Descriptor.Provider))
+                : Results.Problem(result.Error, statusCode: StatusCodes.Status409Conflict);
+        })
+        .AllowAnonymous()
+        .WithTags("Setup");
     }
 
     private sealed record UnlockSetupRequest(string? SetupCode);
 
-    private sealed record SelectStorageRequest(string? Provider);
+    private sealed record SelectStorageRequest(string? Provider, string? SqlitePath);
 
     private sealed record SetupSessionResponse(string Session, DateTimeOffset ExpiresAtUtc);
 

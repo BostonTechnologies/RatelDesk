@@ -48,6 +48,7 @@ public sealed class FileBootstrapStateStore : IBootstrapStateStore
                 SetupCodeHash: Hash(setupCode),
                 SetupCodeCreatedAtUtc: DateTimeOffset.UtcNow,
                 Provider: null,
+                SqlitePath: null,
                 OperationId: null,
                 CompletedAtUtc: null);
 
@@ -76,6 +77,14 @@ public sealed class FileBootstrapStateStore : IBootstrapStateStore
                 ?? throw new InvalidOperationException("The bootstrap descriptor is missing.");
             var next = update(current);
             await WriteAsync(next, cancellationToken);
+            if (next.State is BootstrapState.Ready)
+            {
+                var codePath = Path.Combine(_options.StateDirectory, SetupCodeFileName);
+                if (File.Exists(codePath))
+                {
+                    File.Delete(codePath);
+                }
+            }
             return next;
         }
         finally

@@ -96,15 +96,27 @@ var builder = WebApplication.CreateBuilder(args);
 var systemTokenSecret = builder.Configuration["SYSTEM_TOKEN_SECRET"] ?? builder.Configuration["SystemTokenSecret"];
 var aiAgentOpsLogBuffer = new AiAgentOpsLogBuffer();
 var skipDatabaseStartup = builder.Configuration.GetValue<bool>("Helpdesk:SkipDatabaseStartup");
-var localAuthenticationOptions = builder.Configuration.GetSection(LocalAuthenticationOptions.SectionName).Get<LocalAuthenticationOptions>() ?? new LocalAuthenticationOptions();
-var localAuthenticationCookieName = localAuthenticationOptions.AllowInsecureLocalhost
-    ? "RatelDesk.Local"
-    : "__Host-RatelDesk.Local";
 var bootstrapOptions = builder.Configuration.GetSection(BootstrapOptions.SectionName).Get<BootstrapOptions>() ?? new BootstrapOptions();
 var bootstrapStateStore = new FileBootstrapStateStore(bootstrapOptions);
 var bootstrapDescriptor = !skipDatabaseStartup && string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("HelpdeskDb"))
     ? await bootstrapStateStore.LoadOrCreateAsync()
     : null;
+
+if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "Sqlite", SqlitePath: not null })
+{
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Database:Provider"] = "Sqlite",
+        ["Database:Sqlite:Path"] = bootstrapDescriptor.SqlitePath,
+        ["Authentication:Mode"] = "Local",
+        ["DataProtection:KeyRingPath"] = Path.Combine(bootstrapOptions.StateDirectory, "keys")
+    });
+}
+
+var localAuthenticationOptions = builder.Configuration.GetSection(LocalAuthenticationOptions.SectionName).Get<LocalAuthenticationOptions>() ?? new LocalAuthenticationOptions();
+var localAuthenticationCookieName = localAuthenticationOptions.AllowInsecureLocalhost
+    ? "RatelDesk.Local"
+    : "__Host-RatelDesk.Local";
 
 if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not BootstrapState.Ready)
 {
@@ -117,6 +129,7 @@ if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not Bootstra
     builder.Services.AddSingleton(bootstrapOptions);
     builder.Services.AddSingleton<IBootstrapStateStore>(bootstrapStateStore);
     builder.Services.AddSingleton<BootstrapSessionService>();
+    builder.Services.AddSingleton<BootstrapInitializationService>();
     builder.Services.AddRateLimiter(options =>
     {
         options.AddPolicy("SetupUnlock", context =>
@@ -861,8 +874,16 @@ if (!skipDatabaseStartup)
     {
         var ctx = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
         var identityDb = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
-        await ctx.Database.MigrateAsync();
-        await identityDb.Database.MigrateAsync();
+        if (ctx.Database.IsSqlite())
+        {
+            await ctx.Database.EnsureCreatedAsync();
+            await LocalIdentityDatabaseInitializer.EnsureSqliteSchemaAsync(identityDb);
+        }
+        else
+        {
+            await ctx.Database.MigrateAsync();
+            await identityDb.Database.MigrateAsync();
+        }
         await TicketCategorySeed.SeedAsync(ctx);
         await SlaPolicySeed.SeedAsync(ctx);
 

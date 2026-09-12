@@ -6,5 +6,7 @@ public sealed class BootstrapOptions
 
     public string StateDirectory { get; init; } = "/var/lib/rateldesk/bootstrap";
 
+    public string DataDirectory { get; init; } = "/var/lib/rateldesk/data";
+
     public string? SetupCode { get; init; }
 }

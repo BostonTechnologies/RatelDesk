@@ -7,5 +7,6 @@ public sealed record BootstrapDescriptor(
     string SetupCodeHash,
     DateTimeOffset SetupCodeCreatedAtUtc,
     string? Provider,
+    string? SqlitePath,
     Guid? OperationId,
     DateTimeOffset? CompletedAtUtc);

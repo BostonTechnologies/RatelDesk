@@ -15,6 +15,7 @@ public sealed class RatelDeskIdentityDbContext(DbContextOptions<RatelDeskIdentit
         {
             entity.Property(user => user.DisplayName).HasMaxLength(256);
             entity.Property(user => user.IsEnabled).HasDefaultValue(true);
+            entity.Property(user => user.IsInstanceAdministrator).HasDefaultValue(false);
             entity.Property(user => user.AuthorizationRevision).HasDefaultValue(0L);
             entity.HasIndex(user => user.IsEnabled);
         });
