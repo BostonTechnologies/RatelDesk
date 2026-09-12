@@ -44,7 +44,7 @@
 
         <AuthorizeView Roles="Incident.Manager,Request.Manager,Change.Manager,DataManagement.Admin,HelpdeskAdmin" Context="resourcesGate">
         <MudNavGroup Title="Resources" Icon="@Icons.Material.Filled.Source" Expanded="false">
-             <AuthorizeView Roles="Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin" Context="assetAuth">
+             <AuthorizeView Roles="HelpdeskAdmin" Context="assetAuth">
                 <MudNavLink Href="assets" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Inventory">Assets</MudNavLink>
              </AuthorizeView>
              <AuthorizeView Roles="HelpdeskAdmin,DataManagement.Admin" Context="dataManagementAuth">

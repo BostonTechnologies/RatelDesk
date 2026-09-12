@@ -1,5 +1,5 @@
 @page "/assets"
-@attribute [Authorize(Roles = "Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "HelpdeskAdmin")]
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager NavigationManager
 @inject IDialogService DialogService
