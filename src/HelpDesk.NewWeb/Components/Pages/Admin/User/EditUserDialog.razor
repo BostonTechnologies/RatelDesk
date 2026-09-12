@@ -10,33 +10,78 @@
         </MudText>
     </TitleContent>
     <DialogContent>
-        <MudForm Model="model" @ref="form" OnValidSubmit="Submit" Class="mt-2">
-            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
-            <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
-            @* Password removed: OIDC-only sign-in *@
-            <MudSelect T="string" @bind-Value="model.Role" Label="Role" Required="true">
-                <MudSelectItem T="string" Value="@("Admin")">Admin</MudSelectItem>
-                <MudSelectItem T="string" Value="@("User")">User</MudSelectItem>
-                <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
-            </MudSelect>
-            <MudSelect T="string"
-                       @bind-Value="model.OrganizationId"
-                       Label="Organization"
-                       Clearable="true">
-                @foreach (var organization in organizations)
+        @if (isLocalAccount)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+                Local account access is granted per organization. Credentials and instance-administrator access are managed separately.
+            </MudAlert>
+            @if (!string.IsNullOrWhiteSpace(error))
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@error</MudAlert>
+            }
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="string" @bind-Value="newRoleKey" Label="Role" Required="true">
+                        <MudSelectItem T="string" Value="@("SelfServiceUser")">Self-service User</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="string" @bind-Value="newOrganizationId" Label="Organization" Required="true">
+                        @foreach (var organization in organizations)
+                        {
+                            <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+            <MudButton OnClick="AddAssignment" Variant="Variant.Outlined" Color="Color.Primary" Class="mt-2">Add scoped role</MudButton>
+            <MudList T="LocalScopedRoleAssignment" Dense="true" Class="mt-3">
+                @foreach (var assignment in assignments)
                 {
-                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                    <MudListItem T="LocalScopedRoleAssignment" Value="@assignment">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="w-100">
+                            <MudText>@RoleLabel(assignment.RoleKey) — @OrganizationLabel(assignment.OrganizationId)</MudText>
+                            <MudSpacer />
+                            <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                           Color="Color.Error"
+                                           Size="Size.Small"
+                                           aria-label="Remove scoped role"
+                                           OnClick="() => RemoveAssignment(assignment)" />
+                        </MudStack>
+                    </MudListItem>
                 }
-            </MudSelect>
-            <MudSwitch @bind-Value="model.IsTestUser"
-                       Color="Color.Warning"
-                       Label="Allow access to in-testing self-service requests"
-                       Class="mt-2" />
-        </MudForm>
+            </MudList>
+        }
+        else
+        {
+            <MudForm Model="model" @ref="form" OnValidSubmit="Submit" Class="mt-2">
+                <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+                <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
+                <MudSelect T="string" @bind-Value="model.Role" Label="Role" Required="true">
+                    <MudSelectItem T="string" Value="@("Admin")">Admin</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("User")">User</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
+                </MudSelect>
+                <MudSelect T="string"
+                           @bind-Value="model.OrganizationId"
+                           Label="Organization"
+                           Clearable="true">
+                    @foreach (var organization in organizations)
+                    {
+                        <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSwitch @bind-Value="model.IsTestUser"
+                           Color="Color.Warning"
+                           Label="Allow access to in-testing self-service requests"
+                           Class="mt-2" />
+            </MudForm>
+        }
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">@(isLocalAccount ? "Save access" : "Save")</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -48,6 +93,11 @@
     private MudForm form = default!;
     private EditUserModel model = new();
     private List<OrganizationDto> organizations = new();
+    private List<LocalScopedRoleAssignment> assignments = new();
+    private bool isLocalAccount;
+    private string newRoleKey = "SelfServiceUser";
+    private string? newOrganizationId;
+    private string? error;
 
     protected override async Task OnInitializedAsync()
     {
@@ -64,10 +114,43 @@
             IsTestUser = User.IsTestUser,
             OrganizationId = User.OrganizationId
         };
+
+        var assignmentResponse = await HelpdeskApi.GetAsync($"api/v1/local-auth/users/{User.Id}/assignments");
+        if (assignmentResponse.IsSuccessStatusCode)
+        {
+            var response = await assignmentResponse.Content.ReadFromJsonAsync<LocalScopedRoleAssignmentsResponse>();
+            assignments = response?.Assignments.ToList() ?? new();
+            isLocalAccount = true;
+            newOrganizationId = organizations.FirstOrDefault()?.Id;
+        }
     }
 
     private async Task Submit()
     {
+        error = null;
+        if (isLocalAccount)
+        {
+            if (assignments.Count == 0)
+            {
+                error = "A local account must retain at least one scoped role.";
+                return;
+            }
+
+            var response = await HelpdeskApi.PutAsJsonAsync(
+                $"api/v1/local-auth/users/{User.Id}/assignments",
+                new ReplaceLocalScopedRoleAssignmentsRequest(assignments));
+            if (response.IsSuccessStatusCode)
+            {
+                Dialog.Close(DialogResult.Ok(true));
+            }
+            else
+            {
+                error = "The scoped roles could not be saved. Confirm each organization is enabled and try again.";
+            }
+
+            return;
+        }
+
         await form.ValidateAsync();
         if (form.IsValid)
         {
@@ -81,6 +164,38 @@
 
     private void Cancel() => Dialog.Cancel();
 
+    private void AddAssignment()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(newOrganizationId))
+        {
+            error = "Select an organization before adding a scoped role.";
+            return;
+        }
+
+        if (assignments.Any(assignment =>
+                string.Equals(assignment.RoleKey, newRoleKey, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(assignment.OrganizationId, newOrganizationId, StringComparison.OrdinalIgnoreCase)))
+        {
+            error = "That role is already assigned to the selected organization.";
+            return;
+        }
+
+        assignments.Add(new LocalScopedRoleAssignment(newRoleKey, newOrganizationId));
+    }
+
+    private void RemoveAssignment(LocalScopedRoleAssignment assignment) => assignments.Remove(assignment);
+
+    private string OrganizationLabel(string organizationId) =>
+        organizations.FirstOrDefault(organization => organization.Id == organizationId)?.Name ?? organizationId;
+
+    private static string RoleLabel(string roleKey) => roleKey switch
+    {
+        "SelfServiceUser" => "Self-service User",
+        "Technician" => "Technician",
+        _ => roleKey
+    };
+
     public class EditUserModel
     {
         [Required]
@@ -93,4 +208,10 @@
         public bool IsTestUser { get; set; }
         public string? OrganizationId { get; set; }
     }
+
+    private sealed record LocalScopedRoleAssignment(string RoleKey, string OrganizationId);
+
+    private sealed record LocalScopedRoleAssignmentsResponse(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
+
+    private sealed record ReplaceLocalScopedRoleAssignmentsRequest(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
 }
