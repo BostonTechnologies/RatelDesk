@@ -22,7 +22,7 @@ public interface ITokenService
 
 public class TokenService : ITokenService
 {
-    private const string RefreshedAccessTokenItemKey = "Helpdesk.RefreshedAccessToken";
+    internal const string RefreshedAccessTokenItemKey = "Helpdesk.RefreshedAccessToken";
     internal const string SessionRefreshedItemKey = "Helpdesk.SessionRefreshed";
     private static readonly TimeSpan HelpdeskSessionLifetime = TimeSpan.FromHours(8);
     private static readonly TimeSpan RecentRefreshResultLifetime = TimeSpan.FromSeconds(30);

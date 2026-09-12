@@ -44,12 +44,8 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
             }
         }
 
-        var groups = ClaimValues(user, "groups", "provider_role").ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var issuer = FirstClaim(user, "iss")?.TrimEnd('/');
-        if (IsApplicationRoleClaimSource(user) || string.IsNullOrWhiteSpace(issuer))
-        {
-            groups.UnionWith(ClaimValues(user, ClaimTypes.Role, "roles"));
-        }
+        var groups = ClaimValues(user, "groups", "provider_role", ClaimTypes.Role, "roles")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var bundles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var scopedPermissionGrants = new HashSet<ScopedPermissionGrant>();
@@ -79,6 +75,7 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
         }
 
         var email = FirstClaim(user, ClaimTypes.Email, "email", "preferred_username");
+        var issuer = FirstClaim(user, "iss")?.TrimEnd('/');
         var subject = FirstClaim(user, "sub");
         var authentikUserId = FirstClaim(user, "authentik_user_id", "ak_user_id");
 
@@ -250,11 +247,6 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
 
     private static bool IsLocalAccount(ClaimsPrincipal user) =>
         string.Equals(user.FindFirstValue("auth_mode"), "local", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsApplicationRoleClaimSource(ClaimsPrincipal user) =>
-        IsLocalAccount(user) ||
-        string.Equals(user.FindFirstValue("auth_mode"), "ai_agent", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(user.FindFirstValue("auth_mode"), "system", StringComparison.OrdinalIgnoreCase);
 
     private static void AddLocalRoleBundle(
         string role,

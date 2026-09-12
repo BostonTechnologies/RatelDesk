@@ -1,6 +1,8 @@
 extern alias NewWeb;
 
 using NewWeb::HelpDesk.NewWeb.Services;
+using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.DTOs.Auth;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
@@ -9,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using System.Net;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using Xunit;
@@ -474,6 +477,44 @@ public class TokenServiceTests
         await events.ValidatePrincipal(validateContext);
 
         Assert.True(validateContext.ShouldRenew);
+    }
+
+    [Fact]
+    public async Task CookieValidation_Reprojects_Oidc_access_from_the_api()
+    {
+        var identity = new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, "operator@example.test"), new Claim(ClaimTypes.Role, HelpdeskPermissions.ChangeManager)],
+            "test");
+        var principal = new ClaimsPrincipal(identity);
+        var properties = new AuthenticationProperties();
+        properties.StoreTokens([new AuthenticationToken { Name = "access_token", Value = "access-token" }, new AuthenticationToken { Name = "expires_at", Value = DateTime.UtcNow.AddHours(1).ToString("O") }]);
+        var ticket = new AuthenticationTicket(principal, properties, CookieAuthenticationDefaults.AuthenticationScheme);
+        var context = new DefaultHttpContext { User = principal };
+        var scheme = new AuthenticationScheme(CookieAuthenticationDefaults.AuthenticationScheme, CookieAuthenticationDefaults.AuthenticationScheme, typeof(CookieAuthenticationHandler));
+        var validation = new CookieValidatePrincipalContext(context, scheme, new CookieAuthenticationOptions(), ticket);
+        var factory = Substitute.For<IHttpClientFactory>();
+        factory.CreateClient("SystemApiNoAuth").Returns(new HttpClient(new StubMessageHandler(request =>
+        {
+            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
+            Assert.Equal("access-token", request.Headers.Authorization?.Parameter);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new CurrentUserAccessDto(true, "Operator", "operator@example.test", "org-a", "Organization A", null, false,
+                    [HelpdeskRoleBundles.User], [HelpdeskPermissions.IncidentUser], ["org-a"], []))
+            };
+        }))
+        { BaseAddress = new Uri("https://api.example.test") });
+        var events = new CookieOidcSessionEvents(
+            new RefreshingTokenService(),
+            NullLogger<CookieOidcSessionEvents>.Instance,
+            factory);
+
+        await events.ValidatePrincipal(validation);
+
+        Assert.True(validation.ShouldRenew);
+        Assert.True(principal.IsInRole(HelpdeskPermissions.IncidentUser));
+        Assert.False(principal.IsInRole(HelpdeskPermissions.ChangeManager));
+        Assert.Contains(principal.Claims, claim => claim.Type == "organization_id" && claim.Value == "org-a");
     }
 
     [Fact]
