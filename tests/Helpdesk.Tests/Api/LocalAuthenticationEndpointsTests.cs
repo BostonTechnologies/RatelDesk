@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Helpdesk.API;
 using Helpdesk.API.Endpoints.Authentication;
 using Helpdesk.Infrastructure.Identity;
+using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.DTOs.Auth;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
@@ -139,6 +140,9 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         Assert.NotNull(activation);
         Assert.False(string.IsNullOrWhiteSpace(activation.ActivationToken));
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var domainDb = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        Assert.True(await domainDb.Users.AnyAsync(user => user.Id == activation.UserId && user.Email == activation.Email));
 
         var activate = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/activate", new LocalAuthenticationEndpoints.ActivateLocalAccountRequest(
             activation.Email, activation.ActivationToken, "another secure passphrase"));

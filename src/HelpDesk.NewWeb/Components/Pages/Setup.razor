@@ -127,7 +127,7 @@
                 {
                     provider = _storageProvider,
                     postgreSqlHost = _storageProvider == "PostgreSql" ? _postgreSqlHost : null,
-                    postgreSqlPort = _storageProvider == "PostgreSql" ? _postgreSqlPort : null,
+                    postgreSqlPort = _storageProvider == "PostgreSql" ? _postgreSqlPort : (int?)null,
                     postgreSqlDatabase = _storageProvider == "PostgreSql" ? _postgreSqlDatabase : null,
                     postgreSqlUsername = _storageProvider == "PostgreSql" ? _postgreSqlUsername : null,
                     postgreSqlPassword = _storageProvider == "PostgreSql" ? _postgreSqlPassword : null,

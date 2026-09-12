@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using Helpdesk.Infrastructure.Identity;
+using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Models;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
@@ -118,7 +120,8 @@ public static class LocalAuthenticationEndpoints
 
         group.MapPost("/users", async (
             [FromBody] CreateLocalAccountRequest request,
-            [FromServices] UserManager<ApplicationUser> users) =>
+            [FromServices] UserManager<ApplicationUser> users,
+            [FromServices] HelpdeskDbContext db) =>
         {
             if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.DisplayName))
             {
@@ -128,10 +131,19 @@ public static class LocalAuthenticationEndpoints
                 });
             }
 
+            var normalizedEmail = request.Email.Trim();
+            if (await db.Users.AnyAsync(domainUser => domainUser.Email == normalizedEmail))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["account"] = ["The email is already linked to an application user."]
+                });
+            }
+
             var user = new ApplicationUser
             {
-                UserName = request.Email.Trim(),
-                Email = request.Email.Trim(),
+                UserName = normalizedEmail,
+                Email = normalizedEmail,
                 DisplayName = request.DisplayName.Trim(),
                 IsInstanceAdministrator = request.IsInstanceAdministrator,
                 EmailConfirmed = false
@@ -143,6 +155,23 @@ public static class LocalAuthenticationEndpoints
                 {
                     ["account"] = ["The local account could not be created. The email may already be in use."]
                 });
+            }
+
+            try
+            {
+                db.Users.Add(new User
+                {
+                    Id = user.Id,
+                    Name = user.DisplayName,
+                    Email = user.Email!,
+                    Role = user.IsInstanceAdministrator ? "HelpdeskAdmin" : "User"
+                });
+                await db.SaveChangesAsync();
+            }
+            catch (Exception)
+            {
+                await users.DeleteAsync(user);
+                return Results.Problem("The local account could not be linked to the application user record.", statusCode: StatusCodes.Status409Conflict);
             }
 
             var activationToken = await users.GeneratePasswordResetTokenAsync(user);
