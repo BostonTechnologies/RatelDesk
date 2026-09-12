@@ -16,6 +16,10 @@ public sealed class UserAccessClaimsMiddleware(RequestDelegate next)
             {
                 AddClaim(identity, "allowed_organization_id", organizationId);
             }
+            foreach (var grant in access.ScopedPermissionGrants)
+            {
+                AddClaim(identity, "scoped_permission", grant.ToString());
+            }
             foreach (var role in access.RoleBundles.Concat(access.Permissions))
             {
                 AddClaim(identity, ClaimTypes.Role, role);

@@ -79,9 +79,10 @@ public static class IncidentEndpoints
             if (!access.IsHelpdeskAdmin)
             {
                 var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                if (access.HasPermission(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentManager))
+                var managerOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentManager).ToArray();
+                if (managerOrganizationIds.Length > 0)
                 {
-                    query = query.Where(x => allowedOrganizationIds.Contains(x.Incident.OrganizationId));
+                    query = query.Where(x => managerOrganizationIds.Contains(x.Incident.OrganizationId));
                 }
                 else
                 {

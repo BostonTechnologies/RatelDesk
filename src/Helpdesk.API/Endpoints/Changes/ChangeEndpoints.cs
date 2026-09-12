@@ -1577,9 +1577,10 @@ public static class ChangeEndpoints
         if (!access.IsHelpdeskAdmin)
         {
             var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-            if (access.HasPermission(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeManager))
+            var managerOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeManager).ToArray();
+            if (managerOrganizationIds.Length > 0)
             {
-                query = query.Where(x => allowedOrganizationIds.Contains(x.Change.OrganizationId));
+                query = query.Where(x => managerOrganizationIds.Contains(x.Change.OrganizationId));
             }
             else
             {

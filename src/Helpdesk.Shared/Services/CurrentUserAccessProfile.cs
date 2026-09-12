@@ -16,26 +16,55 @@ public sealed record CurrentUserAccessProfile(
     IReadOnlySet<string> AllowedOrganizationIds,
     IReadOnlySet<string> ManagedOrganizationIds)
 {
+    public IReadOnlySet<ScopedPermissionGrant> ScopedPermissionGrants { get; init; } =
+        new HashSet<ScopedPermissionGrant>();
+
     public bool HasPermission(string permission) =>
         IsHelpdeskAdmin || Permissions.Contains(permission);
+
+    public bool HasPermission(string permission, string? organizationId)
+    {
+        if (IsHelpdeskAdmin)
+        {
+            return true;
+        }
+
+        if (ScopedPermissionGrants.Count > 0)
+        {
+            return !string.IsNullOrWhiteSpace(organizationId) &&
+                   ScopedPermissionGrants.Contains(new ScopedPermissionGrant(permission, organizationId));
+        }
+
+        return InAllowedOrg(organizationId) && Permissions.Contains(permission);
+    }
+
+    public IReadOnlySet<string> OrganizationIdsFor(string permission) =>
+        ScopedPermissionGrants.Count > 0
+            ? ScopedPermissionGrants
+                .Where(grant => string.Equals(grant.Permission, permission, StringComparison.OrdinalIgnoreCase))
+                .Select(grant => grant.OrganizationId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : HasPermission(permission)
+                ? AllowedOrganizationIds
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     public bool CanViewIncident(string? organizationId, string? customerId, string? requesterEmail) =>
         CanManageIncident(organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageIncident(string? organizationId) =>
-        IsHelpdeskAdmin || InAllowedOrg(organizationId) && HasPermission(HelpdeskPermissions.IncidentManager);
+        HasPermission(HelpdeskPermissions.IncidentManager, organizationId);
 
     public bool CanViewRequest(string? organizationId, string? customerId, string? requesterEmail) =>
         CanManageRequest(organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageRequest(string? organizationId) =>
-        IsHelpdeskAdmin || InAllowedOrg(organizationId) && HasPermission(HelpdeskPermissions.RequestManager);
+        HasPermission(HelpdeskPermissions.RequestManager, organizationId);
 
     public bool CanViewChange(string? organizationId, string? customerId, string? requesterEmail) =>
         CanManageChange(organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageChange(string? organizationId) =>
-        IsHelpdeskAdmin || InAllowedOrg(organizationId) && HasPermission(HelpdeskPermissions.ChangeManager);
+        HasPermission(HelpdeskPermissions.ChangeManager, organizationId);
 
     public static CurrentUserAccessProfile FromClaims(ClaimsPrincipal user)
     {
@@ -53,6 +82,19 @@ public sealed record CurrentUserAccessProfile(
             roleValues.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
             roleValues.Contains(AuthentikRbacGroups.HelpdeskAdmin);
 
+        var scopedPermissionGrants = user.FindAll("scoped_permission")
+            .Select(claim => ScopedPermissionGrant.TryParse(claim.Value))
+            .OfType<ScopedPermissionGrant>()
+            .ToHashSet();
+
+        var allowedOrganizationIds = user.FindAll("allowed_organization_id")
+            .Select(claim => claim.Value)
+            .Append(FirstClaim(user, "organization_id", "tenant_id"))
+            .OfType<string>()
+            .Concat(scopedPermissionGrants.Select(grant => grant.OrganizationId))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         return new CurrentUserAccessProfile(
             true,
             user.Identity?.Name ?? FirstClaim(user, "name", "preferred_username", ClaimTypes.Email, "email"),
@@ -63,16 +105,14 @@ public sealed record CurrentUserAccessProfile(
             isAdmin,
             roleValues,
             roleValues,
-            user.FindAll("allowed_organization_id")
-                .Select(claim => claim.Value)
-                .Append(FirstClaim(user, "organization_id", "tenant_id"))
-                .OfType<string>()
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            allowedOrganizationIds,
             user.FindAll("managed_organization_id")
                 .Select(claim => claim.Value)
                 .Where(value => !string.IsNullOrWhiteSpace(value))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase));
+                .ToHashSet(StringComparer.OrdinalIgnoreCase))
+        {
+            ScopedPermissionGrants = scopedPermissionGrants
+        };
     }
 
     private static string? FirstClaim(ClaimsPrincipal user, params string[] claimTypes)
@@ -103,11 +143,30 @@ public sealed record CurrentUserAccessProfile(
         new HashSet<string>(StringComparer.OrdinalIgnoreCase));
 
     private bool CanOwn(string permission, string? organizationId, string? customerId, string? requesterEmail) =>
-        InAllowedOrg(organizationId) &&
-        HasPermission(permission) &&
+        HasPermission(permission, organizationId) &&
         ((!string.IsNullOrWhiteSpace(customerId) && string.Equals(customerId, CustomerId, StringComparison.OrdinalIgnoreCase)) ||
          (!string.IsNullOrWhiteSpace(requesterEmail) && string.Equals(requesterEmail, Email, StringComparison.OrdinalIgnoreCase)));
 
     private bool InAllowedOrg(string? organizationId) =>
         !string.IsNullOrWhiteSpace(organizationId) && AllowedOrganizationIds.Contains(organizationId);
+}
+
+public sealed record ScopedPermissionGrant(string Permission, string OrganizationId)
+{
+    public override string ToString() => $"{Permission}|{OrganizationId}";
+
+    public static ScopedPermissionGrant? TryParse(string value)
+    {
+        var separator = value.IndexOf('|', StringComparison.Ordinal);
+        if (separator <= 0 || separator == value.Length - 1)
+        {
+            return null;
+        }
+
+        var permission = value[..separator].Trim();
+        var organizationId = value[(separator + 1)..].Trim();
+        return string.IsNullOrWhiteSpace(permission) || string.IsNullOrWhiteSpace(organizationId)
+            ? null
+            : new ScopedPermissionGrant(permission, organizationId);
+    }
 }
