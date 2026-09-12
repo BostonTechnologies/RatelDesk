@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Data;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -273,6 +274,14 @@ public static class LocalAuthenticationEndpoints
             var organizationId = string.IsNullOrWhiteSpace(request.OrganizationId)
                 ? null
                 : request.OrganizationId.Trim();
+            if (!request.IsInstanceAdministrator && organizationId is null)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["organizationId"] = ["A local User or Technician account must be assigned to an enabled organization."]
+                });
+            }
+
             if (organizationId is not null && !await db.Organizations.AnyAsync(organization => organization.Id == organizationId && organization.IsEnabled))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
@@ -317,6 +326,17 @@ public static class LocalAuthenticationEndpoints
                     OrganizationId = organizationId,
                     IsTestUser = request.IsTestUser
                 });
+                if (organizationId is not null && !user.IsInstanceAdministrator)
+                {
+                    db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+                    {
+                        UserId = user.Id,
+                        OrganizationId = organizationId,
+                        RoleKey = role == "Technician"
+                            ? ScopedRoleCatalog.Technician
+                            : ScopedRoleCatalog.SelfServiceUser
+                    });
+                }
                 await db.SaveChangesAsync();
             }
             catch (Exception)

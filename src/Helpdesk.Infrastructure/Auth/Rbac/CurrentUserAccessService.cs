@@ -72,6 +72,7 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
             ? null
             : await db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == localDomainUser.OrganizationId, ct);
         var hasActiveLocalDomainUser = localDomainUser is not null && localOrganization?.IsEnabled == true;
+        var scopedPermissionGrants = new HashSet<ScopedPermissionGrant>();
 
         if (hasActiveCustomer)
         {
@@ -92,7 +93,26 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         }
         else if (hasActiveLocalDomainUser)
         {
-            AddLocalRoleBundle(localDomainUser!.Role, bundles, permissions);
+            var assignments = await (
+                    from assignment in db.ScopedRoleAssignments.AsNoTracking()
+                    join assignmentOrganization in db.Organizations.AsNoTracking()
+                        on assignment.OrganizationId equals assignmentOrganization.Id
+                    where assignment.UserId == localDomainUser!.Id && assignmentOrganization.IsEnabled
+                    select assignment)
+                .ToListAsync(ct);
+            foreach (var assignment in assignments)
+            {
+                foreach (var permission in ScopedRoleCatalog.PermissionsFor(assignment.RoleKey))
+                {
+                    permissions.Add(permission);
+                    scopedPermissionGrants.Add(new ScopedPermissionGrant(permission, assignment.OrganizationId));
+                }
+            }
+
+            if (assignments.Count == 0)
+            {
+                AddLocalRoleBundle(localDomainUser.Role, bundles, permissions);
+            }
         }
 
         var primaryOrganizationId = hasActiveCustomer
@@ -106,6 +126,10 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         if (!string.IsNullOrWhiteSpace(primaryOrganizationId))
         {
             allowedOrganizations.Add(primaryOrganizationId);
+        }
+        foreach (var grant in scopedPermissionGrants)
+        {
+            allowedOrganizations.Add(grant.OrganizationId);
         }
 
         var isTechnical = bundles.Contains(HelpdeskRoleBundles.Technical);
@@ -134,7 +158,10 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
             RoleBundles: bundles,
             Permissions: permissions,
             AllowedOrganizationIds: allowedOrganizations,
-            ManagedOrganizationIds: managedOrganizations);
+            ManagedOrganizationIds: managedOrganizations)
+        {
+            ScopedPermissionGrants = scopedPermissionGrants
+        };
     }
 
     private async Task<CustomerAuthLink?> FindCustomerAuthLinkAsync(

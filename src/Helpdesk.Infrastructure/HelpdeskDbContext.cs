@@ -33,6 +33,7 @@ public class HelpdeskDbContext(
 
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<ScopedRoleAssignment> ScopedRoleAssignments => Set<ScopedRoleAssignment>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
     public DbSet<WorkLog> WorkLogs => Set<WorkLog>();
     public DbSet<TicketTimelineEvent> TicketTimelineEvents => Set<TicketTimelineEvent>();
@@ -517,6 +518,16 @@ public class HelpdeskDbContext(
         modelBuilder.Entity<Customer>()
             .HasIndex(c => c.Email)
             .IsUnique();
+
+        modelBuilder.Entity<ScopedRoleAssignment>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.UserId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RoleKey).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.OrganizationId).HasMaxLength(128).IsRequired();
+            entity.HasIndex(x => new { x.UserId, x.RoleKey, x.OrganizationId }).IsUnique();
+            entity.HasIndex(x => new { x.OrganizationId, x.RoleKey });
+        });
 
         modelBuilder.Entity<CustomerAuthLink>(entity =>
         {

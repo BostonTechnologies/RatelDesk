@@ -84,17 +84,23 @@ public static class AuthenticationEndpoints
     }
 
     private static CurrentUserAccessDto ToDto(CurrentUserAccessProfile access) => new(
-        access.IsAuthenticated,
-        access.Name,
-        access.Email,
-        access.PrimaryOrganizationId,
-        access.PrimaryOrganizationName,
-        access.CustomerId,
-        access.IsHelpdeskAdmin,
-        access.RoleBundles.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-        access.Permissions.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-        access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-        access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray());
+            access.IsAuthenticated,
+            access.Name,
+            access.Email,
+            access.PrimaryOrganizationId,
+            access.PrimaryOrganizationName,
+            access.CustomerId,
+            access.IsHelpdeskAdmin,
+            access.RoleBundles.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            access.Permissions.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray())
+        {
+            ScopedPermissionGrants = access.ScopedPermissionGrants
+                .OrderBy(grant => grant.OrganizationId, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(grant => grant.Permission, StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+        };
 }
 
 public record LoginRequest(string Email, string Password);

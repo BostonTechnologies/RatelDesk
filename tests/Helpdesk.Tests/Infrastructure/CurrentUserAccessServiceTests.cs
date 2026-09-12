@@ -141,6 +141,63 @@ public class CurrentUserAccessServiceTests
         Assert.Empty(access.AllowedOrganizationIds);
     }
 
+    [Fact]
+    public async Task Local_scoped_role_assignments_keep_permissions_in_their_assigned_organization()
+    {
+        await using var db = CreateDb();
+        db.Organizations.AddRange(
+            new Organization { Id = "org-a", Name = "Organization A" },
+            new Organization { Id = "org-b", Name = "Organization B" });
+        db.Users.Add(new User { Id = "local-user", Name = "Local user", Email = "local@example.test", OrganizationId = "org-a", Role = "User" });
+        db.ScopedRoleAssignments.AddRange(
+            new ScopedRoleAssignment { UserId = "local-user", OrganizationId = "org-a", RoleKey = ScopedRoleCatalog.Technician },
+            new ScopedRoleAssignment { UserId = "local-user", OrganizationId = "org-b", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "local-user"),
+                new Claim(ClaimTypes.Email, "local@example.test"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-a"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-b"));
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-b"));
+    }
+
+    [Fact]
+    public async Task Local_scoped_role_assignments_for_disabled_organizations_are_ignored()
+    {
+        await using var db = CreateDb();
+        db.Organizations.AddRange(
+            new Organization { Id = "active-org", Name = "Active organization" },
+            new Organization { Id = "disabled-org", Name = "Disabled organization", IsEnabled = false });
+        db.Users.Add(new User { Id = "local-user", Name = "Local user", Email = "local@example.test", OrganizationId = "active-org", Role = "User" });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "local-user",
+            OrganizationId = "disabled-org",
+            RoleKey = ScopedRoleCatalog.Technician
+        });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "local-user"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentManager, "disabled-org"));
+        Assert.DoesNotContain("disabled-org", access.AllowedOrganizationIds);
+    }
+
     private static ClaimsPrincipal User(string email, string subject, params string[] groups)
         => User(email, subject, tenantId: null, groups);
 

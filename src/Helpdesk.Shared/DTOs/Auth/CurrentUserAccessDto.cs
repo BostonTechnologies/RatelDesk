@@ -1,3 +1,5 @@
+using Helpdesk.Shared.Services;
+
 namespace Helpdesk.Shared.DTOs.Auth;
 
 public sealed record CurrentUserAccessDto(
@@ -11,4 +13,7 @@ public sealed record CurrentUserAccessDto(
     IReadOnlyList<string> RoleBundles,
     IReadOnlyList<string> Permissions,
     IReadOnlyList<string> AllowedOrganizationIds,
-    IReadOnlyList<string> ManagedOrganizationIds);
+    IReadOnlyList<string> ManagedOrganizationIds)
+{
+    public IReadOnlyList<ScopedPermissionGrant> ScopedPermissionGrants { get; init; } = [];
+}
