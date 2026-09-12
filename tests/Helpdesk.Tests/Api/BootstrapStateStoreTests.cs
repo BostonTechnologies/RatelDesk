@@ -20,6 +20,38 @@ namespace Helpdesk.Tests.Api;
 public sealed class BootstrapStateStoreTests
 {
     [Fact]
+    public void Bootstrap_managed_image_signing_secret_is_protected_and_survives_restart()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-image-signing-{Guid.NewGuid():N}");
+        try
+        {
+            var options = new BootstrapOptions { StateDirectory = directory };
+            var keyRingPath = Path.Combine(directory, "keys");
+
+            var generated = BootstrapRuntimeSecretStore.GetOrCreateImageSigningSecret(
+                options,
+                keyRingPath,
+                "RatelDesk-Test-Keyring");
+            var persisted = File.ReadAllText(Path.Combine(directory, "image-signing-secret"));
+            var restored = BootstrapRuntimeSecretStore.GetOrCreateImageSigningSecret(
+                options,
+                keyRingPath,
+                "RatelDesk-Test-Keyring");
+
+            Assert.NotEmpty(generated);
+            Assert.NotEqual(generated, persisted);
+            Assert.Equal(generated, restored);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task PostgreSql_preflight_rejects_a_missing_connection_without_attempting_setup()
     {
         var preflight = new PostgreSqlSetupPreflightService();

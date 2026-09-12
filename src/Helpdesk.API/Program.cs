@@ -108,13 +108,24 @@ var bootstrapDescriptor = !skipDatabaseStartup && string.IsNullOrWhiteSpace(buil
 
 if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "Sqlite", SqlitePath: not null })
 {
-    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+    var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
+                              ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    var bootstrapApplicationName = builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring";
+    var runtimeSettings = new Dictionary<string, string?>
     {
         ["Database:Provider"] = "Sqlite",
         ["Database:Sqlite:Path"] = bootstrapDescriptor.SqlitePath,
         ["Authentication:Mode"] = "Local",
-        ["DataProtection:KeyRingPath"] = Path.Combine(bootstrapOptions.StateDirectory, "keys")
-    });
+        ["DataProtection:KeyRingPath"] = bootstrapKeyRingPath
+    };
+    if (string.IsNullOrWhiteSpace(builder.Configuration["StorageOptions:ImageSigningSecret"]))
+    {
+        runtimeSettings["StorageOptions:ImageSigningSecret"] = BootstrapRuntimeSecretStore.GetOrCreateImageSigningSecret(
+            bootstrapOptions,
+            bootstrapKeyRingPath,
+            bootstrapApplicationName);
+    }
+    builder.Configuration.AddInMemoryCollection(runtimeSettings);
 }
 else if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "PostgreSql", ProtectedPostgreSqlConnection: not null })
 {
@@ -129,13 +140,21 @@ else if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "Postgr
         var connectionString = provider
             .CreateProtector("RatelDesk.Bootstrap.PostgreSqlConnection.v1")
             .Unprotect(bootstrapDescriptor.ProtectedPostgreSqlConnection);
-        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        var runtimeSettings = new Dictionary<string, string?>
         {
             ["Database:Provider"] = "PostgreSql",
             ["ConnectionStrings:HelpdeskDb"] = connectionString,
             ["Authentication:Mode"] = "Local",
             ["DataProtection:KeyRingPath"] = bootstrapKeyRingPath
-        });
+        };
+        if (string.IsNullOrWhiteSpace(builder.Configuration["StorageOptions:ImageSigningSecret"]))
+        {
+            runtimeSettings["StorageOptions:ImageSigningSecret"] = BootstrapRuntimeSecretStore.GetOrCreateImageSigningSecret(
+                bootstrapOptions,
+                bootstrapKeyRingPath,
+                bootstrapApplicationName);
+        }
+        builder.Configuration.AddInMemoryCollection(runtimeSettings);
     }
     catch (Exception exception) when (exception is CryptographicException or IOException)
     {
