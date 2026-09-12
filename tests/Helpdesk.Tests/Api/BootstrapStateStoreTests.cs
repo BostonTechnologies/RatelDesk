@@ -2,6 +2,7 @@ using Helpdesk.API.Bootstrap;
 using Helpdesk.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Data.Sqlite;
 using System.Text;
