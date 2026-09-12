@@ -153,12 +153,9 @@ public static class RequestTaskEndpoints
             if (!string.IsNullOrWhiteSpace(q))
             {
                 var like = $"%{q.Trim()}%";
-                query = query.Where(x =>
-                    EF.Functions.ILike(x.Task.Title, like) ||
-                    EF.Functions.ILike(x.Task.Description, like) ||
-                    EF.Functions.ILike(x.Request.Title, like) ||
-                    EF.Functions.ILike(x.Request.Description, like) ||
-                    EF.Functions.ILike(x.Request.TrackingId, like));
+                query = db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? query.Where(x => EF.Functions.ILike(x.Task.Title, like) || EF.Functions.ILike(x.Task.Description, like) || EF.Functions.ILike(x.Request.Title, like) || EF.Functions.ILike(x.Request.Description, like) || EF.Functions.ILike(x.Request.TrackingId, like))
+                    : query.Where(x => EF.Functions.Like(x.Task.Title, like) || EF.Functions.Like(x.Task.Description, like) || EF.Functions.Like(x.Request.Title, like) || EF.Functions.Like(x.Request.Description, like) || EF.Functions.Like(x.Request.TrackingId, like));
             }
 
             var totalCount = includeTotal ? await query.CountAsync(token) : 0;

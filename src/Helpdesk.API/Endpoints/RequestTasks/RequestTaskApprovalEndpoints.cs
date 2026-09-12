@@ -48,8 +48,16 @@ public static class RequestTaskApprovalEndpoints
         if (!string.IsNullOrWhiteSpace(search))
         {
             var like = $"%{search}%";
-            usersQuery = usersQuery.Where(x => EF.Functions.ILike(x.Name, like) || EF.Functions.ILike(x.Email, like));
-            customersQuery = customersQuery.Where(x => EF.Functions.ILike(x.Name, like) || EF.Functions.ILike(x.Email, like));
+            if (db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            {
+                usersQuery = usersQuery.Where(x => EF.Functions.ILike(x.Name, like) || EF.Functions.ILike(x.Email, like));
+                customersQuery = customersQuery.Where(x => EF.Functions.ILike(x.Name, like) || EF.Functions.ILike(x.Email, like));
+            }
+            else
+            {
+                usersQuery = usersQuery.Where(x => EF.Functions.Like(x.Name, like) || EF.Functions.Like(x.Email, like));
+                customersQuery = customersQuery.Where(x => EF.Functions.Like(x.Name, like) || EF.Functions.Like(x.Email, like));
+            }
         }
 
         var users = await usersQuery

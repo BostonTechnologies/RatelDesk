@@ -395,11 +395,10 @@ public class NotificationRepository(HelpdeskDbContext context) : INotificationRe
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
             var term = searchTerm.Trim();
-            query = query.Where(n =>
-                EF.Functions.ILike(n.Title, $"%{term}%") ||
-                EF.Functions.ILike(n.Message, $"%{term}%") ||
-                (n.Reference != null && EF.Functions.ILike(n.Reference, $"%{term}%")) ||
-                (n.CorrelationId != null && EF.Functions.ILike(n.CorrelationId, $"%{term}%")));
+            var like = $"%{term}%";
+            query = _context.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                ? query.Where(n => EF.Functions.ILike(n.Title, like) || EF.Functions.ILike(n.Message, like) || (n.Reference != null && EF.Functions.ILike(n.Reference, like)) || (n.CorrelationId != null && EF.Functions.ILike(n.CorrelationId, like)))
+                : query.Where(n => EF.Functions.Like(n.Title, like) || EF.Functions.Like(n.Message, like) || (n.Reference != null && EF.Functions.Like(n.Reference, like)) || (n.CorrelationId != null && EF.Functions.Like(n.CorrelationId, like)));
         }
 
         if (severity.HasValue)
