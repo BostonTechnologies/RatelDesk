@@ -10,184 +10,155 @@
     <MudPaper Elevation="2" Class="helpdesk-login-panel">
         <MudStack Spacing="2">
             <MudText Typo="Typo.h4" HtmlTag="h1">Set up RatelDesk</MudText>
-            <MudText Typo="Typo.body1">Enter the operator setup code, then create the first local instance administrator.</MudText>
+            <MudText Typo="Typo.body1">Complete first-time initialization with the operator-only setup code.</MudText>
+            @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+            @if (_ready) { <MudAlert Severity="Severity.Success">RatelDesk is restarting into its normal application host. You can sign in shortly.</MudAlert> }
 
-            @if (!string.IsNullOrWhiteSpace(_error))
-            {
-                <MudAlert Severity="Severity.Error">@_error</MudAlert>
-            }
-            @if (!string.IsNullOrWhiteSpace(_completionMessage))
-            {
-                <MudAlert Severity="Severity.Success">@_completionMessage</MudAlert>
-            }
-
-            <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" InputType="InputType.Password" Required="true" />
-            <MudSelect T="string" @bind-Value="_storageProvider" Label="Storage provider" Required="true">
-                <MudSelectItem Value="@("Sqlite")">Embedded SQLite — no database service required</MudSelectItem>
-                <MudSelectItem Value="@("PostgreSql")">PostgreSQL</MudSelectItem>
-            </MudSelect>
-            @if (string.Equals(_storageProvider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
-            {
-                <MudTextField T="string" @bind-Value="_postgreSqlHost" Label="PostgreSQL host" Required="true" />
-                <MudTextField T="int" @bind-Value="_postgreSqlPort" Label="Port" Required="true" />
-                <MudTextField T="string" @bind-Value="_postgreSqlDatabase" Label="Database" Required="true" />
-                <MudTextField T="string" @bind-Value="_postgreSqlUsername" Label="Username" Required="true" />
-                <MudTextField T="string" @bind-Value="_postgreSqlPassword" Label="Password" InputType="InputType.Password" Required="true" />
-                <MudCheckBox T="bool" @bind-Value="_postgreSqlUseTls" Label="Require TLS" Color="Color.Primary" />
-                <MudText Typo="Typo.caption">The target must be empty or an established RatelDesk database with vector and pg_trgm installed.</MudText>
-            }
-            <MudTextField T="string" @bind-Value="_organizationName" Label="Initial organization" Required="true" />
-            <MudTextField T="string" @bind-Value="_applicationName" Label="Application name (optional)" />
-            <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL (optional)" InputType="InputType.Url" HelperText="Use the HTTPS URL that operators and end users will open. HTTP is allowed only for localhost." />
-            <MudDivider />
-            <MudText Typo="Typo.h6">First administrator</MudText>
-            <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" />
-            <MudTextField T="string" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" />
-            <MudTextField T="string" @bind-Value="_password" Label="Password" InputType="InputType.Password" Required="true" />
-            <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm password" InputType="InputType.Password" Required="true" HelperText="Use a memorable passphrase of at least 15 characters." />
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="InitializeAsync">
-                @(_busy ? "Initializing…" : "Initialize instance")
-            </MudButton>
+            <MudStepper @bind-ActiveIndex="_step" NonLinear="false">
+                <ChildContent>
+                    <MudStep Title="Unlock setup">
+                        <MudText Typo="Typo.body2">Enter the code retrieved from the API container. It is never returned by this page.</MudText>
+                        <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" InputType="InputType.Password" Required="true" FullWidth="true" />
+                    </MudStep>
+                    <MudStep Title="Storage">
+                        <MudSelect T="string" @bind-Value="_provider" Label="Storage provider" FullWidth="true">
+                            <MudSelectItem Value="@("Sqlite")">Embedded SQLite — no database service required</MudSelectItem>
+                            <MudSelectItem Value="@("PostgreSql")">PostgreSQL</MudSelectItem>
+                        </MudSelect>
+                        @if (_provider == "PostgreSql")
+                        {
+                            <MudTextField T="string" @bind-Value="_host" Label="PostgreSQL host" Required="true" FullWidth="true" />
+                            <MudTextField T="int" @bind-Value="_port" Label="Port" Required="true" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_database" Label="Database" Required="true" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_username" Label="Username" Required="true" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_databasePassword" Label="Password" InputType="InputType.Password" Required="true" FullWidth="true" />
+                            <MudCheckBox T="bool" @bind-Value="_useTls" Label="Require TLS" />
+                            <MudText Typo="Typo.caption">RatelDesk validates the connection and required vector and pg_trgm extensions before continuing.</MudText>
+                        }
+                    </MudStep>
+                    <MudStep Title="Instance">
+                        <MudTextField T="string" @bind-Value="_organization" Label="Initial organization" Required="true" FullWidth="true" />
+                        <MudTextField T="string" @bind-Value="_applicationName" Label="Application name" Required="true" FullWidth="true" />
+                        <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL" InputType="InputType.Url" Required="true" FullWidth="true" HelperText="HTTPS is required except for localhost HTTP." />
+                    </MudStep>
+                    <MudStep Title="First administrator">
+                        <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" FullWidth="true" />
+                        <MudTextField T="string" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" FullWidth="true" />
+                        <MudTextField T="string" @bind-Value="_password" Label="Passphrase" InputType="InputType.Password" Required="true" FullWidth="true" HelperText="Use a memorable passphrase of at least 15 characters." />
+                        <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm passphrase" InputType="InputType.Password" Required="true" FullWidth="true" />
+                    </MudStep>
+                    <MudStep Title="Branding">
+                        <MudText Typo="Typo.body2">Keep the RatelDesk defaults or apply the application name entered above. Other supported branding fields remain editable after sign-in.</MudText>
+                        <MudCheckBox T="bool" @bind-Value="_keepDefaults" Label="Keep RatelDesk defaults" />
+                    </MudStep>
+                    <MudStep Title="Review">
+                        <MudSimpleTable Dense="true"><tbody>
+                            <tr><td>Storage</td><td>@(_provider == "PostgreSql" ? $"PostgreSQL at {_host}:{_port}/{_database}" : "Embedded SQLite")</td></tr>
+                            <tr><td>Organization</td><td>@_organization</td></tr>
+                            <tr><td>Application</td><td>@(_keepDefaults ? "RatelDesk defaults" : _applicationName)</td></tr>
+                            <tr><td>Public URL</td><td>@_applicationUrl</td></tr>
+                            <tr><td>Administrator</td><td>@_displayName (@_email)</td></tr>
+                        </tbody></MudSimpleTable>
+                    </MudStep>
+                    <MudStep Title="Ready"><MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/login">Sign in</MudButton></MudStep>
+                </ChildContent>
+                <ActionContent>
+                    @if (_step > 0 && _step < 6) { <MudButton Disabled="_busy" OnClick="Back">Back</MudButton> }
+                    <MudSpacer />
+                    @if (_step == 0) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="UnlockAsync">Continue</MudButton> }
+                    else if (_step == 1) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="PrepareStorageAsync">Prepare storage</MudButton> }
+                    else if (_step is 2 or 3 or 4) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="Advance">Continue</MudButton> }
+                    else if (_step == 5) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="InitializeAsync">Initialize instance</MudButton> }
+                </ActionContent>
+            </MudStepper>
         </MudStack>
     </MudPaper>
 </section>
 
 @code {
-    private string _setupCode = string.Empty;
-    private string _storageProvider = "Sqlite";
-    private string _postgreSqlHost = string.Empty;
-    private int _postgreSqlPort = 5432;
-    private string _postgreSqlDatabase = string.Empty;
-    private string _postgreSqlUsername = string.Empty;
-    private string _postgreSqlPassword = string.Empty;
-    private bool _postgreSqlUseTls = true;
-    private string _organizationName = string.Empty;
-    private string _applicationName = string.Empty;
-    private string _applicationUrl = string.Empty;
-    private string _displayName = string.Empty;
-    private string _email = string.Empty;
-    private string _password = string.Empty;
-    private string _confirmPassword = string.Empty;
-    private string? _error;
-    private string? _completionMessage;
-    private bool _busy;
+    private int _step;
+    private bool _busy, _ready, _useTls = true, _keepDefaults = true;
+    private string? _error, _session;
+    private string _setupCode = string.Empty, _provider = "Sqlite", _host = string.Empty, _database = string.Empty, _username = string.Empty, _databasePassword = string.Empty;
+    private int _port = 5432;
+    private string _organization = string.Empty, _applicationName = "RatelDesk", _applicationUrl = string.Empty, _displayName = string.Empty, _email = string.Empty, _password = string.Empty, _confirmPassword = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
+        _applicationUrl = Navigation.BaseUri.TrimEnd('/');
         try
         {
-            var status = await HttpClientFactory.CreateClient("SystemApiNoAuth")
-                .GetFromJsonAsync<SetupStatus>("/api/v1/setup/status");
-            if (status?.State.ValueKind == System.Text.Json.JsonValueKind.String &&
-                string.Equals(status.State.GetString(), "Ready", StringComparison.OrdinalIgnoreCase))
-            {
-                Navigation.NavigateTo("/login", forceLoad: true);
-            }
+            var status = await HttpClientFactory.CreateClient("SystemApiNoAuth").GetFromJsonAsync<SetupStatus>("/api/v1/setup/status");
+            if (status?.State.ValueKind == System.Text.Json.JsonValueKind.String && status.State.GetString() == "Ready") Navigation.NavigateTo("/login", forceLoad: true);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
-            // The setup host can still be starting; the page remains usable and
-            // reports the request error when the operator submits setup.
-            System.Diagnostics.Debug.WriteLine("Setup status endpoint unavailable while rendering setup.");
+            System.Diagnostics.Debug.WriteLine($"Setup status endpoint unavailable while rendering setup: {exception.Message}");
         }
+    }
+
+    private async Task UnlockAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_setupCode)) { _error = "Enter the operator setup code."; return; }
+        _busy = true; _error = null;
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync("/api/v1/setup/session", new { setupCode = _setupCode });
+            var session = response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<SetupSession>() : null;
+            if (string.IsNullOrWhiteSpace(session?.Session)) { _error = "The setup code was not accepted."; return; }
+            _session = session.Session; _setupCode = string.Empty; _step = 1;
+        }
+        catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        finally { _busy = false; }
+    }
+
+    private async Task PrepareStorageAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_session)) { ExpireSession(); return; }
+        if (_provider == "PostgreSql" && (string.IsNullOrWhiteSpace(_host) || string.IsNullOrWhiteSpace(_database) || string.IsNullOrWhiteSpace(_username) || string.IsNullOrWhiteSpace(_databasePassword))) { _error = "Enter all PostgreSQL connection details."; return; }
+        _busy = true; _error = null;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/storage") { Content = JsonContent.Create(new { provider = _provider, postgreSqlHost = _provider == "PostgreSql" ? _host : null, postgreSqlPort = _provider == "PostgreSql" ? _port : (int?)null, postgreSqlDatabase = _provider == "PostgreSql" ? _database : null, postgreSqlUsername = _provider == "PostgreSql" ? _username : null, postgreSqlPassword = _provider == "PostgreSql" ? _databasePassword : null, postgreSqlUseTls = _useTls }) };
+            request.Headers.Add("X-RatelDesk-Setup-Session", _session);
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
+            if (!response.IsSuccessStatusCode) { _error = "Storage could not be prepared. Check the connection and extension requirements."; return; }
+            _databasePassword = string.Empty; _step = 2;
+        }
+        catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        finally { _busy = false; }
+    }
+
+    private void Advance()
+    {
+        _error = _step switch
+        {
+            2 when string.IsNullOrWhiteSpace(_organization) || string.IsNullOrWhiteSpace(_applicationName) || !ValidUrl(_applicationUrl) => "Enter an organization, application name, and permitted public URL.",
+            3 when string.IsNullOrWhiteSpace(_displayName) || string.IsNullOrWhiteSpace(_email) || string.IsNullOrWhiteSpace(_password) || _password != _confirmPassword => "Enter administrator details and matching passphrases.",
+            _ => null
+        };
+        if (_error is null) _step++;
     }
 
     private async Task InitializeAsync()
     {
-        _busy = true;
-        _error = null;
-        _completionMessage = null;
+        if (string.IsNullOrWhiteSpace(_session)) { ExpireSession(); return; }
+        _busy = true; _error = null;
         try
         {
-            Uri? applicationUri = null;
-            if (!string.IsNullOrWhiteSpace(_applicationUrl) &&
-                (!Uri.TryCreate(_applicationUrl, UriKind.Absolute, out applicationUri) ||
-                 (applicationUri.Scheme != Uri.UriSchemeHttps &&
-                  (applicationUri.Scheme != Uri.UriSchemeHttp || !applicationUri.IsLoopback))))
-            {
-                _error = "Enter an HTTPS public application URL, or use HTTP only for localhost.";
-                return;
-            }
-
-            if (!string.Equals(_password, _confirmPassword, StringComparison.Ordinal))
-            {
-                _error = "The administrator passwords do not match.";
-                return;
-            }
-
-            var client = HttpClientFactory.CreateClient("SystemApiNoAuth");
-            using var sessionResponse = await client.PostAsJsonAsync("/api/v1/setup/session", new { setupCode = _setupCode });
-            if (!sessionResponse.IsSuccessStatusCode)
-            {
-                _error = "The setup code was not accepted.";
-                return;
-            }
-
-            var session = await sessionResponse.Content.ReadFromJsonAsync<SetupSession>();
-            if (string.IsNullOrWhiteSpace(session?.Session))
-            {
-                _error = "A setup session could not be created.";
-                return;
-            }
-
-            using var storageRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/storage")
-            {
-                Content = JsonContent.Create(new
-                {
-                    provider = _storageProvider,
-                    postgreSqlHost = _storageProvider == "PostgreSql" ? _postgreSqlHost : null,
-                    postgreSqlPort = _storageProvider == "PostgreSql" ? _postgreSqlPort : (int?)null,
-                    postgreSqlDatabase = _storageProvider == "PostgreSql" ? _postgreSqlDatabase : null,
-                    postgreSqlUsername = _storageProvider == "PostgreSql" ? _postgreSqlUsername : null,
-                    postgreSqlPassword = _storageProvider == "PostgreSql" ? _postgreSqlPassword : null,
-                    postgreSqlUseTls = _postgreSqlUseTls
-                })
-            };
-            storageRequest.Headers.Add("X-RatelDesk-Setup-Session", session.Session);
-            using var storageResponse = await client.SendAsync(storageRequest);
-            if (!storageResponse.IsSuccessStatusCode)
-            {
-                _error = $"{_storageProvider} storage could not be prepared.";
-                return;
-            }
-
-            using var initializeRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize")
-            {
-                Content = JsonContent.Create(new
-                {
-                    email = _email,
-                    displayName = _displayName,
-                    password = _password,
-                    organizationName = _organizationName,
-                    applicationName = string.IsNullOrWhiteSpace(_applicationName) ? null : _applicationName,
-                    applicationUrl = applicationUri?.AbsoluteUri
-                })
-            };
-            initializeRequest.Headers.Add("X-RatelDesk-Setup-Session", session.Session);
-            using var initializeResponse = await client.SendAsync(initializeRequest);
-            if (!initializeResponse.IsSuccessStatusCode)
-            {
-                _error = "Initialization could not be completed. Check the administrator password and setup details.";
-                return;
-            }
-
-            _password = string.Empty;
-            _confirmPassword = string.Empty;
-            _completionMessage = "Initialization is complete. RatelDesk is restarting the API and will open sign-in shortly.";
-            await Task.Delay(TimeSpan.FromSeconds(2));
-            Navigation.NavigateTo("/login", forceLoad: true);
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize") { Content = JsonContent.Create(new { email = _email, displayName = _displayName, password = _password, organizationName = _organization, applicationName = _keepDefaults ? null : _applicationName, applicationUrl = _applicationUrl }) };
+            request.Headers.Add("X-RatelDesk-Setup-Session", _session);
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
+            if (!response.IsSuccessStatusCode) { _error = "Initialization could not be completed. Check the setup details and passphrase."; return; }
+            _password = _confirmPassword = string.Empty; _session = null; _ready = true; _step = 6;
         }
-        catch (HttpRequestException)
-        {
-            _error = "The setup service is unavailable. Please retry.";
-        }
-        finally
-        {
-            _busy = false;
-        }
+        catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        finally { _busy = false; }
     }
 
+    private void Back() { _error = null; _step--; }
+    private void ExpireSession() { _step = 0; _error = "Your setup session expired. Enter the setup code again."; }
+    private static bool ValidUrl(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback));
     private sealed record SetupSession(string Session);
-
     private sealed record SetupStatus(System.Text.Json.JsonElement State);
 }
