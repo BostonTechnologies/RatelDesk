@@ -27,7 +27,12 @@ using System.Security.Claims;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
-var webAuthenticationMode = builder.Configuration["Authentication:Mode"] ?? "Oidc";
+var configuredAuthenticationMode = builder.Configuration["Authentication:Mode"];
+var hasConfiguredOidc = !string.IsNullOrWhiteSpace(builder.Configuration["Authentication:Authentik:ClientId"])
+    && !string.IsNullOrWhiteSpace(builder.Configuration["AUTHENTIK_CLIENT_SECRET"]);
+var webAuthenticationMode = string.IsNullOrWhiteSpace(configuredAuthenticationMode)
+    ? hasConfiguredOidc ? "Oidc" : "Local"
+    : configuredAuthenticationMode;
 const string localAuthenticationScheme = "RatelDeskLocal";
 var webSupportsLocalAccounts = string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase)
     || string.Equals(webAuthenticationMode, "Hybrid", StringComparison.OrdinalIgnoreCase);

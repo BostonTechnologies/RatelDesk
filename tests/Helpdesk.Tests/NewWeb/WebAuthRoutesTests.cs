@@ -299,11 +299,9 @@ public class WebAuthRoutesTests
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Production");
             builder.UseEnvironment("Production");
             var selectedAuthenticationMode = authenticationMode ?? (localAuthentication ? "Local" : null);
+            builder.UseSetting("Authentication:Mode", selectedAuthenticationMode ?? "Oidc");
             if (selectedAuthenticationMode is not null)
-            {
-                builder.UseSetting("Authentication:Mode", selectedAuthenticationMode);
                 builder.UseSetting("Authentication:AllowInsecureLocalhost", "true");
-            }
 
             builder.ConfigureAppConfiguration((_, cfg) =>
             {
