@@ -45,6 +45,7 @@ using Helpdesk.Shared.Auth;
 using Helpdesk.API.Ops;
 using Helpdesk.API.Validators;
 using Helpdesk.API.Background;
+using Helpdesk.API.Bootstrap;
 using Helpdesk.Application.Incidents;
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Notifications;
@@ -93,6 +94,32 @@ var builder = WebApplication.CreateBuilder(args);
 var systemTokenSecret = builder.Configuration["SYSTEM_TOKEN_SECRET"] ?? builder.Configuration["SystemTokenSecret"];
 var aiAgentOpsLogBuffer = new AiAgentOpsLogBuffer();
 var skipDatabaseStartup = builder.Configuration.GetValue<bool>("Helpdesk:SkipDatabaseStartup");
+var bootstrapOptions = builder.Configuration.GetSection(BootstrapOptions.SectionName).Get<BootstrapOptions>() ?? new BootstrapOptions();
+var bootstrapStateStore = new FileBootstrapStateStore(bootstrapOptions);
+var bootstrapDescriptor = !skipDatabaseStartup && string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("HelpdeskDb"))
+    ? await bootstrapStateStore.LoadOrCreateAsync()
+    : null;
+
+if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not BootstrapState.Ready)
+{
+    var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
+                              ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    Directory.CreateDirectory(bootstrapKeyRingPath);
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(bootstrapKeyRingPath))
+        .SetApplicationName(builder.Configuration["DataProtection:ApplicationName"] ?? "RatelDesk");
+    builder.Services.AddSingleton(bootstrapOptions);
+    builder.Services.AddSingleton<IBootstrapStateStore>(bootstrapStateStore);
+    builder.Services.AddSingleton<BootstrapSessionService>();
+
+    var bootstrapApp = builder.Build();
+    bootstrapApp.UseExceptionHandler();
+    bootstrapApp.MapGet("/health/live", () => Results.Ok(new { status = "alive" })).AllowAnonymous();
+    bootstrapApp.MapGet("/health/ready", () => Results.Ok(new { status = "awaiting-setup" })).AllowAnonymous();
+    bootstrapApp.MapBootstrapEndpoints();
+    await bootstrapApp.RunAsync();
+    return;
+}
 
 builder.AddServiceDefaults();
 builder.Services.AddSingleton(aiAgentOpsLogBuffer);
