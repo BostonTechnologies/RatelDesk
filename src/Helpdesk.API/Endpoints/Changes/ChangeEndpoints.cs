@@ -1688,6 +1688,7 @@ public static class ChangeEndpoints
 
     private static async Task<IResult> GetChanges(
         [FromServices] HelpdeskDbContext db,
+        [FromServices] ICurrentUserAccessService accessService,
         ClaimsPrincipal user,
         [FromQuery] int? page,
         [FromQuery] int? pageSize,
@@ -1721,7 +1722,7 @@ public static class ChangeEndpoints
                     .FirstOrDefault()
             });
 
-        var access = CurrentUserAccessProfile.FromClaims(user);
+        var access = await accessService.ResolveAsync(user);
         if (!access.IsHelpdeskAdmin)
         {
             var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();

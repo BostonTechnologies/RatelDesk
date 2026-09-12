@@ -1264,6 +1264,38 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task TicketLists_ResolveScopedAccessFromPersistedGrants()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Organization One" },
+                new Organization { Id = "org-2", Name = "Organization Two" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Incidents.AddRange(
+                new Incident { Id = "inc-list-own", TrackingId = "INC-LIST-OWN", Title = "Own incident", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Incident { Id = "inc-list-foreign", TrackingId = "INC-LIST-FOREIGN", Title = "Foreign incident", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+            db.Requests.AddRange(
+                new Request { Id = "req-list-own", TrackingId = "REQ-LIST-OWN", Title = "Own request", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Request { Id = "req-list-foreign", TrackingId = "REQ-LIST-FOREIGN", Title = "Foreign request", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+            db.Changes.AddRange(
+                new Change { Id = "chg-list-own", TrackingId = "CHG-LIST-OWN", Title = "Own change", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Change { Id = "chg-list-foreign", TrackingId = "CHG-LIST-FOREIGN", Title = "Foreign change", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+        });
+        harness.UseRole("SelfService");
+
+        var incidents = await harness.Client.GetFromJsonAsync<PagedResponse<IncidentDto>>("/api/v1/incidents?page=1&pageSize=20");
+        var requests = await harness.Client.GetFromJsonAsync<PagedResponse<RequestDto>>("/api/v1/requests?page=1&pageSize=20");
+        var changes = await harness.Client.GetFromJsonAsync<PagedResponse<ChangeDto>>("/api/v1/changes?page=1&pageSize=20");
+
+        Assert.Equal(["INC-LIST-OWN"], incidents!.Items.Select(item => item.TrackingId));
+        Assert.Equal(["REQ-LIST-OWN"], requests!.Items.Select(item => item.TrackingId));
+        Assert.Equal(["CHG-LIST-OWN"], changes!.Items.Select(item => item.TrackingId));
+    }
+
+    [Fact]
     public async Task RequestAndChangeMutations_RequireScopedManagerAccess()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();

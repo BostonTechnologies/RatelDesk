@@ -779,6 +779,7 @@ public static class RequestEndpoints
 
     private static async Task<IResult> GetRequests(
         [FromServices] HelpdeskDbContext db,
+        [FromServices] ICurrentUserAccessService accessService,
         ClaimsPrincipal user,
         [FromQuery] int? page,
         [FromQuery] int? pageSize,
@@ -807,7 +808,7 @@ public static class RequestEndpoints
                 CustomerEmail = c != null ? c.Email : null
             };
 
-        var access = CurrentUserAccessProfile.FromClaims(user);
+        var access = await accessService.ResolveAsync(user);
         if (!access.IsHelpdeskAdmin)
         {
             var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();

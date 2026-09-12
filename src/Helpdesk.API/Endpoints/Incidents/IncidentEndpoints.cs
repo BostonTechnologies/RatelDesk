@@ -46,6 +46,7 @@ public static class IncidentEndpoints
 
         group.MapGet("/", async (
             [FromServices] HelpdeskDbContext db,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             int page = 1,
             int pageSize = 10,
@@ -75,7 +76,7 @@ public static class IncidentEndpoints
                     CustomerEmail = c != null ? c.Email : null
                 };
 
-            var access = CurrentUserAccessProfile.FromClaims(user);
+            var access = await accessService.ResolveAsync(user);
             if (!access.IsHelpdeskAdmin)
             {
                 var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
