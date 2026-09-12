@@ -53,12 +53,17 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddHelpdeskInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        var helpdeskDbConnectionString = configuration.GetConnectionString("HelpdeskDb");
-        if (string.IsNullOrWhiteSpace(helpdeskDbConnectionString))
+        var legacyPostgreSqlConnectionString = configuration.GetConnectionString("HelpdeskDb");
+        var databaseOptions = configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
+        var databaseProvider = databaseOptions.ResolveProvider(legacyPostgreSqlConnectionString);
+        var connectionString = databaseProvider switch
         {
-            throw new InvalidOperationException(
-                "ConnectionStrings:HelpdeskDb is required. Set ConnectionStrings__HelpdeskDb in the deployment environment.");
-        }
+            DatabaseProvider.PostgreSql when !string.IsNullOrWhiteSpace(legacyPostgreSqlConnectionString) => legacyPostgreSqlConnectionString,
+            DatabaseProvider.PostgreSql => throw new InvalidOperationException(
+                "ConnectionStrings:HelpdeskDb is required when Database:Provider is PostgreSql."),
+            DatabaseProvider.Sqlite when !string.IsNullOrWhiteSpace(databaseOptions.Sqlite.Path) => CreateSqliteConnectionString(databaseOptions.Sqlite.Path),
+            _ => throw new InvalidOperationException("Database:Sqlite:Path is required when Database:Provider is Sqlite.")
+        };
 
         services.AddHttpContextAccessor();
         services.AddOptions<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatOptions>()
@@ -79,12 +84,9 @@ public static class DependencyInjection
         services.Configure<M2MClientOptions>(configuration.GetSection("M2M"));
         services.Configure<AuthentikOptions>(configuration.GetSection("Authentication:AuthentikAdmin"));
 
-        services.AddDbContext<HelpdeskDbContext>(options =>
-            options.UseNpgsql(
-                helpdeskDbConnectionString,
-                npg => npg.UseVector()));
-        services.AddDbContext<RatelDeskIdentityDbContext>(options =>
-            options.UseNpgsql(helpdeskDbConnectionString));
+        services.AddSingleton(databaseOptions);
+        services.AddDbContext<HelpdeskDbContext>(options => ConfigureDatabase(options, databaseProvider, connectionString));
+        services.AddDbContext<RatelDeskIdentityDbContext>(options => ConfigureDatabase(options, databaseProvider, connectionString));
         services.AddRatelDeskLocalIdentity();
 
         AddRepositoryRegistrations(services);
@@ -113,7 +115,14 @@ public static class DependencyInjection
         services.AddScoped<IAiOperationAuditService, LoggerAiOperationAuditService>();
         services.AddScoped<IAiProviderService, AiProviderService>();
         services.AddScoped<IEmbeddingService, EmbeddingService>();
-        services.AddScoped<IKnowledgeVectorStore, PgVectorKnowledgeVectorStore>();
+        if (databaseProvider is DatabaseProvider.PostgreSql)
+        {
+            services.AddScoped<IKnowledgeVectorStore, PgVectorKnowledgeVectorStore>();
+        }
+        else
+        {
+            services.AddScoped<IKnowledgeVectorStore, NoOpKnowledgeVectorStore>();
+        }
         services.AddScoped<IKnowledgeRetrievalService, KnowledgeRetrievalService>();
         services.AddScoped<IKnowledgeBuilderService, KnowledgeBuilderService>();
         services.AddScoped<IKnowledgeSuggestionService, KnowledgeSuggestionService>();
@@ -224,6 +233,33 @@ public static class DependencyInjection
                 "Enabled ExchangeEmail configuration requires tenant, client, secret, and mailbox values.")
             .ValidateOnStart();
         return services;
+    }
+
+    private static void ConfigureDatabase(
+        DbContextOptionsBuilder options,
+        DatabaseProvider provider,
+        string connectionString)
+    {
+        if (provider is DatabaseProvider.PostgreSql)
+        {
+            options.UseNpgsql(connectionString, npgsql => npgsql.UseVector());
+            return;
+        }
+
+        options.UseSqlite(connectionString);
+    }
+
+    private static string CreateSqliteConnectionString(string configuredPath)
+    {
+        var path = Path.GetFullPath(configuredPath);
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            throw new InvalidOperationException("Database:Sqlite:Path must include a directory.");
+        }
+
+        Directory.CreateDirectory(directory);
+        return $"Data Source={path};Cache=Shared;Foreign Keys=True";
     }
 
     private static void AddRepositoryRegistrations(IServiceCollection services)
