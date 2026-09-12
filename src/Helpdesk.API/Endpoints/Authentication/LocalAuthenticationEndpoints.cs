@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Data;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Models;
@@ -93,10 +94,13 @@ public static class LocalAuthenticationEndpoints
 
         group.MapPost("/users/{userId}/disable", async (
             string userId,
-            [FromServices] UserManager<ApplicationUser> users,
-            HttpContext context) =>
+            [FromServices] RatelDeskIdentityDbContext identityDb,
+            CancellationToken cancellationToken) =>
         {
-            var target = await users.FindByIdAsync(userId);
+            await using var transaction = identityDb.Database.IsInMemory()
+                ? null
+                : await identityDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+            var target = await identityDb.Users.SingleOrDefaultAsync(user => user.Id == userId, cancellationToken);
             if (target is null)
             {
                 return Results.NotFound();
@@ -104,7 +108,9 @@ public static class LocalAuthenticationEndpoints
 
             if (target.IsInstanceAdministrator && target.IsEnabled)
             {
-                var enabledAdministrators = users.Users.Count(user => user.IsInstanceAdministrator && user.IsEnabled);
+                var enabledAdministrators = await identityDb.Users.CountAsync(
+                    user => user.IsInstanceAdministrator && user.IsEnabled,
+                    cancellationToken);
                 if (enabledAdministrators <= 1)
                 {
                     return Results.Conflict(new { error = "last_instance_administrator" });
@@ -114,7 +120,12 @@ public static class LocalAuthenticationEndpoints
             target.IsEnabled = false;
             target.DisabledAtUtc = DateTimeOffset.UtcNow;
             target.AuthorizationRevision++;
-            await users.UpdateAsync(target);
+            target.SecurityStamp = Guid.NewGuid().ToString("N");
+            await identityDb.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
             return Results.NoContent();
         })
         .RequireAuthorization("HelpdeskAdmin");
