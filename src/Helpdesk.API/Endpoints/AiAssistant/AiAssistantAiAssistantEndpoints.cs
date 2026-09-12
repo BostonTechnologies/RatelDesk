@@ -53,7 +53,21 @@ public static class AiAssistantAiAssistantEndpoints
 
         context.Response.Headers.ContentType = "text/event-stream"; context.Response.Headers.CacheControl = "no-cache"; context.Response.Headers.Connection = "keep-alive";
         var reader = bus.Subscribe(ticketId);
-        try { await foreach (var item in reader.ReadAllAsync(ct)) { await context.Response.WriteAsync($"event: ai-worklog\ndata: {JsonSerializer.Serialize(item)}\n\n", ct); await context.Response.Body.FlushAsync(ct); } }
+        try
+        {
+            await foreach (var item in reader.ReadAllAsync(ct))
+            {
+                // The subscription may outlive a role, account, or tenant grant. Re-resolve
+                // the parent ticket before each delivery and end the stream after revocation.
+                if (await AuthorizeTicketManagementAsync(ticketType, ticketId, context.User, db, accessService, ct) is not null)
+                {
+                    return;
+                }
+
+                await context.Response.WriteAsync($"event: ai-worklog\ndata: {JsonSerializer.Serialize(item)}\n\n", ct);
+                await context.Response.Body.FlushAsync(ct);
+            }
+        }
         finally { bus.Unsubscribe(ticketId, reader); }
     }
     private static async Task<IResult> UpsertAsync(Guid? id, UpsertAiAssistantWebhookConfigurationDto dto, HttpContext context, IAiAssistantAiAssistantService service, CancellationToken ct, bool isCreate)
