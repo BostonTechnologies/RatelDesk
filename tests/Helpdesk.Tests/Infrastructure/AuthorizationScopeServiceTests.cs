@@ -28,6 +28,17 @@ public class AuthorizationScopeServiceTests
     }
 
     [Fact]
+    public void Matching_requester_email_without_matching_customer_id_does_not_grant_own_resource_access()
+    {
+        var access = Profile("org-1", "customer-1", HelpdeskPermissions.IncidentUser);
+        var service = new AuthorizationScopeService();
+
+        Assert.False(service.CanViewIncident(access, "org-1", "customer-2", "tester@example.com"));
+        Assert.False(access.CanViewRequest("org-1", "customer-2", "tester@example.com"));
+        Assert.False(access.CanViewChange("org-1", null, "tester@example.com"));
+    }
+
+    [Fact]
     public void Scoped_manager_grant_does_not_apply_to_another_allowed_tenant()
     {
         var access = Profile("org-a", "customer-1", HelpdeskPermissions.IncidentManager) with

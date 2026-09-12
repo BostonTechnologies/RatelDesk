@@ -1751,9 +1751,8 @@ public static class ChangeEndpoints
             {
                 query = query.Where(x =>
                     allowedOrganizationIds.Contains(x.Change.OrganizationId) &&
-                    ((!string.IsNullOrWhiteSpace(access.CustomerId) && x.Change.CustomerId == access.CustomerId) ||
-                     (!string.IsNullOrWhiteSpace(access.Email) &&
-                      (x.Change.RequesterEmail == access.Email || x.CustomerEmail == access.Email))));
+                    !string.IsNullOrWhiteSpace(access.CustomerId) &&
+                    x.Change.CustomerId == access.CustomerId);
             }
         }
 

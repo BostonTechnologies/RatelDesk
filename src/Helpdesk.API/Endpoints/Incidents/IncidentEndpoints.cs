@@ -89,9 +89,8 @@ public static class IncidentEndpoints
                 {
                     query = query.Where(x =>
                         allowedOrganizationIds.Contains(x.Incident.OrganizationId) &&
-                        ((!string.IsNullOrWhiteSpace(access.CustomerId) && x.CustomerId == access.CustomerId) ||
-                         (!string.IsNullOrWhiteSpace(access.Email) &&
-                          (x.Incident.RequesterEmail == access.Email || x.CustomerEmail == access.Email))));
+                        !string.IsNullOrWhiteSpace(access.CustomerId) &&
+                        x.CustomerId == access.CustomerId);
                 }
             }
 

@@ -28,7 +28,7 @@ public sealed class AuthorizationScopeService : IAuthorizationScopeService
 
     private static bool CanOwn(CurrentUserAccessProfile access, string permission, string? organizationId, string? customerId, string? requesterEmail) =>
         access.HasPermission(permission, organizationId) &&
-        ((!string.IsNullOrWhiteSpace(customerId) && string.Equals(customerId, access.CustomerId, StringComparison.OrdinalIgnoreCase)) ||
-         (!string.IsNullOrWhiteSpace(requesterEmail) && string.Equals(requesterEmail, access.Email, StringComparison.OrdinalIgnoreCase)));
+        !string.IsNullOrWhiteSpace(customerId) &&
+        string.Equals(customerId, access.CustomerId, StringComparison.OrdinalIgnoreCase);
 
 }

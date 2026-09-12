@@ -822,9 +822,8 @@ public static class RequestEndpoints
             {
                 query = query.Where(x =>
                     allowedOrganizationIds.Contains(x.Request.OrganizationId) &&
-                    ((!string.IsNullOrWhiteSpace(access.CustomerId) && x.CustomerId == access.CustomerId) ||
-                     (!string.IsNullOrWhiteSpace(access.Email) &&
-                      (x.Request.RequesterEmail == access.Email || x.CustomerEmail == access.Email))));
+                    !string.IsNullOrWhiteSpace(access.CustomerId) &&
+                    x.CustomerId == access.CustomerId);
             }
         }
 

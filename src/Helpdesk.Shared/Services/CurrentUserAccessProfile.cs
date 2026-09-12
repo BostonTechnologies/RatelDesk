@@ -144,8 +144,8 @@ public sealed record CurrentUserAccessProfile(
 
     private bool CanOwn(string permission, string? organizationId, string? customerId, string? requesterEmail) =>
         HasPermission(permission, organizationId) &&
-        ((!string.IsNullOrWhiteSpace(customerId) && string.Equals(customerId, CustomerId, StringComparison.OrdinalIgnoreCase)) ||
-         (!string.IsNullOrWhiteSpace(requesterEmail) && string.Equals(requesterEmail, Email, StringComparison.OrdinalIgnoreCase)));
+        !string.IsNullOrWhiteSpace(customerId) &&
+        string.Equals(customerId, CustomerId, StringComparison.OrdinalIgnoreCase);
 
     private bool InAllowedOrg(string? organizationId) =>
         !string.IsNullOrWhiteSpace(organizationId) && AllowedOrganizationIds.Contains(organizationId);

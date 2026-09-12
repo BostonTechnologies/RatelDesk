@@ -1077,10 +1077,25 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
                 OrganizationId = managedOrganizationId,
                 RoleKey = ScopedRoleCatalog.SelfServiceUser
             });
+            var selfServiceCustomerId = $"customer-{selfServiceUserId}";
+            db.Customers.Add(new Customer
+            {
+                Id = selfServiceCustomerId,
+                Name = "Attachment Self Service",
+                Email = "attachment.self-service@example.test",
+                OrganizationId = managedOrganizationId
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = selfServiceCustomerId,
+                LocalAccountId = selfServiceUserId,
+                AuthProviderType = "Local",
+                InviteStatus = CustomerInviteStatus.Active
+            });
             db.Incidents.AddRange(
                 new Incident { Id = managedIncidentId, OrganizationId = managedOrganizationId, Title = "Managed attachment incident", Description = "Managed attachment incident" },
                 new Incident { Id = foreignIncidentId, OrganizationId = foreignOrganizationId, Title = "Foreign attachment incident", Description = "Foreign attachment incident" },
-                new Incident { Id = selfServiceIncidentId, OrganizationId = managedOrganizationId, Title = "Self-service attachment incident", Description = "Self-service attachment incident", RequesterEmail = "attachment.self-service@example.test" });
+                new Incident { Id = selfServiceIncidentId, OrganizationId = managedOrganizationId, CustomerId = selfServiceCustomerId, Title = "Self-service attachment incident", Description = "Self-service attachment incident", RequesterEmail = "attachment.self-service@example.test" });
             db.Attachments.Add(new Attachment
             {
                 Id = foreignAttachmentId,
@@ -1206,10 +1221,26 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
                 OrganizationId = organizationId,
                 RoleKey = ScopedRoleCatalog.SelfServiceUser
             });
+            var customerId = $"customer-{userId}";
+            db.Customers.Add(new Customer
+            {
+                Id = customerId,
+                Name = "Worklog User",
+                Email = "worklog.user@example.test",
+                OrganizationId = organizationId
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = customerId,
+                LocalAccountId = userId,
+                AuthProviderType = "Local",
+                InviteStatus = CustomerInviteStatus.Active
+            });
             db.Incidents.Add(new Incident
             {
                 Id = incidentId,
                 OrganizationId = organizationId,
+                CustomerId = customerId,
                 Title = "Self-service worklog incident",
                 Description = "Incident that must not accept a staff worklog from a self-service account",
                 RequesterEmail = "worklog.user@example.test"
@@ -1262,10 +1293,26 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
                 OrganizationId = organizationId,
                 RoleKey = ScopedRoleCatalog.SelfServiceUser
             });
+            var customerId = $"customer-{userId}";
+            db.Customers.Add(new Customer
+            {
+                Id = customerId,
+                Name = "Request Worklog User",
+                Email = "request.worklog.user@example.test",
+                OrganizationId = organizationId
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = customerId,
+                LocalAccountId = userId,
+                AuthProviderType = "Local",
+                InviteStatus = CustomerInviteStatus.Active
+            });
             db.Requests.Add(new Request
             {
                 Id = requestId,
                 OrganizationId = organizationId,
+                CustomerId = customerId,
                 Title = "Self-service worklog request",
                 Description = "Request that must not accept a staff worklog from a self-service account",
                 RequesterEmail = "request.worklog.user@example.test"
