@@ -184,13 +184,13 @@ public static class TicketEndpoints
 
         group.MapGet("/{id:guid}/ai-feedback", async (
             Guid id,
-            HttpContext context,
             ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var authorizationFailure = await AuthorizeTicketViewAsync("incidents", ticketId, context.User, accessService, db, ct);
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
             if (authorizationFailure is not null) return authorizationFailure;
 
             var items = await db.TicketAiFeedback
@@ -218,13 +218,13 @@ public static class TicketEndpoints
 
         group.MapGet("/{id:guid}/ai-audit", async (
             Guid id,
-            HttpContext context,
             ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var authorizationFailure = await AuthorizeTicketViewAsync("incidents", ticketId, context.User, accessService, db, ct);
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
             if (authorizationFailure is not null) return authorizationFailure;
 
             var items = await db.AiOperationAuditRecords
@@ -260,23 +260,10 @@ public static class TicketEndpoints
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var ticket = await db.Tickets.AsNoTracking().SingleOrDefaultAsync(x => x.Id == ticketId, ct);
-            if (ticket is null)
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
+            if (authorizationFailure is not null)
             {
-                return Results.NotFound();
-            }
-
-            var access = await accessService.ResolveAsync(user, ct);
-            var canManage = ticket switch
-            {
-                Incident => access.CanManageIncident(ticket.OrganizationId),
-                TicketRequest => access.CanManageRequest(ticket.OrganizationId),
-                Change => access.CanManageChange(ticket.OrganizationId),
-                _ => false
-            };
-            if (!canManage)
-            {
-                return Results.Forbid();
+                return authorizationFailure;
             }
 
             var feedbackType = dto.FeedbackType?.Trim().ToLowerInvariant();
@@ -384,8 +371,17 @@ public static class TicketEndpoints
             Guid id,
             IRepository<Ticket> tickets,
             IRequesterReplyDraftService requesterReplyDraftService,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is null)
             {
@@ -406,9 +402,16 @@ public static class TicketEndpoints
             IRequesterReplyDraftService requesterReplyDraftService,
             IAiOperationAuditService aiAudit,
             IRequestSender sender,
+            ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is null)
             {
@@ -498,9 +501,16 @@ public static class TicketEndpoints
             IWorkflowEngine workflowEngine,
             IAiOperationAuditService aiAudit,
             IRequestSender sender,
+            ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is not Incident incident)
             {
@@ -621,8 +631,16 @@ public static class TicketEndpoints
             IRepository<Ticket> tickets,
             IRequestFormSchemaParser requestFormSchemaParser,
             IAutomationBindingPayloadContractService automationPayloadContractService,
+            ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is not Incident incident)
             {
@@ -670,13 +688,15 @@ public static class TicketEndpoints
         group.MapGet("/{id:guid}/automation-approvals", async (
             Guid id,
             HelpdeskDbContext db,
+            ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var ticketExists = await db.Tickets.AsNoTracking().AnyAsync(x => x.Id == ticketId, ct);
-            if (!ticketExists)
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
+            if (authorizationFailure is not null)
             {
-                return Results.NotFound();
+                return authorizationFailure;
             }
 
             var runs = await db.Requests
@@ -738,10 +758,17 @@ public static class TicketEndpoints
             Guid id,
             IRepository<Ticket> tickets,
             IKnowledgeBuilderService kbService,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            ClaimsPrincipal user,
             CancellationToken token,
             bool regenerate = false) =>
         {
-            Console.WriteLine($"Looking up ticket with ID: {id}");
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, token);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
 
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is null)
@@ -855,6 +882,31 @@ public static class TicketEndpoints
             _ => false
         };
         return canView ? null : Results.Forbid();
+    }
+
+    internal static async Task<IResult?> AuthorizeTicketManageAsync(
+        string ticketId,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        HelpdeskDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var ticket = await db.Tickets.AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return Results.NotFound();
+        }
+
+        var access = await accessService.ResolveAsync(user, cancellationToken);
+        var canManage = ticket switch
+        {
+            Incident => access.CanManageIncident(ticket.OrganizationId),
+            TicketRequest => access.CanManageRequest(ticket.OrganizationId),
+            Change => access.CanManageChange(ticket.OrganizationId),
+            _ => false
+        };
+        return canManage ? null : Results.Forbid();
     }
 
     private static bool IsTechnicianOrAdmin(ClaimsPrincipal user) =>

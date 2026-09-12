@@ -719,6 +719,62 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Scoped_technician_management_access_is_limited_to_the_assigned_tenant()
+    {
+        const string assignedOrganizationId = "ticket-management-assigned-organization";
+        const string foreignOrganizationId = "ticket-management-foreign-organization";
+        const string incidentId = "ticket-management-incident";
+        const string requestId = "ticket-management-request";
+        const string changeId = "ticket-management-change";
+        const string foreignIncidentId = "ticket-management-foreign-incident";
+
+        await using var setupScope = _factory.Services.CreateAsyncScope();
+        var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var createUser = await identityUsers.CreateAsync(
+            new ApplicationUser { UserName = "ticket.manager@example.test", Email = "ticket.manager@example.test", DisplayName = "Ticket Manager" },
+            "correct horse battery staple");
+        Assert.True(createUser.Succeeded);
+        var userId = (await identityUsers.FindByEmailAsync("ticket.manager@example.test"))!.Id;
+
+        var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        db.Organizations.AddRange(
+            new Organization { Id = assignedOrganizationId, Name = "Assigned ticket organization" },
+            new Organization { Id = foreignOrganizationId, Name = "Foreign ticket organization" });
+        db.Users.Add(new User
+        {
+            Id = userId,
+            Name = "Ticket Manager",
+            Email = "ticket.manager@example.test",
+            OrganizationId = assignedOrganizationId,
+            Role = "User"
+        });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = userId,
+            OrganizationId = assignedOrganizationId,
+            RoleKey = ScopedRoleCatalog.Technician
+        });
+        db.Incidents.AddRange(
+            new Incident { Id = incidentId, OrganizationId = assignedOrganizationId, Title = "Managed incident", Description = "Managed incident" },
+            new Incident { Id = foreignIncidentId, OrganizationId = foreignOrganizationId, Title = "Foreign incident", Description = "Foreign incident" });
+        db.Requests.Add(new Request { Id = requestId, OrganizationId = assignedOrganizationId, Title = "Managed request", Description = "Managed request" });
+        db.Changes.Add(new Change { Id = changeId, OrganizationId = assignedOrganizationId, Title = "Managed change", Description = "Managed change" });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+        [
+            new Claim(ClaimTypes.NameIdentifier, userId),
+            new Claim("auth_mode", "local")
+        ], "Local"));
+        var accessService = setupScope.ServiceProvider.GetRequiredService<ICurrentUserAccessService>();
+
+        Assert.Null(await TicketEndpoints.AuthorizeTicketManageAsync(incidentId, principal, accessService, db, CancellationToken.None));
+        Assert.Null(await TicketEndpoints.AuthorizeTicketManageAsync(requestId, principal, accessService, db, CancellationToken.None));
+        Assert.Null(await TicketEndpoints.AuthorizeTicketManageAsync(changeId, principal, accessService, db, CancellationToken.None));
+        Assert.IsType<ForbidHttpResult>(await TicketEndpoints.AuthorizeTicketManageAsync(foreignIncidentId, principal, accessService, db, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Self_service_user_has_no_management_grant_for_foreign_tenant_tickets()
     {
         const string userOrganizationId = "delete-user-organization";
