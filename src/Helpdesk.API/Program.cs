@@ -939,47 +939,6 @@ builder.Services.AddAuthorization(opts =>
         p.RequireAuthenticatedUser();
     });
 
-    // Attachments anyone authenticated by either scheme can read
-    opts.AddPolicy("AttachmentRead", p =>
-    {
-        p.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, "System");
-        p.RequireAuthenticatedUser();
-    });
-
-    // Attachments � write allowed for system token OR admin user
-    opts.AddPolicy("AttachmentWrite", p =>
-    {
-        p.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, "System");
-        p.RequireAuthenticatedUser();
-        p.RequireAssertion(ctx =>
-        {
-            try
-            {
-                var roleClaims = string.Join(",", ctx.User.Claims.Where(c => c.Type == "roles" || c.Type == ClaimTypes.Role).Select(c => c.Value));
-                var scopes = ctx.User.FindFirst("scp")?.Value ?? string.Empty;
-                Console.WriteLine($"[AttachmentWrite] roles=[{roleClaims}] scp=[{scopes}]");
-            }
-            catch { }
-
-            if (ctx.User.IsInRole("system.blazor-web")) return true;
-
-            // Role via IsInRole (respects RoleClaimType)
-            if (ctx.User.IsInRole("HelpdeskAdmin") || ctx.User.IsInRole("helpdeskadmin")) return true;
-
-            // Explicit role claims, case-insensitive
-            bool hasAdminRoleClaim = ctx.User.Claims.Any(c =>
-                (c.Type == "roles" || c.Type == ClaimTypes.Role) &&
-                string.Equals(c.Value, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase));
-
-            if (hasAdminRoleClaim) return true;
-
-            // Fallback: accept API scope that indicates admin capability
-            var scp = ctx.User.FindFirst("scp")?.Value?.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? Array.Empty<string>();
-            if (scp.Contains("Helpdesk.Admin", StringComparer.OrdinalIgnoreCase)) return true;
-
-            return false;
-        });
-    });
 });
 
 

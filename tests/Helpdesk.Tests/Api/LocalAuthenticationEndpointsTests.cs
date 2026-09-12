@@ -978,6 +978,71 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Ticket_attachments_require_parent_ticket_scope_for_reads_and_writes()
+    {
+        const string managedOrganizationId = "attachment-managed-organization";
+        const string foreignOrganizationId = "attachment-foreign-organization";
+        const string managedIncidentId = "attachment-managed-incident";
+        const string foreignIncidentId = "attachment-foreign-incident";
+        var foreignAttachmentId = Guid.NewGuid();
+
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "attachment.manager@example.test", Email = "attachment.manager@example.test", DisplayName = "Attachment Manager" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("attachment.manager@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = managedOrganizationId, Name = "Attachment managed organization" },
+                new Organization { Id = foreignOrganizationId, Name = "Attachment foreign organization" });
+            db.Users.Add(new User { Id = userId, Name = "Attachment Manager", Email = "attachment.manager@example.test", OrganizationId = managedOrganizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = userId,
+                OrganizationId = managedOrganizationId,
+                RoleKey = ScopedRoleCatalog.Technician
+            });
+            db.Incidents.AddRange(
+                new Incident { Id = managedIncidentId, OrganizationId = managedOrganizationId, Title = "Managed attachment incident", Description = "Managed attachment incident" },
+                new Incident { Id = foreignIncidentId, OrganizationId = foreignOrganizationId, Title = "Foreign attachment incident", Description = "Foreign attachment incident" });
+            db.Attachments.Add(new Attachment
+            {
+                Id = foreignAttachmentId,
+                TicketId = foreignIncidentId,
+                FileName = "foreign.txt",
+                FilePath = "foreign.txt",
+                ContentType = "text/plain",
+                SizeBytes = 1
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var manager = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await manager.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "attachment.manager@example.test", "correct horse battery staple"))).StatusCode);
+
+        var managedList = await manager.GetAsync($"/api/v1/tickets/{managedIncidentId}/attachments/");
+        var foreignList = await manager.GetAsync($"/api/v1/tickets/{foreignIncidentId}/attachments/");
+        var foreignDownload = await manager.GetAsync($"/api/v1/attachments/{foreignAttachmentId}");
+        using var managedUpload = new MultipartFormDataContent();
+        using var foreignUpload = new MultipartFormDataContent();
+        managedUpload.Add(new StringContent("not-a-file"), "metadata");
+        foreignUpload.Add(new StringContent("not-a-file"), "metadata");
+        var managedUploadAttempt = await manager.PostAsync($"/api/v1/tickets/{managedIncidentId}/attachments/", managedUpload);
+        var foreignUploadAttempt = await manager.PostAsync($"/api/v1/tickets/{foreignIncidentId}/attachments/", foreignUpload);
+
+        Assert.Equal(HttpStatusCode.OK, managedList.StatusCode);
+        Assert.True(foreignList.StatusCode == HttpStatusCode.NotFound, await foreignList.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.NotFound, foreignDownload.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, managedUploadAttempt.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, foreignUploadAttempt.StatusCode);
+    }
+
+    [Fact]
     public async Task Ticket_sla_mutation_requires_a_manager_grant_in_the_ticket_tenant()
     {
         const string technicianOrganizationId = "sla-technician-organization";
