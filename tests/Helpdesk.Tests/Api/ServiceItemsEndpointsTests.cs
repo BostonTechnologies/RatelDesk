@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using Helpdesk.API.Endpoints.Categories;
 using Helpdesk.API.Endpoints.Services;
 using Helpdesk.API.Services;
 using Helpdesk.Infrastructure.Persistence;
@@ -102,10 +103,12 @@ public sealed class ServiceItemsEndpointsTests
         var serviceItemsResponse = await harness.Client.GetAsync("/api/v1/service-items");
         var serviceResponse = await harness.Client.GetAsync("/api/v1/services/root-a");
         var requestFormResponse = await harness.Client.GetAsync("/api/v1/request-forms/form-root");
+        var categoriesResponse = await harness.Client.GetAsync("/api/v1/categories");
 
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, serviceItemsResponse.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, serviceResponse.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, requestFormResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, categoriesResponse.StatusCode);
     }
 
     private sealed class ServiceItemsTestHarness : IAsyncDisposable
@@ -157,6 +160,7 @@ public sealed class ServiceItemsEndpointsTests
             app.UseAuthentication();
             app.UseAuthorization();
             app.MapServiceEndpoints();
+            app.MapTicketCategoryEndpoints();
 
             using (var scope = app.Services.CreateScope())
             {
