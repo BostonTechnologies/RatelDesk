@@ -18,7 +18,7 @@ The replacement is printed once to the operator's terminal, written to the prote
 
 For the documented localhost HTTP profile, both services set `Authentication__AllowInsecureLocalhost=true`; this intentionally uses the `RatelDesk.Local` cookie rather than a `__Host-` cookie. Public deployments must use HTTPS, set a durable shared `DataProtection__KeyRingPath`, and remove that localhost-only setting.
 
-Back up the SQLite data directory, bootstrap state directory, shared key ring, and attachment directory as one recovery set. Restoring a SQLite file without its initialization descriptor or data-protection key material can require operator recovery.
+Back up the SQLite data directory, including both `rateldesk.db` and the durable `rateldesk.hangfire.db` scheduler database, together with the bootstrap state directory, shared key ring, and attachment directory as one recovery set. Restoring a SQLite file without its initialization descriptor or data-protection key material can require operator recovery.
 
 ## PostgreSQL
 

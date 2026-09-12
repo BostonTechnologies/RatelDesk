@@ -65,6 +65,7 @@ using Helpdesk.Shared.Enums;
 using Helpdesk.Shared.Services;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Hangfire.Storage.SQLite;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication;
@@ -227,6 +228,13 @@ var hangfireConnectionString = builder.Configuration.GetConnectionString(hangfir
 var databaseOptions = builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
 var databaseProvider = databaseOptions.ResolveProvider(builder.Configuration.GetConnectionString("HelpdeskDb"));
 var usePostgreSqlHangfire = !skipDatabaseStartup && databaseProvider is DatabaseProvider.PostgreSql;
+var useSqliteHangfire = !skipDatabaseStartup && databaseProvider is DatabaseProvider.Sqlite;
+var useHangfireRuntime = usePostgreSqlHangfire || useSqliteHangfire;
+var sqliteHangfirePath = useSqliteHangfire
+    ? Path.Combine(
+        Path.GetDirectoryName(Path.GetFullPath(databaseOptions.Sqlite.Path))!,
+        "rateldesk.hangfire.db")
+    : null;
 if (usePostgreSqlHangfire && string.IsNullOrWhiteSpace(hangfireConnectionString))
 {
     throw new InvalidOperationException($"ConnectionStrings:{hangfireSettings.ConnectionStringName} is required.");
@@ -266,16 +274,24 @@ builder.Services.Configure<SlaEvaluationJobSettings>(options =>
 builder.Services.AddSingleton(new HangfireRuntimeStatus(
     hangfireSettings.QueueName,
     "/hangfire",
-    usePostgreSqlHangfire ? "Ops UI / database" : "Disabled for SQLite runtime",
-    usePostgreSqlHangfire ? "Application PostgreSQL database" : "No SQLite Hangfire provider configured"));
-if (usePostgreSqlHangfire)
+    useHangfireRuntime ? "Ops UI / database" : "Disabled for test runtime",
+    usePostgreSqlHangfire ? "Application PostgreSQL database" :
+    useSqliteHangfire ? "Dedicated SQLite job database" : "No scheduler storage configured"));
+if (useHangfireRuntime)
 {
     builder.Services.AddHangfire(config =>
     {
         config
             .UseSimpleAssemblyNameTypeSerializer()
-            .UseRecommendedSerializerSettings()
-            .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(hangfireConnectionString!));
+            .UseRecommendedSerializerSettings();
+        if (usePostgreSqlHangfire)
+        {
+            config.UsePostgreSqlStorage(options => options.UseNpgsqlConnection(hangfireConnectionString!));
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(sqliteHangfirePath!)!);
+        config.UseSQLiteStorage(sqliteHangfirePath!);
     });
     builder.Services.AddHangfireServer(options =>
     {
@@ -1070,7 +1086,7 @@ app.UseMiddleware<UserAccessClaimsMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 
-if (usePostgreSqlHangfire)
+if (useHangfireRuntime)
 {
     app.UseHangfireDashboard("/hangfire", new DashboardOptions
     {
@@ -1279,7 +1295,7 @@ if (!skipDatabaseStartup)
     await SeedEmailTemplatesAsync(app);
 }
 
-if (usePostgreSqlHangfire)
+if (useHangfireRuntime)
 {
     var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
     if (hangfireSettings.SlaEvaluationEnabled)
@@ -1336,8 +1352,7 @@ if (usePostgreSqlHangfire)
 }
 else
 {
-    app.Logger.LogInformation("Skipping Hangfire startup because {Reason}.",
-        skipDatabaseStartup ? "Helpdesk:SkipDatabaseStartup is enabled" : "the selected database provider is SQLite");
+    app.Logger.LogInformation("Skipping Hangfire startup because Helpdesk:SkipDatabaseStartup is enabled.");
 }
 
 /* claim debug
