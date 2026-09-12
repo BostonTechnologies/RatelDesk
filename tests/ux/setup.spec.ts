@@ -16,7 +16,7 @@ test('first-run setup unlocks embedded storage and reaches review', async ({ pag
   await expect(page.getByText('operator-only setup code')).toBeVisible();
 
   const setupCodeInput = page.getByLabel('Setup code');
-  await setupCodeInput.fill(setupCode);
+  await setupCodeInput.pressSequentially(setupCode);
   await setupCodeInput.press('Tab');
   await expect(setupCodeInput).toHaveValue(setupCode);
   await page.getByRole('button', { name: 'Continue' }).click();
