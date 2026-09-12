@@ -14,6 +14,7 @@ public static class BootstrapEndpoints
             return Results.Ok(new BootstrapStatusResponse(descriptor.State, descriptor.Provider));
         })
         .AllowAnonymous()
+        .RequireRateLimiting("SetupUnlock")
         .WithTags("Setup");
 
         app.MapPost("/api/v1/setup/session", async (

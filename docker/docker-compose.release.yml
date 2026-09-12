@@ -31,6 +31,7 @@ services:
       - "127.0.0.1:${RATELDESK_API_PORT:-8222}:8222"
     volumes:
       - rateldesk-data-protection:/var/lib/rateldesk/keys
+      - rateldesk-bootstrap:/var/lib/rateldesk/bootstrap
       - rateldesk-storage:/app/storage
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8222/health/live || exit 1"]
@@ -58,4 +59,5 @@ services:
 volumes:
   rateldesk-postgres-data:
   rateldesk-data-protection:
+  rateldesk-bootstrap:
   rateldesk-storage:

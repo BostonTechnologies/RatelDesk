@@ -33,6 +33,11 @@ public sealed class FileBootstrapStateStore : IBootstrapStateStore
                 return existing;
             }
 
+            if (File.Exists(Path.Combine(_options.StateDirectory, DescriptorFileName)))
+            {
+                throw new InvalidOperationException("The bootstrap descriptor is invalid and requires operator recovery.");
+            }
+
             var setupCode = string.IsNullOrWhiteSpace(_options.SetupCode)
                 ? GenerateSetupCode()
                 : _options.SetupCode.Trim();

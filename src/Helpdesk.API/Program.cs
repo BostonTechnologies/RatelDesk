@@ -111,9 +111,23 @@ if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not Bootstra
     builder.Services.AddSingleton(bootstrapOptions);
     builder.Services.AddSingleton<IBootstrapStateStore>(bootstrapStateStore);
     builder.Services.AddSingleton<BootstrapSessionService>();
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.AddPolicy("SetupUnlock", context =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    AutoReplenishment = true,
+                    PermitLimit = 5,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0
+                }));
+    });
 
     var bootstrapApp = builder.Build();
     bootstrapApp.UseExceptionHandler();
+    bootstrapApp.UseRateLimiter();
     bootstrapApp.MapGet("/health/live", () => Results.Ok(new { status = "alive" })).AllowAnonymous();
     bootstrapApp.MapGet("/health/ready", () => Results.Ok(new { status = "awaiting-setup" })).AllowAnonymous();
     bootstrapApp.MapBootstrapEndpoints();
