@@ -12,7 +12,7 @@ api_url="http://127.0.0.1:${api_port}"
 web_url="https://127.0.0.1:${web_port}"
 artifact_dir=${HELPDESK_E2E_ARTIFACT_DIR:-artifacts/e2e}
 compose_project="helpdesk-e2e-${RANDOM}${RANDOM}"
-compose_file=docker/docker-compose.yml
+compose_file=docker/docker-compose.e2e.yml
 mkdir -p "$artifact_dir"
 
 e2e_system_secret=$(openssl rand -hex 32)
@@ -84,7 +84,7 @@ wait_for_database() {
 }
 
 compose_started=true
-RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" up --detach
+RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" up --detach postgres
 wait_for_database
 
 ASPNETCORE_ENVIRONMENT=Development \
