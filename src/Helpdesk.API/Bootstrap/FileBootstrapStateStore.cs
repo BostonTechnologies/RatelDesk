@@ -148,7 +148,7 @@ public sealed class FileBootstrapStateStore : IBootstrapStateStore
     private async Task WriteOperatorSetupCodeAsync(string setupCode, CancellationToken cancellationToken)
     {
         var codePath = Path.Combine(_options.StateDirectory, SetupCodeFileName);
-        await File.WriteAllTextAsync(codePath, setupCode, Encoding.UTF8, cancellationToken);
+        await File.WriteAllTextAsync(codePath, setupCode, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken);
         if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
             File.SetUnixFileMode(codePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);

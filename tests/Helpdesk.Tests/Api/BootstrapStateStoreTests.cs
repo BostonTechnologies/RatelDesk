@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Data.Sqlite;
+using System.Text;
 
 namespace Helpdesk.Tests.Api;
 
@@ -61,8 +62,10 @@ public sealed class BootstrapStateStoreTests
 
             Assert.Equal(BootstrapState.Unconfigured, descriptor.State);
             Assert.NotEqual(setupCode.Trim(), descriptor.SetupCodeHash);
+            Assert.False((await File.ReadAllBytesAsync(Path.Combine(directory, "setup-code"))).AsSpan().StartsWith(Encoding.UTF8.Preamble));
             Assert.False(sessions.TryCreate(descriptor, "incorrect", out _));
             Assert.True(sessions.TryCreate(descriptor, setupCode, out var session));
+            Assert.True(sessions.TryCreate(descriptor, $"\uFEFF{setupCode}", out _));
             Assert.True(sessions.IsValid(session, descriptor));
         }
         finally

@@ -11,11 +11,12 @@ public sealed class BootstrapSessionService
     public bool TryCreate(BootstrapDescriptor descriptor, string? setupCode, out string? session)
     {
         session = null;
+        var normalizedSetupCode = setupCode?.Trim().TrimStart('\uFEFF');
         if (descriptor.State is BootstrapState.Ready or BootstrapState.RecoveryRequired ||
-            string.IsNullOrWhiteSpace(setupCode) ||
+            string.IsNullOrWhiteSpace(normalizedSetupCode) ||
             !CryptographicOperations.FixedTimeEquals(
                 Convert.FromHexString(descriptor.SetupCodeHash),
-                SHA256.HashData(Encoding.UTF8.GetBytes(setupCode.Trim()))))
+                SHA256.HashData(Encoding.UTF8.GetBytes(normalizedSetupCode))))
         {
             return false;
         }
