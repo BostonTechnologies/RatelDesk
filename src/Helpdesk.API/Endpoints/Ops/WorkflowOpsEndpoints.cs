@@ -43,7 +43,9 @@ public static class WorkflowOpsEndpoints
                 access,
                 page,
                 pageSize,
-                query => query.Where(t => t.Status == RequestTaskStatus.InProgress && t.DueAt.HasValue && t.DueAt < now),
+                query => db.Database.IsSqlite()
+                    ? query.Where(t => t.Status == RequestTaskStatus.InProgress && EF.Property<long?>(t, "DueAtUtcTicks") < now.UtcTicks)
+                    : query.Where(t => t.Status == RequestTaskStatus.InProgress && t.DueAt.HasValue && t.DueAt < now),
                 ct));
         });
 
@@ -288,10 +290,10 @@ public static class WorkflowOpsEndpoints
             var failedCount = await tenantFilter.CountAsync(t => t.Status == RequestTaskStatus.Failed, ct);
             var now = DateTimeOffset.UtcNow;
             var overdueCount = db.Database.IsSqlite()
-                ? (await tenantFilter.ToListAsync(ct)).Count(t =>
+                ? await tenantFilter.CountAsync(t =>
                     t.Status == RequestTaskStatus.InProgress
-                    && t.DueAt.HasValue
-                    && t.DueAt < now)
+                    && EF.Property<long?>(t, "DueAtUtcTicks") < now.UtcTicks,
+                    ct)
                 : await tenantFilter.CountAsync(t =>
                     t.Status == RequestTaskStatus.InProgress
                     && t.DueAt.HasValue
@@ -370,16 +372,13 @@ public static class WorkflowOpsEndpoints
 
         var tasksQuery = ApplyAllowedOrganizationFilter(db.RequestTasks.AsNoTracking(), access);
         var isSqlite = db.Database.IsSqlite();
+        tasksQuery = filter(tasksQuery);
         if (isSqlite)
         {
-            var matchingTaskIds = filter((await tasksQuery.ToListAsync(ct)).AsQueryable())
-                .Select(task => task.Id)
-                .ToArray();
-            tasksQuery = tasksQuery.Where(task => matchingTaskIds.Contains(task.Id));
-        }
-        else
-        {
-            tasksQuery = filter(tasksQuery);
+            tasksQuery = tasksQuery
+                .OrderByDescending(task => EF.Property<long?>(task, "NextRetryAtUtcTicks") ?? EF.Property<long?>(task, "DueAtUtcTicks") ?? long.MinValue)
+                .ThenBy(task => task.RequestId)
+                .ThenBy(task => task.Id);
         }
 
         var query =
@@ -408,27 +407,19 @@ public static class WorkflowOpsEndpoints
 
         int totalCount;
         List<TaskOpsRowDto> items;
-        if (isSqlite)
-        {
-            var sqliteItems = (await query.ToListAsync(ct))
-                .OrderByDescending(t => t.NextRetryAt ?? t.DueAt ?? DateTimeOffset.MinValue)
-                .ThenBy(t => t.RequestTrackingId)
-                .ThenBy(t => t.TaskId)
-                .ToList();
-            totalCount = sqliteItems.Count;
-            items = sqliteItems.Skip(skip).Take(safePageSize).ToList();
-        }
-        else
-        {
-            totalCount = await query.CountAsync(ct);
-            items = await query
+        totalCount = await query.CountAsync(ct);
+        items = isSqlite
+            ? await query
+                .Skip(skip)
+                .Take(safePageSize)
+                .ToListAsync(ct)
+            : await query
                 .OrderByDescending(t => t.NextRetryAt ?? t.DueAt ?? DateTimeOffset.MinValue)
                 .ThenBy(t => t.RequestTrackingId)
                 .ThenBy(t => t.TaskId)
                 .Skip(skip)
                 .Take(safePageSize)
                 .ToListAsync(ct);
-        }
 
         return new PagedResponse<TaskOpsRowDto>
         {

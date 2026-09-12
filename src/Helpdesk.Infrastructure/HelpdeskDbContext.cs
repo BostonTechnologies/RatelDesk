@@ -99,6 +99,7 @@ public class HelpdeskDbContext(
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         var isPostgreSql = Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL";
+        var isSqlite = Database.IsSqlite();
         modelBuilder.Entity<InstanceInitialization>(entity =>
         {
             entity.ToTable("InstanceInitializations");
@@ -202,6 +203,15 @@ public class HelpdeskDbContext(
             entity.HasIndex(x => x.Status);
             entity.HasIndex(x => new { x.Status, x.DueAt });
             entity.HasIndex(x => new { x.Status, x.NextRetryAt });
+            if (isSqlite)
+            {
+                entity.Property<long?>("DueAtUtcTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"DueAt\") - 2440587.5) * 864000000000 AS INTEGER)");
+                entity.Property<long?>("NextRetryAtUtcTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"NextRetryAt\") - 2440587.5) * 864000000000 AS INTEGER)");
+                entity.HasIndex("Status", "DueAtUtcTicks");
+                entity.HasIndex("Status", "NextRetryAtUtcTicks");
+            }
             entity.HasIndex(x => new { x.Escalated, x.Status });
             entity.HasOne(x => x.Request)
                 .WithMany(x => x.Tasks)
