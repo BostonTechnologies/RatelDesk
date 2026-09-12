@@ -73,6 +73,22 @@ public class AuthorizationScopeServiceTests
         Assert.Equal(["org-a"], access.OrganizationIdsFor(HelpdeskPermissions.IncidentManager));
     }
 
+    [Fact]
+    public void Identity_provider_tenant_claim_does_not_create_application_scope()
+    {
+        var principal = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+            [
+                new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "Tester"),
+                new System.Security.Claims.Claim("tenant_id", "directory-tenant")
+            ],
+            "test"));
+
+        var access = CurrentUserAccessProfile.FromClaims(principal);
+
+        Assert.Null(access.PrimaryOrganizationId);
+        Assert.Empty(access.AllowedOrganizationIds);
+    }
+
     private static CurrentUserAccessProfile Profile(string orgId, string customerId, params string[] permissions) => new(
         true,
         "Tester",

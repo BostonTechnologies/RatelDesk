@@ -89,7 +89,7 @@ public sealed record CurrentUserAccessProfile(
 
         var allowedOrganizationIds = user.FindAll("allowed_organization_id")
             .Select(claim => claim.Value)
-            .Append(FirstClaim(user, "organization_id", "tenant_id"))
+            .Append(FirstClaim(user, "organization_id"))
             .OfType<string>()
             .Concat(scopedPermissionGrants.Select(grant => grant.OrganizationId))
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -99,7 +99,7 @@ public sealed record CurrentUserAccessProfile(
             true,
             user.Identity?.Name ?? FirstClaim(user, "name", "preferred_username", ClaimTypes.Email, "email"),
             FirstClaim(user, ClaimTypes.Email, "email", "preferred_username"),
-            FirstClaim(user, "organization_id", "tenant_id"),
+            FirstClaim(user, "organization_id"),
             null,
             FirstClaim(user, "customer_id"),
             isAdmin,
