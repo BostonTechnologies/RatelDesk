@@ -1156,6 +1156,51 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task IncidentUpdate_RequiresScopedIncidentManagerAccess()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.Add(new Organization { Id = "org-1", Name = "Organization One" });
+            db.Users.Add(new User
+            {
+                Id = "self-service-1",
+                Name = "Self-service user",
+                Email = "self-service@example.com",
+                OrganizationId = "org-1",
+                Role = "User"
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = "self-service-1",
+                OrganizationId = "org-1",
+                RoleKey = ScopedRoleCatalog.SelfServiceUser
+            });
+            db.Incidents.Add(new Incident
+            {
+                Id = "inc-self-service-update",
+                TrackingId = "INC-SELF-UPDATE",
+                Title = "Self-service incident",
+                OrganizationId = "org-1",
+                RequesterEmail = "self-service@example.com",
+                State = TicketState.New,
+                Priority = TicketPriority.Low
+            });
+        });
+        harness.UseRole("SelfService");
+
+        var response = await harness.Client.PutAsJsonAsync(
+            "/api/v1/incidents/inc-self-service-update",
+            new UpdateIncidentDto { State = TicketState.Resolved });
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+        await harness.WithDbAsync(async db =>
+        {
+            Assert.Equal(TicketState.New, (await db.Incidents.FindAsync("inc-self-service-update"))!.State);
+        });
+    }
+
+    [Fact]
     public async Task IncidentRelations_DeleteRemovesExistingLink()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();

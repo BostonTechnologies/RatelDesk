@@ -471,6 +471,8 @@ public static class IncidentEndpoints
         group.MapPut("/{id}", async (
             [FromRoute] string id,
             [FromBody] UpdateIncidentDto dto,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Incident> repo,
             [FromServices] IBackgroundJobQueue jobs,
@@ -491,6 +493,12 @@ public static class IncidentEndpoints
             if (existingIncident is null)
             {
                 return Results.Problem("Incident not found", statusCode: 404);
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageIncident(existingIncident.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             var previousState = existingIncident.State;
@@ -683,7 +691,8 @@ public static class IncidentEndpoints
             };
 
             return Results.Ok(resultDto);
-        });
+        })
+        .RequireAuthorization("IncidentManager");
 
 
         group.MapGet("/{id}/relations", async (
