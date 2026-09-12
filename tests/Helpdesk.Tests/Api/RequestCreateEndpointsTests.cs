@@ -192,6 +192,29 @@ public sealed class RequestCreateEndpointsTests
     }
 
     [Fact]
+    public async Task SelfServicePost_Creates_The_Submitter_Customer_In_Its_Scoped_Organization()
+    {
+        await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "DifferentDomain");
+        await harness.SeedRequestFormAsync();
+        var dto = new SubmitSelfServiceRequestDto
+        {
+            RequestFormId = "form-1",
+            PayloadJson = "{}"
+        };
+
+        var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var created = Assert.Single((await harness.Requests.GetAllAsync()).ToList());
+        Assert.Equal("local.user@unrelated.example", created.RequesterEmail);
+        Assert.Equal("org-1", created.OrganizationId);
+        await using var scope = harness.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        var customer = await db.Customers.SingleAsync(x => x.Email == "local.user@unrelated.example");
+        Assert.Equal("org-1", customer.OrganizationId);
+    }
+
+    [Fact]
     public async Task SelfServiceRequestUsers_Returns_Only_Visible_Regular_User_Organizations()
     {
         await using var harness = await SelfServiceRequestTestHarness.CreateAsync();
@@ -494,6 +517,7 @@ public sealed class RequestCreateEndpointsTests
         public HttpClient Client { get; }
         public InMemoryRepository<Request> Requests { get; }
         public CapturingTicketNotificationService Notification { get; }
+        public IServiceProvider Services => app.Services;
 
         public static async Task<SelfServiceRequestTestHarness> CreateAsync(string authHeader = "SelfService")
         {
@@ -926,6 +950,19 @@ public sealed class RequestCreateEndpointsTests
                 [
                     new Claim(ClaimTypes.Name, "No Email User"),
                     new Claim(ClaimTypes.Role, "HelpdeskAdmin")
+                ];
+            }
+            else if (auth.Contains("DifferentDomain", StringComparison.OrdinalIgnoreCase))
+            {
+                claims =
+                [
+                    new Claim(ClaimTypes.Name, "Local User"),
+                    new Claim("name", "Local User"),
+                    new Claim("preferred_username", "local.user@unrelated.example"),
+                    new Claim(ClaimTypes.Role, "SelfService.User"),
+                    new Claim("organization_id", "org-1"),
+                    new Claim("allowed_organization_id", "org-1"),
+                    new Claim("scoped_permission", "SelfService.User|org-1")
                 ];
             }
             else if (auth.Contains("Msp", StringComparison.OrdinalIgnoreCase))

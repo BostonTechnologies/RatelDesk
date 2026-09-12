@@ -10,6 +10,7 @@ using Helpdesk.Application.Sla;
 using Helpdesk.Application.Workflow;
 using Helpdesk.Application.Resources;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Request;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
@@ -333,6 +334,34 @@ public static class SelfServiceRequestEndpoints
     {
         if (string.IsNullOrWhiteSpace(dto.RequestedForPersonId))
         {
+            var scopedOrganizationId = access.PrimaryOrganizationId;
+            if (!string.IsNullOrWhiteSpace(scopedOrganizationId)
+                && access.ScopedPermissionGrants.Contains(
+                    new ScopedPermissionGrant(HelpdeskPermissions.SelfServiceUser, scopedOrganizationId)))
+            {
+                var normalizedEmail = requesterEmail.Trim().ToLowerInvariant();
+                var existingCustomer = await db.Customers
+                    .FirstOrDefaultAsync(x => x.Email.ToLower() == normalizedEmail, token);
+                if (existingCustomer is not null)
+                {
+                    return existingCustomer.State == Helpdesk.Shared.Models.EntityState.Enabled
+                           && string.Equals(existingCustomer.OrganizationId, scopedOrganizationId, StringComparison.OrdinalIgnoreCase)
+                        ? (existingCustomer, existingCustomer.Name)
+                        : (null, null);
+                }
+
+                var provisionedCustomer = new Customer
+                {
+                    Name = requesterName,
+                    Email = normalizedEmail,
+                    OrganizationId = scopedOrganizationId,
+                    State = Helpdesk.Shared.Models.EntityState.Enabled
+                };
+                db.Customers.Add(provisionedCustomer);
+                await db.SaveChangesAsync(token);
+                return (provisionedCustomer, provisionedCustomer.Name);
+            }
+
             var (customer, _) = await tenantProvisioningService.GetOrCreateCustomerAsync(
                 requesterEmail,
                 requesterName,
