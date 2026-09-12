@@ -97,6 +97,7 @@ public class HelpdeskDbContext(
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        var isPostgreSql = Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL";
         modelBuilder.Entity<Helpdesk.Shared.AiAssistant.Chat.AiAssistantChatConversation>(entity =>
         {
             entity.ToTable("AiAssistantChatConversations");
@@ -118,7 +119,10 @@ public class HelpdeskDbContext(
             entity.HasKey(x => new { x.ConversationId, x.CallId });
             entity.HasOne<Helpdesk.Shared.AiAssistant.Chat.AiAssistantChatConversation>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Restrict);
         });
-        modelBuilder.HasPostgresExtension("vector");
+        if (isPostgreSql)
+        {
+            modelBuilder.HasPostgresExtension("vector");
+        }
 
         modelBuilder.Entity<Ticket>().HasQueryFilter(ticket =>
             _tenantContext.IsHelpdeskAdmin ||
@@ -339,7 +343,7 @@ public class HelpdeskDbContext(
         {
             entity.ToTable("DatasetRows");
             entity.HasKey(x => x.Id);
-            if (Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            if (isPostgreSql)
             {
                 entity.Property(x => x.DataJson)
                     .HasColumnType("jsonb")
@@ -477,8 +481,18 @@ public class HelpdeskDbContext(
             entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(1000);
             entity.Property(x => x.TenantId).HasMaxLength(64);
-            entity.Property(x => x.ConditionsJson).HasColumnType("jsonb").HasDefaultValue("[]");
-            entity.Property(x => x.ActionsJson).HasColumnType("jsonb").HasDefaultValue("[]");
+            var conditionsJson = entity.Property(x => x.ConditionsJson).HasDefaultValue("[]");
+            var actionsJson = entity.Property(x => x.ActionsJson).HasDefaultValue("[]");
+            if (isPostgreSql)
+            {
+                conditionsJson.HasColumnType("jsonb");
+                actionsJson.HasColumnType("jsonb");
+            }
+            else
+            {
+                conditionsJson.HasColumnType("TEXT");
+                actionsJson.HasColumnType("TEXT");
+            }
             entity.Property(x => x.CreatedBy).HasMaxLength(256);
             entity.Property(x => x.UpdatedBy).HasMaxLength(256);
             entity.HasIndex(x => new { x.Enabled, x.ScopeType, x.TenantId, x.MailboxId, x.Priority });
@@ -725,7 +739,7 @@ public class HelpdeskDbContext(
             entity.Property(a => a.State)
                 .HasConversion<string>()
                 .HasDefaultValue(KnowledgeBaseArticleState.Draft);
-            if (Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            if (isPostgreSql)
             {
                 entity.Property(a => a.Tags).HasColumnType("jsonb");
             }
@@ -754,7 +768,7 @@ public class HelpdeskDbContext(
             entity.Property(e => e.Text).IsRequired();
             entity.Property(e => e.MetadataJson).IsRequired().HasColumnType("TEXT");
             entity.Property(e => e.LastScore).HasDefaultValue(0);
-            if (Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            if (isPostgreSql)
             {
                 entity.Property(e => e.Vector).HasVectorType(768);
             }
@@ -813,8 +827,16 @@ public class HelpdeskDbContext(
         modelBuilder.Entity<Change>(entity =>
         {
             entity.Property(x => x.ChangeType).HasMaxLength(32);
-            entity.Property(x => x.ChangeTemplateJson).HasColumnType("jsonb");
-            entity.Property(x => x.AiReviewOutputJson).HasColumnType("jsonb");
+            if (isPostgreSql)
+            {
+                entity.Property(x => x.ChangeTemplateJson).HasColumnType("jsonb");
+                entity.Property(x => x.AiReviewOutputJson).HasColumnType("jsonb");
+            }
+            else
+            {
+                entity.Property(x => x.ChangeTemplateJson).HasColumnType("TEXT");
+                entity.Property(x => x.AiReviewOutputJson).HasColumnType("TEXT");
+            }
             entity.Property(x => x.AiReviewCorrelationId).HasMaxLength(128);
             entity.Property(x => x.AiReviewFailureReason).HasMaxLength(1024);
             entity.Property(x => x.AiReviewAcknowledgementNotes).HasMaxLength(1024);
@@ -885,7 +907,7 @@ public class HelpdeskDbContext(
         modelBuilder.Entity<OrganizationAiKbSettings>().ToTable("OrganizationAiKbSettings");
 
         modelBuilder.ApplyConfiguration(new ServiceConfiguration(_tenantContext, _httpContextAccessor));
-        modelBuilder.ApplyConfiguration(new RequestFormConfiguration(_tenantContext));
+        modelBuilder.ApplyConfiguration(new RequestFormConfiguration(_tenantContext, isPostgreSql));
         modelBuilder.Entity<RequestForm>().HasQueryFilter(form =>
             _tenantContext.IsHelpdeskAdmin ||
             string.IsNullOrWhiteSpace(_tenantContext.TenantId) ||

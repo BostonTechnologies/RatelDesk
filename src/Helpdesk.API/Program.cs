@@ -989,16 +989,8 @@ if (!skipDatabaseStartup)
     {
         var ctx = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
         var identityDb = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
-        if (ctx.Database.IsSqlite())
-        {
-            await ctx.Database.EnsureCreatedAsync();
-            await LocalIdentityDatabaseInitializer.EnsureSqliteSchemaAsync(identityDb);
-        }
-        else
-        {
-            await ctx.Database.MigrateAsync();
-            await identityDb.Database.MigrateAsync();
-        }
+        await ctx.Database.MigrateAsync();
+        await identityDb.Database.MigrateAsync();
         await TicketCategorySeed.SeedAsync(ctx);
         await SlaPolicySeed.SeedAsync(ctx);
         await RoleDefinitionSeeder.EnsureBuiltInsAsync(ctx);
@@ -1038,22 +1030,6 @@ if (app.Environment.IsDevelopment() &&
     app.Configuration.GetValue<bool>("Helpdesk:E2eSeedData"))
 {
     await SeedLocalE2eDataAsync(app);
-}
-
-if (app.Environment.IsDevelopment() && !skipDatabaseStartup)
-{
-    using var scope = app.Services.CreateScope();
-    var services = scope.ServiceProvider;
-    try
-    {
-        var context = services.GetRequiredService<HelpdeskDbContext>();
-        context.Database.Migrate();
-    }
-    catch (Exception ex)
-    {
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while migrating the database.");
-    }
 }
 
 app.UseExceptionHandler();

@@ -68,16 +68,8 @@ public sealed class BootstrapInitializationService(
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
         var identityDb = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
-        if (string.Equals(descriptor.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
-        {
-            await db.Database.EnsureCreatedAsync(cancellationToken);
-            await LocalIdentityDatabaseInitializer.EnsureSqliteSchemaAsync(identityDb, cancellationToken);
-        }
-        else
-        {
-            await db.Database.MigrateAsync(cancellationToken);
-            await identityDb.Database.MigrateAsync(cancellationToken);
-        }
+        await db.Database.MigrateAsync(cancellationToken);
+        await identityDb.Database.MigrateAsync(cancellationToken);
         await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
 
         if (await identityDb.Users.AnyAsync(cancellationToken) ||

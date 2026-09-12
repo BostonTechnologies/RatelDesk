@@ -29,6 +29,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Helpdesk.Mcp.Core", "src\He
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Helpdesk.Mcp.Http", "src\Helpdesk.Mcp.Http\Helpdesk.Mcp.Http.csproj", "{42A90541-44A7-4438-B4F4-743B32950674}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Helpdesk.Infrastructure.SqliteMigrations", "src\Helpdesk.Infrastructure.SqliteMigrations\Helpdesk.Infrastructure.SqliteMigrations.csproj", "{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -179,9 +183,24 @@ Global
 		{42A90541-44A7-4438-B4F4-743B32950674}.Release|x64.Build.0 = Release|Any CPU
 		{42A90541-44A7-4438-B4F4-743B32950674}.Release|x86.ActiveCfg = Release|Any CPU
 		{42A90541-44A7-4438-B4F4-743B32950674}.Release|x86.Build.0 = Release|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Debug|x64.Build.0 = Debug|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Debug|x86.Build.0 = Debug|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Release|x64.ActiveCfg = Release|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Release|x64.Build.0 = Release|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Release|x86.ActiveCfg = Release|Any CPU
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{FFBFE4CD-651D-408D-A03A-70DFD2460CD5} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {559A72A3-8318-40FF-9137-1DC60D77AF71}

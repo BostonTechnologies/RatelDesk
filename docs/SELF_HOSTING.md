@@ -8,7 +8,7 @@ For built-in roles, scoped custom roles, and the bounded tenant-member delegatio
 
 ## First use and Docker
 
-Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. After the first API start, retrieve the operator-only setup code from `/var/lib/rateldesk/bootstrap/setup-code` in the API container and complete `http://localhost:8111/setup`. The code is consumed at completion and is never returned by HTTP APIs.
+Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. After the first API start, retrieve the operator-only setup code from `/var/lib/rateldesk/bootstrap/setup-code` in the API container and complete `http://localhost:8111/setup`. The code is consumed at completion and is never returned by HTTP APIs. On success, the API exits its restricted setup host and Compose restarts it into the normal application host; wait briefly for the sign-in page to become available.
 
 Before setup completes, an operator can replace a lost or exposed setup code without reopening a completed instance:
 
@@ -22,9 +22,11 @@ For the documented localhost HTTP profile, both services set `Authentication__Al
 
 Back up the SQLite data directory, including both `rateldesk.db` and the durable `rateldesk.hangfire.db` scheduler database, together with the bootstrap state directory, shared key ring, and attachment directory as one recovery set. Restoring a SQLite file without its initialization descriptor or data-protection key material can require operator recovery.
 
+SQLite uses its own EF Core migration assembly; setup and every normal API startup apply that migration history rather than using `EnsureCreated`. To upgrade, take a verified backup, deploy one versioned image release, and allow the API to start. If migration fails, stop the new image and restore the complete backup set before retrying. Changing a running instance from SQLite to PostgreSQL (or the reverse) is not an in-place upgrade: provision the target database and migrate data through an explicit export/import plan.
+
 ## PostgreSQL
 
-An existing PostgreSQL deployment continues to use `ConnectionStrings__HelpdeskDb`; select `Database__Provider=PostgreSql` explicitly for new deployment-managed PostgreSQL configuration. Preserve the database and shared data-protection keys before an upgrade. PostgreSQL requires the extensions used by the existing migration chain, including `vector` and `pg_trgm`; do not point RatelDesk at an unrelated or non-empty database.
+An existing PostgreSQL deployment continues to use `ConnectionStrings__HelpdeskDb`; select `Database__Provider=PostgreSql` explicitly for new deployment-managed PostgreSQL configuration. Preserve the database and shared data-protection keys before an upgrade. PostgreSQL uses the existing provider-specific migration chain and requires the extensions used by it, including `vector` and `pg_trgm`; do not point RatelDesk at an unrelated or non-empty database. The default Compose file deliberately does not bundle PostgreSQL; use an externally managed PostgreSQL service, or add one in deployment-owned infrastructure with backups, credentials, TLS, and extension management appropriate to that environment.
 
 ## Reverse proxy and Traefik
 

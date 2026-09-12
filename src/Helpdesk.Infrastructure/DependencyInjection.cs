@@ -51,6 +51,8 @@ namespace Helpdesk.Infrastructure;
 
 public static class DependencyInjection
 {
+    private const string SqliteMigrationsAssembly = "Helpdesk.Infrastructure.SqliteMigrations";
+
     public static IServiceCollection AddHelpdeskInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         var legacyPostgreSqlConnectionString = configuration.GetConnectionString("HelpdeskDb");
@@ -246,7 +248,8 @@ public static class DependencyInjection
             return;
         }
 
-        options.UseSqlite(connectionString);
+        options.UseSqlite(connectionString, sqlite =>
+            sqlite.MigrationsAssembly(SqliteMigrationsAssembly));
     }
 
     private static string CreateSqliteConnectionString(string configuredPath)

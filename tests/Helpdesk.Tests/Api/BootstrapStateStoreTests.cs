@@ -3,6 +3,7 @@ using Helpdesk.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Data.Sqlite;
 
 namespace Helpdesk.Tests.Api;
 
@@ -204,6 +205,20 @@ public sealed class BootstrapStateStoreTests
                 .Options;
             await using var identity = new RatelDeskIdentityDbContext(identityOptions);
             Assert.True(await identity.Users.AnyAsync(user => user.Email == "admin@example.test" && user.IsInstanceAdministrator));
+
+            await using var connection = new SqliteConnection($"Data Source={Path.Combine(dataDirectory, "rateldesk.db")}");
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT MigrationId FROM __EFMigrationsHistory";
+            await using var reader = await command.ExecuteReaderAsync();
+            var appliedMigrations = new List<string>();
+            while (await reader.ReadAsync())
+            {
+                appliedMigrations.Add(reader.GetString(0));
+            }
+
+            Assert.Contains(appliedMigrations, migration => migration.EndsWith("InitialSqliteApplication", StringComparison.Ordinal));
+            Assert.Contains(appliedMigrations, migration => migration.EndsWith("InitialSqliteIdentity", StringComparison.Ordinal));
         }
         finally
         {

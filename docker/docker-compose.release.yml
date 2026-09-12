@@ -2,7 +2,7 @@ name: rateldesk
 
 services:
   api:
-    image: ghcr.io/bostontechnologies/rateldesk-api:${RATELDESK_VERSION:-0.1.0}
+    image: ghcr.io/bostontechnologies/rateldesk-api:${RATELDESK_VERSION:-0.1.0-rc.4}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       Database__Provider: Sqlite
@@ -26,7 +26,7 @@ services:
       retries: 12
 
   web:
-    image: ghcr.io/bostontechnologies/rateldesk-web:${RATELDESK_VERSION:-0.1.0}
+    image: ghcr.io/bostontechnologies/rateldesk-web:${RATELDESK_VERSION:-0.1.0-rc.4}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ApiBaseUrl: http://api:8222/

@@ -16,6 +16,10 @@
             {
                 <MudAlert Severity="Severity.Error">@_error</MudAlert>
             }
+            @if (!string.IsNullOrWhiteSpace(_completionMessage))
+            {
+                <MudAlert Severity="Severity.Success">@_completionMessage</MudAlert>
+            }
 
             <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" InputType="InputType.Password" Required="true" />
             <MudSelect T="string" @bind-Value="_storageProvider" Label="Storage provider" Required="true">
@@ -65,6 +69,7 @@
     private string _password = string.Empty;
     private string _confirmPassword = string.Empty;
     private string? _error;
+    private string? _completionMessage;
     private bool _busy;
 
     protected override async Task OnInitializedAsync()
@@ -91,6 +96,7 @@
     {
         _busy = true;
         _error = null;
+        _completionMessage = null;
         try
         {
             if (!Uri.TryCreate(_applicationUrl, UriKind.Absolute, out var applicationUri) ||
@@ -138,7 +144,7 @@
             using var storageResponse = await client.SendAsync(storageRequest);
             if (!storageResponse.IsSuccessStatusCode)
             {
-                _error = "SQLite storage could not be prepared.";
+                _error = $"{_storageProvider} storage could not be prepared.";
                 return;
             }
 
@@ -164,6 +170,8 @@
 
             _password = string.Empty;
             _confirmPassword = string.Empty;
+            _completionMessage = "Initialization is complete. RatelDesk is restarting the API and will open sign-in shortly.";
+            await Task.Delay(TimeSpan.FromSeconds(2));
             Navigation.NavigateTo("/login", forceLoad: true);
         }
         catch (HttpRequestException)

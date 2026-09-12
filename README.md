@@ -29,7 +29,7 @@ For local .NET development, run the API and Web projects with their configuratio
 To run published images rather than build from source, select an exact published version and use the release Compose file:
 
 ```bash
-RATELDESK_VERSION=0.1.0 docker compose -f docker/docker-compose.release.yml up -d
+RATELDESK_VERSION=0.1.0-rc.4 docker compose -f docker/docker-compose.release.yml up -d
 ```
 
 Use an exact SemVer tag in production, or preferably replace tags with the published image digests. `latest` advances only for stable releases; prereleases never move it. See [release engineering](docs/releases.md) for versioning, build metadata, and release instructions.

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 
 namespace Helpdesk.API.Bootstrap;
@@ -142,6 +143,7 @@ public static class BootstrapEndpoints
             [FromServices] IBootstrapStateStore stateStore,
             [FromServices] BootstrapSessionService sessions,
             [FromServices] BootstrapInitializationService initializer,
+            [FromServices] IHostApplicationLifetime applicationLifetime,
             CancellationToken cancellationToken) =>
         {
             var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
@@ -151,9 +153,13 @@ public static class BootstrapEndpoints
             }
 
             var result = await initializer.InitializeAsync(descriptor, request, cancellationToken);
-            return result.Succeeded
-                ? Results.Ok(new BootstrapStatusResponse(result.Descriptor!.State, result.Descriptor.Provider))
-                : Results.Problem(result.Error, statusCode: StatusCodes.Status409Conflict);
+            if (!result.Succeeded)
+            {
+                return Results.Problem(result.Error, statusCode: StatusCodes.Status409Conflict);
+            }
+
+            _ = StopBootstrapHostAfterResponseAsync(applicationLifetime);
+            return Results.Ok(new BootstrapStatusResponse(result.Descriptor!.State, result.Descriptor.Provider));
         })
         .AllowAnonymous()
         .WithTags("Setup");
@@ -175,4 +181,10 @@ public static class BootstrapEndpoints
     private sealed record SetupSessionResponse(string Session, DateTimeOffset ExpiresAtUtc);
 
     private sealed record BootstrapStatusResponse(BootstrapState State, string? Provider);
+
+    private static async Task StopBootstrapHostAfterResponseAsync(IHostApplicationLifetime applicationLifetime)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        applicationLifetime.StopApplication();
+    }
 }

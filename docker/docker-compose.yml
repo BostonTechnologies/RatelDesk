@@ -2,6 +2,7 @@ name: rateldesk
 
 services:
   api:
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: docker/api/Dockerfile
@@ -28,6 +29,7 @@ services:
       retries: 12
 
   web:
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: docker/web/Dockerfile
