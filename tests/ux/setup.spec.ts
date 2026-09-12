@@ -7,7 +7,11 @@ test('first-run setup unlocks embedded storage and reaches review', async ({ pag
     throw new Error('HELPDESK_E2E_SETUP_CODE is required for first-run setup validation.');
   }
 
+  const interactiveConnection = page.waitForResponse(response =>
+    response.url().includes('/_blazor/negotiate') && response.ok());
+
   await page.goto('/setup');
+  await interactiveConnection;
   await expect(page.getByRole('heading', { name: 'Set up RatelDesk' })).toBeVisible();
   await expect(page.getByText('operator-only setup code')).toBeVisible();
 
@@ -26,8 +30,8 @@ test('first-run setup unlocks embedded storage and reaches review', async ({ pag
   await expect(page.getByLabel('Display name')).toBeVisible();
   await page.getByLabel('Display name').fill('Browser Wizard Administrator');
   await page.getByLabel('Email').fill('browser.wizard.admin@example.test');
-  await page.getByLabel('Passphrase').fill('browser-wizard-setup-passphrase');
-  await page.getByLabel('Confirm passphrase').fill('browser-wizard-setup-passphrase');
+  await page.getByRole('textbox', { name: 'Passphrase*', exact: true }).fill('browser-wizard-setup-passphrase');
+  await page.getByRole('textbox', { name: 'Confirm passphrase*', exact: true }).fill('browser-wizard-setup-passphrase');
   await page.getByRole('button', { name: 'Continue' }).click();
 
   await expect(page.getByLabel('Keep RatelDesk defaults')).toBeChecked();
