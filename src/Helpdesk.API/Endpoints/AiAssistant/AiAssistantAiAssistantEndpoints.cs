@@ -1,8 +1,12 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Helpdesk.Application.AiAssistant;
+using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.DTOs;
+using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Helpdesk.API.Endpoints.AiAssistant;
 
@@ -17,17 +21,36 @@ public static class AiAssistantAiAssistantEndpoints
         admin.MapPost("/{id:guid}/state", async (Guid id, AiAssistantWebhookStateDto dto, HttpContext ctx, IAiAssistantAiAssistantService service, CancellationToken ct) => { try { await service.SetConfigurationStateAsync(id, dto.OrganizationId, dto.Enabled, dto.Archived, Actor(ctx), ct); return Results.NoContent(); } catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["organizationId"] = [ex.Message] }); } });
 
         var tickets = app.MapGroup("/api/v1/{ticketType}/{ticketId}/ai-assistant").WithTags("AI Assistant");
-        tickets.MapGet("/eligible-configurations", async (string ticketType, string ticketId, IAiAssistantAiAssistantService service, CancellationToken ct) => Results.Ok(await service.GetEligibleAsync(ticketId, ticketType, ct))).RequireAuthorization("HelpdeskStaff");
-        tickets.MapPost("/investigations", async (string ticketType, string ticketId, DispatchAiInvestigationDto dto, HttpContext ctx, IAiAssistantAiAssistantService service, CancellationToken ct) => await DispatchAsync(ticketType, ticketId, dto, ctx, service, ct)).RequireAuthorization("HelpdeskStaff");
-        tickets.MapGet("/worklog", async (string ticketType, string ticketId, IAiAssistantAiAssistantService service, CancellationToken ct) => Results.Ok(await service.GetWorklogAsync(ticketId, ticketType, ct))).RequireAuthorization("HelpdeskStaff");
+        tickets.MapGet("/eligible-configurations", async (string ticketType, string ticketId, HttpContext context, HelpdeskDbContext db, ICurrentUserAccessService accessService, IAiAssistantAiAssistantService service, CancellationToken ct) =>
+        {
+            var failure = await AuthorizeTicketManagementAsync(ticketType, ticketId, context.User, db, accessService, ct);
+            return failure ?? Results.Ok(await service.GetEligibleAsync(ticketId, ticketType, ct));
+        }).RequireAuthorization("HelpdeskStaff");
+        tickets.MapPost("/investigations", async (string ticketType, string ticketId, DispatchAiInvestigationDto dto, HttpContext ctx, HelpdeskDbContext db, ICurrentUserAccessService accessService, IAiAssistantAiAssistantService service, CancellationToken ct) =>
+        {
+            var failure = await AuthorizeTicketManagementAsync(ticketType, ticketId, ctx.User, db, accessService, ct);
+            return failure ?? await DispatchAsync(ticketType, ticketId, dto, ctx, service, ct);
+        }).RequireAuthorization("HelpdeskStaff");
+        tickets.MapGet("/worklog", async (string ticketType, string ticketId, HttpContext context, HelpdeskDbContext db, ICurrentUserAccessService accessService, IAiAssistantAiAssistantService service, CancellationToken ct) =>
+        {
+            var failure = await AuthorizeTicketManagementAsync(ticketType, ticketId, context.User, db, accessService, ct);
+            return failure ?? Results.Ok(await service.GetWorklogAsync(ticketId, ticketType, ct));
+        }).RequireAuthorization("HelpdeskStaff");
         tickets.MapGet("/worklog/stream", StreamAsync).RequireAuthorization("HelpdeskStaff");
 
         var mcp = app.MapGroup("/api/v1/ai-assistant/investigations").WithTags("AI Assistant MCP").RequireAuthorization("AuthentikAiAgentApi");
         mcp.MapPost("/{invocationId:guid}/worklog", async (Guid invocationId, AppendAiInvestigationWorklogDto dto, IAiAssistantAiAssistantService service, CancellationToken ct) => await service.AppendMcpWorklogAsync(invocationId, dto, ct) ? Results.NoContent() : Results.BadRequest());
     }
 
-    private static async Task StreamAsync(string ticketId, HttpContext context, IAiInvestigationEventBus bus, CancellationToken ct)
+    private static async Task StreamAsync(string ticketType, string ticketId, HttpContext context, HelpdeskDbContext db, ICurrentUserAccessService accessService, IAiInvestigationEventBus bus, CancellationToken ct)
     {
+        var failure = await AuthorizeTicketManagementAsync(ticketType, ticketId, context.User, db, accessService, ct);
+        if (failure is not null)
+        {
+            await failure.ExecuteAsync(context);
+            return;
+        }
+
         context.Response.Headers.ContentType = "text/event-stream"; context.Response.Headers.CacheControl = "no-cache"; context.Response.Headers.Connection = "keep-alive";
         var reader = bus.Subscribe(ticketId);
         try { await foreach (var item in reader.ReadAllAsync(ct)) { await context.Response.WriteAsync($"event: ai-worklog\ndata: {JsonSerializer.Serialize(item)}\n\n", ct); await context.Response.Body.FlushAsync(ct); } }
@@ -60,5 +83,39 @@ public static class AiAssistantAiAssistantEndpoints
             return Results.ValidationProblem(new Dictionary<string, string[]> { ["operatorAssistanceRequest"] = [ex.Message] });
         }
     }
+
+    private static async Task<IResult?> AuthorizeTicketManagementAsync(
+        string ticketType,
+        string ticketId,
+        ClaimsPrincipal user,
+        HelpdeskDbContext db,
+        ICurrentUserAccessService accessService,
+        CancellationToken ct)
+    {
+        var ticket = await db.Tickets.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(candidate => candidate.Id == ticketId, ct);
+        if (ticket is null || !MatchesTicketType(ticket, ticketType))
+        {
+            return Results.NotFound();
+        }
+
+        var access = await accessService.ResolveAsync(user, ct);
+        var canManage = ticket switch
+        {
+            Incident => access.CanManageIncident(ticket.OrganizationId),
+            Request => access.CanManageRequest(ticket.OrganizationId),
+            Change => access.CanManageChange(ticket.OrganizationId),
+            _ => false
+        };
+        return canManage ? null : Results.Forbid();
+    }
+
+    private static bool MatchesTicketType(Ticket ticket, string ticketType) =>
+        ticketType.ToLowerInvariant() switch
+        {
+            "incidents" => ticket is Incident,
+            "requests" => ticket is Request,
+            "changes" => ticket is Change,
+            _ => false
+        };
     private static string Actor(HttpContext ctx) => ctx.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? ctx.User.FindFirstValue("sub") ?? "unknown";
 }

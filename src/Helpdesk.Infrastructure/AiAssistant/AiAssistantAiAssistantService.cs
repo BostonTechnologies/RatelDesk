@@ -82,9 +82,8 @@ public sealed class AiAssistantAiAssistantService(HelpdeskDbContext db, ITenantC
     }
     private async Task<Ticket> TicketAsync(string id, string type, CancellationToken ct)
     {
-        var ticket = await db.Set<Ticket>().SingleOrDefaultAsync(x => x.Id == id, ct);
+        var ticket = await db.Set<Ticket>().IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == id, ct);
         if (ticket is null || Area(type) switch { AiAssistantTicketArea.Incidents => ticket is not Incident, AiAssistantTicketArea.Requests => ticket is not Request, _ => ticket is not Change }) throw new KeyNotFoundException("Ticket not found.");
-        if (!tenantContext.IsHelpdeskAdmin && ticket.OrganizationId != RequiredTenant()) throw new UnauthorizedAccessException();
         return ticket;
     }
     private string RequiredTenant() => tenantContext.TenantId ?? throw new UnauthorizedAccessException("Tenant claim is required.");
