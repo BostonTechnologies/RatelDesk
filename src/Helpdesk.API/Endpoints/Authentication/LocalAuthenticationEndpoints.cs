@@ -28,7 +28,8 @@ public static class LocalAuthenticationEndpoints
                 return Results.Unauthorized();
             }
 
-            if (!await users.CheckPasswordAsync(user, request.Password))
+            if (!await users.CheckPasswordAsync(user, request.Password) ||
+                !await IsSecondFactorValidAsync(users, user, request.TwoFactorCode))
             {
                 await users.AccessFailedAsync(user);
                 return Results.Unauthorized();
@@ -60,6 +61,83 @@ public static class LocalAuthenticationEndpoints
 
         group.MapPost("/logout", async (HttpContext context) =>
         {
+            await context.SignOutAsync(LocalAuthenticationOptions.Scheme);
+            return Results.NoContent();
+        })
+        .RequireAuthorization();
+
+        group.MapPost("/two-factor/setup", async (
+            [FromServices] UserManager<ApplicationUser> users,
+            HttpContext context) =>
+        {
+            var user = await users.GetUserAsync(context.User);
+            if (user is null || !user.IsEnabled)
+            {
+                return Results.Unauthorized();
+            }
+
+            var reset = await users.ResetAuthenticatorKeyAsync(user);
+            if (!reset.Succeeded)
+            {
+                return Results.Problem("The authenticator setup could not be started.", statusCode: StatusCodes.Status409Conflict);
+            }
+
+            user.AuthorizationRevision++;
+            await users.UpdateAsync(user);
+            var sharedKey = await users.GetAuthenticatorKeyAsync(user);
+            var accountName = user.Email ?? user.UserName ?? user.Id;
+            var issuer = "RatelDesk";
+            var uri = $"otpauth://totp/{Uri.EscapeDataString($"{issuer}:{accountName}")}?secret={Uri.EscapeDataString(sharedKey!)}&issuer={Uri.EscapeDataString(issuer)}&digits=6";
+            return Results.Ok(new AuthenticatorSetupResponse(sharedKey!, uri));
+        })
+        .RequireAuthorization();
+
+        group.MapPost("/two-factor/enable", async (
+            [FromBody] EnableTwoFactorRequest request,
+            [FromServices] UserManager<ApplicationUser> users,
+            HttpContext context) =>
+        {
+            var user = await users.GetUserAsync(context.User);
+            if (user is null || !user.IsEnabled ||
+                !await users.VerifyTwoFactorTokenAsync(user, TokenOptions.DefaultAuthenticatorProvider, NormalizeAuthenticatorCode(request.Code)))
+            {
+                return Results.BadRequest(new { error = "invalid_authenticator_code" });
+            }
+
+            var enabled = await users.SetTwoFactorEnabledAsync(user, true);
+            if (!enabled.Succeeded)
+            {
+                return Results.Problem("Two-factor authentication could not be enabled.", statusCode: StatusCodes.Status409Conflict);
+            }
+
+            var recoveryCodes = await users.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
+            user.AuthorizationRevision++;
+            await users.UpdateAsync(user);
+            return Results.Ok(new TwoFactorRecoveryCodesResponse(recoveryCodes?.ToArray() ?? []));
+        })
+        .RequireAuthorization();
+
+        group.MapPost("/two-factor/disable", async (
+            [FromBody] DisableTwoFactorRequest request,
+            [FromServices] UserManager<ApplicationUser> users,
+            HttpContext context) =>
+        {
+            var user = await users.GetUserAsync(context.User);
+            if (user is null || !user.IsEnabled ||
+                !await users.CheckPasswordAsync(user, request.CurrentPassword) ||
+                !await users.VerifyTwoFactorTokenAsync(user, TokenOptions.DefaultAuthenticatorProvider, NormalizeAuthenticatorCode(request.Code)))
+            {
+                return Results.BadRequest(new { error = "two_factor_disable_failed" });
+            }
+
+            var disabled = await users.SetTwoFactorEnabledAsync(user, false);
+            if (!disabled.Succeeded)
+            {
+                return Results.Problem("Two-factor authentication could not be disabled.", statusCode: StatusCodes.Status409Conflict);
+            }
+
+            user.AuthorizationRevision++;
+            await users.UpdateAsync(user);
             await context.SignOutAsync(LocalAuthenticationOptions.Scheme);
             return Results.NoContent();
         })
@@ -231,7 +309,7 @@ public static class LocalAuthenticationEndpoints
         .RequireRateLimiting("LocalLogin");
     }
 
-    public sealed record LocalLoginRequest(string Email, string Password, bool RememberMe = false);
+    public sealed record LocalLoginRequest(string Email, string Password, bool RememberMe = false, string? TwoFactorCode = null);
 
     public sealed record ChangeLocalPasswordRequest(string CurrentPassword, string NewPassword);
 
@@ -240,4 +318,32 @@ public static class LocalAuthenticationEndpoints
     public sealed record ActivateLocalAccountRequest(string Email, string ActivationToken, string NewPassword);
 
     public sealed record LocalAccountActivationResponse(string UserId, string Email, string ActivationToken);
+
+    public sealed record EnableTwoFactorRequest(string Code);
+
+    public sealed record DisableTwoFactorRequest(string CurrentPassword, string Code);
+
+    public sealed record AuthenticatorSetupResponse(string SharedKey, string AuthenticatorUri);
+
+    public sealed record TwoFactorRecoveryCodesResponse(IReadOnlyList<string> RecoveryCodes);
+
+    private static async Task<bool> IsSecondFactorValidAsync(UserManager<ApplicationUser> users, ApplicationUser user, string? code)
+    {
+        if (!await users.GetTwoFactorEnabledAsync(user))
+        {
+            return true;
+        }
+
+        var suppliedCode = code?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(suppliedCode))
+        {
+            return false;
+        }
+
+        return await users.VerifyTwoFactorTokenAsync(user, TokenOptions.DefaultAuthenticatorProvider, NormalizeAuthenticatorCode(suppliedCode)) ||
+               (await users.RedeemTwoFactorRecoveryCodeAsync(user, suppliedCode)).Succeeded;
+    }
+
+    private static string NormalizeAuthenticatorCode(string? code) =>
+        code?.Replace(" ", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal) ?? string.Empty;
 }

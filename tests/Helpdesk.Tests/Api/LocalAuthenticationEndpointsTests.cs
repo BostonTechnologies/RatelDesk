@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using Helpdesk.API;
 using Helpdesk.API.Endpoints.Authentication;
 using Helpdesk.Infrastructure.Identity;
@@ -165,5 +166,83 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, activate.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+    }
+
+    [Fact]
+    public async Task Local_login_requires_an_authenticator_code_after_two_factor_is_enabled()
+    {
+        using var setupClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await setupClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+
+        var setup = await setupClient.PostAsync("/api/v1/local-auth/two-factor/setup", content: null);
+        Assert.Equal(HttpStatusCode.OK, setup.StatusCode);
+        var setupResult = await setup.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.AuthenticatorSetupResponse>();
+        Assert.False(string.IsNullOrWhiteSpace(setupResult?.SharedKey));
+
+        var authenticatorCode = CreateTotp(setupResult!.SharedKey);
+        Assert.Equal(HttpStatusCode.NoContent, (await setupClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+
+        var enable = await setupClient.PostAsJsonAsync("/api/v1/local-auth/two-factor/enable", new LocalAuthenticationEndpoints.EnableTwoFactorRequest(authenticatorCode));
+        Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
+        var recoveryCodes = await enable.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.TwoFactorRecoveryCodesResponse>();
+        Assert.Equal(10, recoveryCodes!.RecoveryCodes.Count);
+
+        using var loginClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var missingCode = await loginClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"));
+        var withAuthenticator = await loginClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple", TwoFactorCode: authenticatorCode));
+        using var recoveryClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var withRecoveryCode = await recoveryClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple", TwoFactorCode: recoveryCodes.RecoveryCodes[0]));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, missingCode.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, withAuthenticator.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, withRecoveryCode.StatusCode);
+    }
+
+    private static string CreateTotp(string sharedKey)
+    {
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        var bits = 0;
+        var bitCount = 0;
+        var bytes = new List<byte>();
+        foreach (var character in sharedKey.Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant())
+        {
+            var value = alphabet.IndexOf(character);
+            if (value < 0)
+            {
+                throw new ArgumentException("The authenticator key is not valid base32.", nameof(sharedKey));
+            }
+
+            bits = (bits << 5) | value;
+            bitCount += 5;
+            if (bitCount < 8)
+            {
+                continue;
+            }
+
+            bitCount -= 8;
+            bytes.Add((byte)(bits >> bitCount));
+            bits &= (1 << bitCount) - 1;
+        }
+
+        var counter = (ulong)(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30);
+        Span<byte> counterBytes = stackalloc byte[8];
+        for (var index = counterBytes.Length - 1; index >= 0; index--)
+        {
+            counterBytes[index] = (byte)counter;
+            counter >>= 8;
+        }
+
+        var hash = HMACSHA1.HashData(bytes.ToArray(), counterBytes);
+        var offset = hash[^1] & 0x0f;
+        var value32 = ((hash[offset] & 0x7f) << 24) |
+                      (hash[offset + 1] << 16) |
+                      (hash[offset + 2] << 8) |
+                      hash[offset + 3];
+        return (value32 % 1_000_000).ToString("D6", global::System.Globalization.CultureInfo.InvariantCulture);
     }
 }
