@@ -143,14 +143,23 @@ public static class IncidentEndpoints
             if (!string.IsNullOrWhiteSpace(q))
             {
                 var like = $"%{q.Trim()}%";
-                query = query.Where(x =>
-                    EF.Functions.ILike(x.Incident.Title, like) ||
-                    EF.Functions.ILike(x.Incident.Description, like) ||
-                    EF.Functions.ILike(x.Incident.TrackingId, like) ||
-                    EF.Functions.ILike(x.OrgName!, like) ||
-                    EF.Functions.ILike(x.CustomerName!, like) ||
-                    EF.Functions.ILike(x.Incident.RequesterEmail!, like) ||
-                    EF.Functions.ILike(x.CustomerEmail!, like));
+                query = db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? query.Where(x =>
+                        EF.Functions.ILike(x.Incident.Title, like) ||
+                        EF.Functions.ILike(x.Incident.Description, like) ||
+                        EF.Functions.ILike(x.Incident.TrackingId, like) ||
+                        EF.Functions.ILike(x.OrgName!, like) ||
+                        EF.Functions.ILike(x.CustomerName!, like) ||
+                        EF.Functions.ILike(x.Incident.RequesterEmail!, like) ||
+                        EF.Functions.ILike(x.CustomerEmail!, like))
+                    : query.Where(x =>
+                        EF.Functions.Like(x.Incident.Title, like) ||
+                        EF.Functions.Like(x.Incident.Description, like) ||
+                        EF.Functions.Like(x.Incident.TrackingId, like) ||
+                        EF.Functions.Like(x.OrgName!, like) ||
+                        EF.Functions.Like(x.CustomerName!, like) ||
+                        EF.Functions.Like(x.Incident.RequesterEmail!, like) ||
+                        EF.Functions.Like(x.CustomerEmail!, like));
             }
 
             var totalCount = includeTotal ? await query.CountAsync() : 0;

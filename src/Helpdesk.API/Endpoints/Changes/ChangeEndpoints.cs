@@ -1780,13 +1780,21 @@ public static class ChangeEndpoints
         if (!string.IsNullOrWhiteSpace(q))
         {
             var like = $"%{q.Trim()}%";
-            query = query.Where(x =>
-                EF.Functions.ILike(x.Change.Title, like) ||
-                EF.Functions.ILike(x.Change.Description, like) ||
-                EF.Functions.ILike(x.Change.TrackingId, like) ||
-                (x.OrgName != null && EF.Functions.ILike(x.OrgName, like)) ||
-                (x.CustomerName != null && EF.Functions.ILike(x.CustomerName, like)) ||
-                (x.CustomerEmail != null && EF.Functions.ILike(x.CustomerEmail, like)));
+            query = db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                ? query.Where(x =>
+                    EF.Functions.ILike(x.Change.Title, like) ||
+                    EF.Functions.ILike(x.Change.Description, like) ||
+                    EF.Functions.ILike(x.Change.TrackingId, like) ||
+                    (x.OrgName != null && EF.Functions.ILike(x.OrgName, like)) ||
+                    (x.CustomerName != null && EF.Functions.ILike(x.CustomerName, like)) ||
+                    (x.CustomerEmail != null && EF.Functions.ILike(x.CustomerEmail, like)))
+                : query.Where(x =>
+                    EF.Functions.Like(x.Change.Title, like) ||
+                    EF.Functions.Like(x.Change.Description, like) ||
+                    EF.Functions.Like(x.Change.TrackingId, like) ||
+                    (x.OrgName != null && EF.Functions.Like(x.OrgName, like)) ||
+                    (x.CustomerName != null && EF.Functions.Like(x.CustomerName, like)) ||
+                    (x.CustomerEmail != null && EF.Functions.Like(x.CustomerEmail, like)));
         }
 
         var totalCount = includeTotal ? await query.CountAsync() : 0;
