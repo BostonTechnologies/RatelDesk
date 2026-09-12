@@ -1272,6 +1272,32 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task RequestTaskAndAiAuditEndpoints_RespectRequestScope()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Organization One" },
+                new Organization { Id = "org-2", Name = "Organization Two" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Requests.AddRange(
+                new Request { Id = "req-self-service-tasks", TrackingId = "REQ-SELF-TASKS", Title = "Self-service request", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Request { Id = "req-foreign-tasks", TrackingId = "REQ-FOREIGN-TASKS", Title = "Foreign request", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+        });
+        harness.UseRole("SelfService");
+
+        var ownTasks = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/tasks");
+        var foreignTasks = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks/tasks");
+        var ownAiAudit = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/ai-audit");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, ownTasks.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignTasks.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, ownAiAudit.StatusCode);
+    }
+
+    [Fact]
     public async Task IncidentRelations_DeleteRemovesExistingLink()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();

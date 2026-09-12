@@ -135,10 +135,18 @@ public static class RequestEndpoints
 
         group.MapGet("/{id}/tasks", async (
             [FromRoute] string id,
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Request> repo,
             CancellationToken token) =>
         {
+            var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: false, token);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             var request = await repo.GetAsync(id);
             if (request is null)
             {
@@ -196,10 +204,18 @@ public static class RequestEndpoints
 
         group.MapGet("/{id}/ai-audit", async (
             [FromRoute] string id,
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Request> repo,
             CancellationToken token) =>
         {
+            var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: true, token);
+            if (authorization.Failure is not null)
+            {
+                return authorization.Failure;
+            }
+
             var request = await repo.GetAsync(id);
             if (request is null)
             {
