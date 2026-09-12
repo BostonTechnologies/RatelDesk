@@ -15,7 +15,10 @@ test('first-run setup unlocks embedded storage and reaches review', async ({ pag
   await expect(page.getByRole('heading', { name: 'Set up RatelDesk' })).toBeVisible();
   await expect(page.getByText('operator-only setup code')).toBeVisible();
 
-  await page.getByLabel('Setup code').fill(setupCode);
+  const setupCodeInput = page.getByLabel('Setup code');
+  await setupCodeInput.fill(setupCode);
+  await setupCodeInput.press('Tab');
+  await expect(setupCodeInput).toHaveValue(setupCode);
   await page.getByRole('button', { name: 'Continue' }).click();
   const prepareStorage = page.getByRole('button', { name: 'Prepare storage' });
   await expect(prepareStorage).toBeVisible();
