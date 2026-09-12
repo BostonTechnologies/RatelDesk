@@ -201,6 +201,24 @@ public static class WorkLogEndpoints
                 var keepAliveTask = Task.Delay(keepAliveInterval, ct);
                 var completedTask = await Task.WhenAny(waitForDataTask, keepAliveTask);
 
+                // The stream may outlive the authentication request that opened it. Re-resolve the
+                // incident scope before each delivery or keep-alive so membership revocation stops
+                // an active subscription instead of waiting for the browser to reconnect.
+                var currentAuthorization = await AuthorizeIncidentAsync(
+                    id,
+                    context.User,
+                    accessService,
+                    db,
+                    requireManager: false,
+                    ct);
+                if (currentAuthorization.Failure is not null)
+                {
+                    logger.LogInformation("Timeline stream authorization revoked {TicketId}", id);
+                    break;
+                }
+
+                canManageIncident = currentAuthorization.Access!.CanManageIncident(currentAuthorization.OrganizationId);
+
                 if (completedTask == waitForDataTask)
                 {
                     if (!await waitForDataTask)
