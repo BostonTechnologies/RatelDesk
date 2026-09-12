@@ -16,25 +16,30 @@ sent by a browser is not trusted as an authorization decision.
 Built-in roles are protected. Instance administrators can create tenant-owned
 custom roles in **Administration → Roles & Permissions**. A custom role can
 only contain the published assignable permissions, and writer permissions must
-also include their corresponding user/read permission.
+also include their corresponding user/read permission. A tenant administrator
+can use **Tenant roles** to create, edit, or delete custom roles owned by an
+assigned tenant only. Its delegation ceiling is deliberately smaller: self
+service and the incident, request, and change reader/writer permissions. It
+cannot delegate tenant-management, data-management, or instance permissions.
 
 ## Tenant membership delegation
 
 The **Tenant members** navigation item appears only when the API resolves at
 least one tenant where the signed-in principal has `Tenant.Roles.Assign`. The
-page lists local accounts in those tenants, can add or remove only the
-`SelfServiceUser` assignment, and can invite a new local account directly into
-the selected tenant. The invitation response contains a one-time activation
-token; the administrator must share it through an approved secure channel.
+page lists local accounts in those tenants, can add or remove the
+`SelfServiceUser` assignment or a safe custom role owned by that tenant, and
+can invite a new local account directly into the selected tenant. The invitation
+response contains a one-time activation token; the administrator must share it
+through an approved secure channel.
 
 This workflow deliberately cannot alter an existing global account, reset
 credentials, enable or disable accounts, grant instance access, expose
 non-delegable role assignments, or replace memberships in another tenant. A
 new invitation always creates a non-administrator local account with only the
-self-service assignment in the selected tenant. A pre-existing technician,
-tenant-administrator, or custom role is preserved when a self-service
-assignment changes. Instance administrators use the full Team administration
-flow for all broader account actions.
+self-service assignment in the selected tenant. A pre-existing technician or
+tenant-administrator assignment is preserved when delegated access changes.
+Instance administrators use the full Team administration flow for all broader
+account actions.
 
 The API remains authoritative for the page and all direct requests:
 
@@ -43,8 +48,9 @@ The API remains authoritative for the page and all direct requests:
   administrator).
 - Tenant member and membership routes require the same tenant-scoped
   permission and reject users outside that tenant and instance administrators.
-- The membership route accepts only `SelfServiceUser`; it preserves every
-  non-delegable assignment.
+- The membership route accepts `SelfServiceUser` and custom tenant roles only
+  when their owner matches the selected tenant and their permissions remain
+  within the delegation ceiling; it preserves every non-delegable assignment.
 
 Membership changes increment the target local account's authorization revision
 and security stamp. Its next API request is rejected until it signs in again,

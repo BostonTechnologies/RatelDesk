@@ -1,7 +1,6 @@
 @page "/admin/roles"
-@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@attribute [Authorize]
 @using System.Net.Http.Json
-@using Helpdesk.Shared.DTOs.Organization
 @using Helpdesk.Shared.Models
 @inject IHttpClientFactory HttpClientFactory
 
@@ -123,7 +122,7 @@
 
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<RoleDefinition> roles = [];
-    private List<OrganizationDto> organizations = [];
+    private List<TenantOrganization> organizations = [];
     private bool loading = true;
     private bool saving;
     private bool showEditor;
@@ -142,7 +141,7 @@
         try
         {
             roles = await HelpdeskApi.GetFromJsonAsync<List<RoleDefinition>>("api/v1/admin/role-definitions/") ?? [];
-            organizations = await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations") ?? [];
+            organizations = await HelpdeskApi.GetFromJsonAsync<List<TenantOrganization>>("api/v1/tenant-admin/organizations") ?? [];
         }
         catch
         {
@@ -250,6 +249,7 @@
     private static string PermissionLabel(string permission) => PermissionOptions.FirstOrDefault(option => option.Key == permission)?.Label ?? permission;
 
     private sealed record PermissionOption(string Key, string Label);
+    private sealed record TenantOrganization(string Id, string Name);
     private sealed record RoleDefinition(string Id, string Key, string Name, RoleScopeKind Scope, string? OwnerOrganizationId, bool IsBuiltIn, bool IsProtected, IReadOnlyList<string> Permissions, int AssignmentCount);
     private sealed record CreateRoleDefinitionRequest(string Name, string? Key, string? OwnerOrganizationId, IReadOnlyList<string> Permissions);
     private sealed record UpdateRoleDefinitionRequest(string Name, IReadOnlyList<string> Permissions);

@@ -565,6 +565,71 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Tenant_administrator_can_manage_only_its_custom_roles_below_the_delegation_ceiling()
+    {
+        const string organizationId = "tenant-role-owner";
+        const string otherOrganizationId = "other-role-owner";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "tenant.role.admin@example.test", Email = "tenant.role.admin@example.test", DisplayName = "Tenant Role Admin" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("tenant.role.admin@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = organizationId, Name = "Tenant role owner" },
+                new Organization { Id = otherOrganizationId, Name = "Other role owner" });
+            db.Users.Add(new User { Id = userId, Name = "Tenant Role Admin", Email = "tenant.role.admin@example.test", OrganizationId = organizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = userId, OrganizationId = organizationId, RoleKey = ScopedRoleCatalog.TenantAdministrator });
+            db.Roles.Add(new Role
+            {
+                Id = "other-tenant-role",
+                Key = "custom.other-tenant-reader",
+                Name = "Other tenant reader",
+                Scope = RoleScopeKind.Tenant,
+                OwnerOrganizationId = otherOrganizationId,
+                Permissions = [new RolePermission { Permission = HelpdeskPermissions.IncidentUser }]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "tenant.role.admin@example.test", "correct horse battery staple"))).StatusCode);
+
+        var safeCreate = await client.PostAsJsonAsync("/api/v1/admin/role-definitions/",
+            new RoleDefinitionEndpoints.CreateRoleDefinitionRequest(
+                "Tenant incident reader", null, organizationId, [HelpdeskPermissions.IncidentUser]));
+        var crossTenantCreate = await client.PostAsJsonAsync("/api/v1/admin/role-definitions/",
+            new RoleDefinitionEndpoints.CreateRoleDefinitionRequest(
+                "Other tenant incident reader", null, otherOrganizationId, [HelpdeskPermissions.IncidentUser]));
+        var elevatedCreate = await client.PostAsJsonAsync("/api/v1/admin/role-definitions/",
+            new RoleDefinitionEndpoints.CreateRoleDefinitionRequest(
+                "Tenant account manager", null, organizationId, [HelpdeskPermissions.TenantUsersManage]));
+        var safeRole = await safeCreate.Content.ReadFromJsonAsync<RoleDefinitionEndpoints.RoleDefinitionResponse>();
+        var invitation = await client.PostAsJsonAsync($"/api/v1/tenant-admin/organizations/{organizationId}/users/",
+            new TenantAdministrationEndpoints.CreateTenantLocalAccountRequest("Custom Role Member", "custom.role.member@example.test"));
+        var target = await invitation.Content.ReadFromJsonAsync<TenantAdministrationEndpoints.TenantLocalAccountInvitationResponse>();
+        var assignment = await client.PutAsJsonAsync(
+            $"/api/v1/tenant-admin/organizations/{organizationId}/users/{target!.UserId}/assignments",
+            new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([safeRole!.Key]));
+        var visibleRoles = await client.GetFromJsonAsync<List<RoleDefinitionEndpoints.RoleDefinitionResponse>>(
+            "/api/v1/admin/role-definitions/");
+
+        Assert.Equal(HttpStatusCode.Created, safeCreate.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, crossTenantCreate.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, elevatedCreate.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, invitation.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, assignment.StatusCode);
+        Assert.Contains(visibleRoles!, role => role.Key == "custom.tenant-incident-reader" && role.OwnerOrganizationId == organizationId);
+        Assert.DoesNotContain(visibleRoles!, role => role.Key == "custom.other-tenant-reader");
+        Assert.Contains(visibleRoles!, role => role.IsBuiltIn);
+    }
+
+    [Fact]
     public async Task Incident_activity_is_not_visible_outside_the_principal_tenant_scope()
     {
         const string incidentOrganizationId = "activity-incident-organization";

@@ -2,6 +2,7 @@ using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Helpdesk.API.Endpoints.Authentication;
@@ -12,33 +13,68 @@ public static class RoleDefinitionEndpoints
     {
         var group = app.MapGroup("/api/v1/admin/role-definitions")
             .WithTags("Role definitions")
-            .RequireAuthorization("HelpdeskAdmin");
+            .RequireAuthorization();
 
-        group.MapGet("/", async (HelpdeskDbContext db, CancellationToken cancellationToken) =>
+        group.MapGet("/", async (
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            CancellationToken cancellationToken) =>
         {
+            var access = await accessService.ResolveAsync(context.User, cancellationToken);
+            var organizationIds = ManagedOrganizationIds(access);
+            if (!access.IsHelpdeskAdmin && organizationIds.Count == 0) return Results.Forbid();
+
             await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
-            var assignments = await db.ScopedRoleAssignments.AsNoTracking()
-                .GroupBy(assignment => assignment.RoleKey)
-                .Select(group => new { Key = group.Key, Count = group.Count() })
-                .ToDictionaryAsync(item => item.Key, item => item.Count, StringComparer.OrdinalIgnoreCase, cancellationToken);
-            var roles = await db.Roles.AsNoTracking()
+            var rolesQuery = db.Roles.AsNoTracking()
                 .Include(role => role.Permissions)
                 .OrderByDescending(role => role.IsBuiltIn)
                 .ThenBy(role => role.Name)
-                .ToListAsync(cancellationToken);
+                .AsQueryable();
+            if (!access.IsHelpdeskAdmin)
+            {
+                rolesQuery = rolesQuery.Where(role => role.IsBuiltIn ||
+                    (role.OwnerOrganizationId != null && organizationIds.Contains(role.OwnerOrganizationId)));
+            }
+
+            var roles = await rolesQuery.ToListAsync(cancellationToken);
+            var roleKeys = roles.Select(role => role.Key).ToArray();
+            var assignmentsQuery = db.ScopedRoleAssignments.AsNoTracking()
+                .Where(assignment => roleKeys.Contains(assignment.RoleKey));
+            if (!access.IsHelpdeskAdmin)
+            {
+                assignmentsQuery = assignmentsQuery.Where(assignment => organizationIds.Contains(assignment.OrganizationId));
+            }
+
+            var assignments = await assignmentsQuery
+                .GroupBy(assignment => assignment.RoleKey)
+                .Select(group => new { Key = group.Key, Count = group.Count() })
+                .ToDictionaryAsync(item => item.Key, item => item.Count, StringComparer.OrdinalIgnoreCase, cancellationToken);
             return Results.Ok(roles.Select(role => ToResponse(role, assignments.GetValueOrDefault(role.Key))));
         });
 
         group.MapPost("/", async (
             CreateRoleDefinitionRequest request,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
             CancellationToken cancellationToken) =>
         {
+            var access = await accessService.ResolveAsync(context.User, cancellationToken);
+            if (!CanManageOrganization(access, request.OwnerOrganizationId)) return Results.Forbid();
+
             await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
             var validation = await ValidateCustomRoleAsync(request.Name, request.Key, request.OwnerOrganizationId, request.Permissions, null, db, cancellationToken);
             if (validation.Error is not null)
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]> { [validation.Error.Key] = [validation.Error.Message] });
+            }
+            if (!access.IsHelpdeskAdmin && !RoleDefinitionCatalog.IsWithinTenantAdministratorPermissionCeiling(validation.Permissions!))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["permissions"] = ["Tenant administrators may delegate only approved operational permissions."]
+                });
             }
 
             var role = new Role
@@ -59,13 +95,17 @@ public static class RoleDefinitionEndpoints
         group.MapPut("/{id}", async (
             string id,
             UpdateRoleDefinitionRequest request,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
             CancellationToken cancellationToken) =>
         {
+            var access = await accessService.ResolveAsync(context.User, cancellationToken);
             await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
             var role = await db.Roles.Include(candidate => candidate.Permissions)
                 .SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
             if (role is null) return Results.NotFound();
+            if (!CanManageOrganization(access, role.OwnerOrganizationId)) return Results.Forbid();
             if (role.IsProtected || role.IsBuiltIn)
             {
                 return Results.Conflict(new { message = "Built-in roles are protected and cannot be edited." });
@@ -76,6 +116,13 @@ public static class RoleDefinitionEndpoints
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]> { [validation.Error.Key] = [validation.Error.Message] });
             }
+            if (!access.IsHelpdeskAdmin && !RoleDefinitionCatalog.IsWithinTenantAdministratorPermissionCeiling(validation.Permissions!))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["permissions"] = ["Tenant administrators may delegate only approved operational permissions."]
+                });
+            }
 
             role.Name = request.Name.Trim();
             db.RolePermissions.RemoveRange(role.Permissions);
@@ -84,10 +131,17 @@ public static class RoleDefinitionEndpoints
             return Results.Ok(ToResponse(role, await db.ScopedRoleAssignments.CountAsync(assignment => assignment.RoleKey == role.Key, cancellationToken)));
         });
 
-        group.MapDelete("/{id}", async (string id, HelpdeskDbContext db, CancellationToken cancellationToken) =>
+        group.MapDelete("/{id}", async (
+            string id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            CancellationToken cancellationToken) =>
         {
+            var access = await accessService.ResolveAsync(context.User, cancellationToken);
             var role = await db.Roles.SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
             if (role is null) return Results.NotFound();
+            if (!CanManageOrganization(access, role.OwnerOrganizationId)) return Results.Forbid();
             if (role.IsProtected || role.IsBuiltIn)
             {
                 return Results.Conflict(new { message = "Built-in roles are protected and cannot be deleted." });
@@ -102,6 +156,15 @@ public static class RoleDefinitionEndpoints
             return Results.NoContent();
         });
     }
+
+    private static IReadOnlySet<string> ManagedOrganizationIds(CurrentUserAccessProfile access) =>
+        access.OrganizationIdsFor(HelpdeskPermissions.TenantRolesAssign)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static bool CanManageOrganization(CurrentUserAccessProfile access, string? organizationId) =>
+        access.IsHelpdeskAdmin ||
+        (!string.IsNullOrWhiteSpace(organizationId) &&
+         access.HasPermission(HelpdeskPermissions.TenantRolesAssign, organizationId));
 
     private static async Task<RoleValidation> ValidateCustomRoleAsync(
         string? name,

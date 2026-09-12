@@ -1239,7 +1239,6 @@ app.MapGet("/health/vector", async ([FromServices] HelpdeskDbContext db, Cancell
 app.MapKbEndpoints();
 app.MapGlobalSearchLookupEndpoints();
 app.MapRoleDefinitionEndpoints();
-MapCrudEndpoints<Role>(app, "/api/v1/roles");
 MapCrudEndpoints<Organization>(app, "/api/v1/organizations");
 MapCrudEndpoints<Customer>(app, "/api/v1/customers");
 MapCrudEndpoints<KnowledgeBaseCategory>(app, "/api/v1/knowledgebase/categories");

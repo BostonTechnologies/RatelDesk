@@ -11,6 +11,20 @@ public sealed record BuiltInRoleDefinition(
 
 public static class RoleDefinitionCatalog
 {
+    // Tenant administrators may compose operational roles for a tenant, but
+    // cannot delegate tenant administration or instance-wide capabilities.
+    public static readonly IReadOnlySet<string> TenantAdministratorPermissionCeiling =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            HelpdeskPermissions.SelfServiceUser,
+            HelpdeskPermissions.IncidentUser,
+            HelpdeskPermissions.IncidentManager,
+            HelpdeskPermissions.RequestUser,
+            HelpdeskPermissions.RequestManager,
+            HelpdeskPermissions.ChangeUser,
+            HelpdeskPermissions.ChangeManager
+        };
+
     public static readonly IReadOnlyList<BuiltInRoleDefinition> BuiltIns =
     [
         new(
@@ -45,6 +59,9 @@ public static class RoleDefinitionCatalog
 
     public static bool IsAssignablePermission(string permission) =>
         HelpdeskPermissions.AssignablePermissions.Contains(permission, StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsWithinTenantAdministratorPermissionCeiling(IEnumerable<string> permissions) =>
+        permissions.All(TenantAdministratorPermissionCeiling.Contains);
 
     public static IReadOnlyList<string> NormalizePermissions(IEnumerable<string>? permissions) =>
         (permissions ?? [])

@@ -3,6 +3,11 @@
 @if (canManageMembers)
 {
     <MudNavLink Href="/tenant-administration" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Groups">Tenant members</MudNavLink>
+    <AuthorizeView Roles="HelpdeskAdmin">
+        <NotAuthorized>
+            <MudNavLink Href="/admin/roles" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Security">Tenant roles</MudNavLink>
+        </NotAuthorized>
+    </AuthorizeView>
 }
 
 @code {

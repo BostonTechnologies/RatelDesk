@@ -11,7 +11,7 @@ namespace Helpdesk.API.Endpoints.Users;
 
 public static class TenantAdministrationEndpoints
 {
-    private static readonly HashSet<string> DelegableRoleKeys =
+    private static readonly HashSet<string> BuiltInDelegableRoleKeys =
         [ScopedRoleCatalog.SelfServiceUser];
 
     public static void MapTenantAdministrationEndpoints(this IEndpointRouteBuilder app)
@@ -149,11 +149,12 @@ public static class TenantAdministrationEndpoints
                 .Where(user => memberIds.Contains(user.Id) && !user.IsInstanceAdministrator)
                 .Select(user => user.Id)
                 .ToHashSetAsync(StringComparer.OrdinalIgnoreCase, cancellationToken);
+            var delegableRoleKeys = await GetDelegableRoleKeysAsync(organizationId, db, cancellationToken);
             var assignments = await db.ScopedRoleAssignments.AsNoTracking()
                 .Where(assignment =>
                     assignment.OrganizationId == organizationId &&
                     localUserIds.Contains(assignment.UserId) &&
-                    DelegableRoleKeys.Contains(assignment.RoleKey))
+                    delegableRoleKeys.Contains(assignment.RoleKey))
                 .OrderBy(assignment => assignment.RoleKey)
                 .ToArrayAsync(cancellationToken);
             var rolesByUser = assignments
@@ -187,11 +188,12 @@ public static class TenantAdministrationEndpoints
             if (target is null) return Results.NotFound();
             if (target.IsInstanceAdministrator) return Results.Forbid();
 
+            var delegableRoleKeys = await GetDelegableRoleKeysAsync(organizationId, db, cancellationToken);
             var assignments = await db.ScopedRoleAssignments.AsNoTracking()
                 .Where(assignment =>
                     assignment.UserId == userId &&
                     assignment.OrganizationId == organizationId &&
-                    DelegableRoleKeys.Contains(assignment.RoleKey))
+                    delegableRoleKeys.Contains(assignment.RoleKey))
                 .OrderBy(assignment => assignment.RoleKey)
                 .Select(assignment => assignment.RoleKey)
                 .ToArrayAsync(cancellationToken);
@@ -218,33 +220,42 @@ public static class TenantAdministrationEndpoints
                 .Select(key => key.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            if (roleKeys.Any(key => !DelegableRoleKeys.Contains(key)))
+            var delegableRoleKeys = await GetDelegableRoleKeysAsync(organizationId, db, cancellationToken);
+            if (roleKeys.Any(key => !delegableRoleKeys.Contains(key)))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["roleKeys"] = ["Tenant administrators may assign only the self-service role through this workflow."]
+                    ["roleKeys"] = ["Tenant administrators may assign only self-service or tenant-owned roles within the approved delegation ceiling."]
                 });
             }
 
             var existing = await db.ScopedRoleAssignments
                 .Where(assignment => assignment.UserId == userId && assignment.OrganizationId == organizationId)
                 .ToListAsync(cancellationToken);
-            var hadSelfServiceAccess = existing.Any(assignment => DelegableRoleKeys.Contains(assignment.RoleKey));
-            var hasSelfServiceAccess = roleKeys.Contains(ScopedRoleCatalog.SelfServiceUser, StringComparer.OrdinalIgnoreCase);
-            db.ScopedRoleAssignments.RemoveRange(existing.Where(assignment => DelegableRoleKeys.Contains(assignment.RoleKey)));
+            var hadDelegableAccess = existing.Any(assignment => delegableRoleKeys.Contains(assignment.RoleKey));
+            var hasDelegableAccess = roleKeys.Length > 0;
+            db.ScopedRoleAssignments.RemoveRange(existing.Where(assignment => delegableRoleKeys.Contains(assignment.RoleKey)));
             db.ScopedRoleAssignments.AddRange(roleKeys.Select(key => new ScopedRoleAssignment
             {
                 UserId = userId,
                 OrganizationId = organizationId,
                 RoleKey = key
             }));
-            if (hadSelfServiceAccess != hasSelfServiceAccess)
+            if (hadDelegableAccess != hasDelegableAccess)
             {
+                var selfServiceOnly = (roleKeys.Length == 1 &&
+                    string.Equals(roleKeys[0], ScopedRoleCatalog.SelfServiceUser, StringComparison.OrdinalIgnoreCase)) ||
+                    (roleKeys.Length == 0 && existing
+                        .Where(assignment => delegableRoleKeys.Contains(assignment.RoleKey))
+                        .All(assignment => string.Equals(assignment.RoleKey, ScopedRoleCatalog.SelfServiceUser, StringComparison.OrdinalIgnoreCase)));
+                var accessDescription = selfServiceOnly
+                    ? "tenant self-service access"
+                    : "delegated tenant access";
                 db.ActivityLogs.Add(new ActivityLog
                 {
                     UserId = ResolveActorId(context.User),
                     RelatedEntityId = userId,
-                    Message = $"{(hasSelfServiceAccess ? "Granted" : "Removed")} tenant self-service access in organization '{organizationId}'."
+                    Message = $"{(hasDelegableAccess ? "Granted" : "Removed")} {accessDescription} in organization '{organizationId}'."
                 });
             }
             await db.SaveChangesAsync(cancellationToken);
@@ -254,6 +265,29 @@ public static class TenantAdministrationEndpoints
             var update = await users.UpdateAsync(target);
             return update.Succeeded ? Results.NoContent() : Results.Conflict();
         });
+    }
+
+    private static async Task<HashSet<string>> GetDelegableRoleKeysAsync(
+        string organizationId,
+        HelpdeskDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var roleKeys = new HashSet<string>(BuiltInDelegableRoleKeys, StringComparer.OrdinalIgnoreCase);
+        var customRoles = await db.Roles.AsNoTracking()
+            .Include(role => role.Permissions)
+            .Where(role =>
+                !role.IsBuiltIn &&
+                role.Scope == RoleScopeKind.Tenant &&
+                role.OwnerOrganizationId == organizationId)
+            .ToListAsync(cancellationToken);
+        foreach (var role in customRoles.Where(role =>
+                     RoleDefinitionCatalog.IsWithinTenantAdministratorPermissionCeiling(
+                         role.Permissions.Select(permission => permission.Permission))))
+        {
+            roleKeys.Add(role.Key);
+        }
+
+        return roleKeys;
     }
 
     private static async Task<bool> CanManageAsync(HttpContext context, ICurrentUserAccessService accessService, string organizationId, CancellationToken cancellationToken)

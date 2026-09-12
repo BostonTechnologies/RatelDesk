@@ -65,6 +65,7 @@ public class PageAuthorizationConventionsTests
         Assert.Contains("@attribute [Authorize]", page, StringComparison.Ordinal);
         Assert.Contains("api/v1/tenant-admin/organizations", page, StringComparison.Ordinal);
         Assert.Contains("api/v1/tenant-admin/organizations", navigation, StringComparison.Ordinal);
+        Assert.Contains("Href=\"/admin/roles\"", navigation, StringComparison.Ordinal);
         Assert.Contains("<TenantAdministrationNavigation />", navMenu, StringComparison.Ordinal);
     }
 }
