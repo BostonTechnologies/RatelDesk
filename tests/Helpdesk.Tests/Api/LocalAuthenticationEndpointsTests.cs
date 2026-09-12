@@ -719,6 +719,49 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Self_service_user_has_no_management_grant_for_foreign_tenant_tickets()
+    {
+        const string userOrganizationId = "delete-user-organization";
+        const string ticketOrganizationId = "delete-ticket-organization";
+        const string incidentId = "delete-foreign-incident";
+        const string requestId = "delete-foreign-request";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "delete.user@example.test", Email = "delete.user@example.test", DisplayName = "Delete User" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("delete.user@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = userOrganizationId, Name = "Delete user organization" },
+                new Organization { Id = ticketOrganizationId, Name = "Delete ticket organization" });
+            db.Users.Add(new User { Id = userId, Name = "Delete User", Email = "delete.user@example.test", OrganizationId = userOrganizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = userId,
+                OrganizationId = userOrganizationId,
+                RoleKey = ScopedRoleCatalog.SelfServiceUser
+            });
+            db.Incidents.Add(new Incident { Id = incidentId, OrganizationId = ticketOrganizationId, Title = "Foreign incident", Description = "Must not be deleted" });
+            db.Requests.Add(new Request { Id = requestId, OrganizationId = ticketOrganizationId, Title = "Foreign request", Description = "Must not be deleted" });
+            await db.SaveChangesAsync();
+
+            var access = await setupScope.ServiceProvider.GetRequiredService<ICurrentUserAccessService>().ResolveAsync(
+                new ClaimsPrincipal(new ClaimsIdentity(
+                [
+                    new Claim(ClaimTypes.NameIdentifier, userId),
+                    new Claim("auth_mode", "local")
+                ], "Local")));
+
+            Assert.False(access.CanManageIncident(ticketOrganizationId));
+            Assert.False(access.CanManageRequest(ticketOrganizationId));
+        }
+    }
+
+    [Fact]
     public async Task Incident_activity_is_not_visible_outside_the_principal_tenant_scope()
     {
         const string incidentOrganizationId = "activity-incident-organization";

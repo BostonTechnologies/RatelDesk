@@ -1113,10 +1113,23 @@ public static class IncidentEndpoints
         .WithDescription("Returns sanitized HTML and a text snippet for an incident.")
         .WithTags("Incidents");
 
-        group.MapDelete("/{id}", async ([FromRoute] string id, [FromServices] IRepository<Incident> repo) =>
-            await repo.DeleteAsync(id)
+        group.MapDelete("/{id}", async (
+            [FromRoute] string id,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] IRepository<Incident> repo,
+            CancellationToken cancellationToken) =>
+        {
+            var incident = await repo.GetAsync(id);
+            if (incident is null) return Results.Problem("Incident not found", statusCode: 404);
+
+            var access = await accessService.ResolveAsync(user, cancellationToken);
+            if (!access.CanManageIncident(incident.OrganizationId)) return Results.Forbid();
+
+            return await repo.DeleteAsync(id)
                 ? Results.NoContent()
-                : Results.Problem("Incident not found", statusCode: 404));
+                : Results.Problem("Incident not found", statusCode: 404);
+        });
 
         app.MapGet("/api/incidents/{incidentId}/images/{filename}", (
             [FromRoute] string incidentId,

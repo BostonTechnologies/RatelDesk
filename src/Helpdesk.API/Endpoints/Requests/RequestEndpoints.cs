@@ -727,10 +727,23 @@ public static class RequestEndpoints
             return Results.Created($"/api/v1/worklogs/{response.Id}", response);
         });
 
-        group.MapDelete("/{id}", async ([FromRoute] string id, [FromServices] IRepository<Request> repo) =>
-            await repo.DeleteAsync(id)
+        group.MapDelete("/{id}", async (
+            [FromRoute] string id,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] IRepository<Request> repo,
+            CancellationToken cancellationToken) =>
+        {
+            var request = await repo.GetAsync(id);
+            if (request is null) return Results.Problem("Request not found", statusCode: 404);
+
+            var access = await accessService.ResolveAsync(user, cancellationToken);
+            if (!access.CanManageRequest(request.OrganizationId)) return Results.Forbid();
+
+            return await repo.DeleteAsync(id)
                 ? Results.NoContent()
-                : Results.Problem("Request not found", statusCode: 404));
+                : Results.Problem("Request not found", statusCode: 404);
+        });
     }
 
     private static async Task<IResult> GetRequests(
