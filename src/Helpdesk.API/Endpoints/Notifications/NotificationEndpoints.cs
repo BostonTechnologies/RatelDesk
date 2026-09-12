@@ -852,9 +852,10 @@ public static class NotificationEndpoints
                 var completedTask = await Task.WhenAny(waitForDataTask, keepAliveTask);
 
                 access = await accessService.ResolveAsync(context.User, ct);
-                if (!access.IsHelpdeskAdmin &&
-                    !string.IsNullOrWhiteSpace(tenantId) &&
-                    !access.AllowedOrganizationIds.Contains(tenantId))
+                if (!CanAccessNotifications(access) ||
+                    (!access.IsHelpdeskAdmin &&
+                     !string.IsNullOrWhiteSpace(tenantId) &&
+                     !access.AllowedOrganizationIds.Contains(tenantId)))
                 {
                     logger.LogInformation(
                         "Notification stream authorization revoked. User={UserId} Tenant={TenantId}",
@@ -928,4 +929,10 @@ public static class NotificationEndpoints
         return !string.IsNullOrWhiteSpace(notification.TenantId) &&
             access.AllowedOrganizationIds.Contains(notification.TenantId);
     }
+
+    private static bool CanAccessNotifications(CurrentUserAccessProfile access) =>
+        access.IsHelpdeskAdmin ||
+        access.HasPermission(HelpdeskPermissions.IncidentManager) ||
+        access.HasPermission(HelpdeskPermissions.RequestManager) ||
+        access.HasPermission(HelpdeskPermissions.ChangeManager);
 }
