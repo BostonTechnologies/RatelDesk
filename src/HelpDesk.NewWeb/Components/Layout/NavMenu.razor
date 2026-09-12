@@ -67,6 +67,7 @@
     <AuthorizeView>
         <Authorized>
             <MudNavLink Href="auth" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Person">@context.User.Identity?.Name</MudNavLink>
+            <TenantAdministrationNavigation />
             <AuthorizeView Roles="HelpdeskAdmin" Context="adminAuth">
                 <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="false">
                     <MudNavGroup Title="Accounts & Orgs" Icon="@Icons.Material.Filled.AccountTree" Expanded="false">

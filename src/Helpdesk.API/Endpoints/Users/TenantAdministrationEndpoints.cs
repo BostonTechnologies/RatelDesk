@@ -15,9 +15,82 @@ public static class TenantAdministrationEndpoints
 
     public static void MapTenantAdministrationEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapGet("/api/v1/tenant-admin/organizations", async (
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var access = await accessService.ResolveAsync(context.User, cancellationToken);
+            var organizationIds = access.IsHelpdeskAdmin
+                ? null
+                : access.OrganizationIdsFor(HelpdeskPermissions.TenantRolesAssign);
+            if (organizationIds is { Count: 0 })
+            {
+                return Results.Ok(Array.Empty<TenantOrganizationResponse>());
+            }
+
+            var organizations = db.Organizations.AsNoTracking().Where(organization => organization.IsEnabled);
+            if (organizationIds is not null)
+            {
+                organizations = organizations.Where(organization => organizationIds.Contains(organization.Id));
+            }
+
+            return Results.Ok(await organizations
+                .OrderBy(organization => organization.Name)
+                .Select(organization => new TenantOrganizationResponse(organization.Id, organization.Name))
+                .ToArrayAsync(cancellationToken));
+        })
+        .RequireAuthorization()
+        .WithName("GetTenantAdministrationOrganizations");
+
         var group = app.MapGroup("/api/v1/tenant-admin/organizations/{organizationId}/users")
             .WithTags("Tenant administration")
             .RequireAuthorization();
+
+        group.MapGet("/", async (
+            string organizationId,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            UserManager<ApplicationUser> users,
+            CancellationToken cancellationToken) =>
+        {
+            if (!await CanManageAsync(context, accessService, organizationId, cancellationToken)) return Results.Forbid();
+
+            var members = await db.Users.AsNoTracking()
+                .Where(user => user.OrganizationId == organizationId)
+                .OrderBy(user => user.Name)
+                .Select(user => new TenantMemberCandidate(user.Id, user.Name, user.Email))
+                .ToArrayAsync(cancellationToken);
+            var memberIds = members.Select(member => member.Id).ToArray();
+            var localUserIds = await users.Users.AsNoTracking()
+                .Where(user => memberIds.Contains(user.Id) && !user.IsInstanceAdministrator)
+                .Select(user => user.Id)
+                .ToHashSetAsync(StringComparer.OrdinalIgnoreCase, cancellationToken);
+            var assignments = await db.ScopedRoleAssignments.AsNoTracking()
+                .Where(assignment =>
+                    assignment.OrganizationId == organizationId &&
+                    localUserIds.Contains(assignment.UserId) &&
+                    DelegableRoleKeys.Contains(assignment.RoleKey))
+                .OrderBy(assignment => assignment.RoleKey)
+                .ToArrayAsync(cancellationToken);
+            var rolesByUser = assignments
+                .GroupBy(assignment => assignment.UserId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyList<string>)group.Select(assignment => assignment.RoleKey).ToArray(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            return Results.Ok(members
+                .Where(member => localUserIds.Contains(member.Id))
+                .Select(member => new TenantMemberResponse(
+                    member.Id,
+                    member.Name,
+                    member.Email,
+                    rolesByUser.GetValueOrDefault(member.Id, [])))
+                .ToArray());
+        });
 
         group.MapGet("/{userId}/assignments", async (
             string organizationId,
@@ -34,7 +107,10 @@ public static class TenantAdministrationEndpoints
             if (target.IsInstanceAdministrator) return Results.Forbid();
 
             var assignments = await db.ScopedRoleAssignments.AsNoTracking()
-                .Where(assignment => assignment.UserId == userId && assignment.OrganizationId == organizationId)
+                .Where(assignment =>
+                    assignment.UserId == userId &&
+                    assignment.OrganizationId == organizationId &&
+                    DelegableRoleKeys.Contains(assignment.RoleKey))
                 .OrderBy(assignment => assignment.RoleKey)
                 .Select(assignment => assignment.RoleKey)
                 .ToArrayAsync(cancellationToken);
@@ -72,7 +148,7 @@ public static class TenantAdministrationEndpoints
             var existing = await db.ScopedRoleAssignments
                 .Where(assignment => assignment.UserId == userId && assignment.OrganizationId == organizationId)
                 .ToListAsync(cancellationToken);
-            db.ScopedRoleAssignments.RemoveRange(existing);
+            db.ScopedRoleAssignments.RemoveRange(existing.Where(assignment => DelegableRoleKeys.Contains(assignment.RoleKey)));
             db.ScopedRoleAssignments.AddRange(roleKeys.Select(key => new ScopedRoleAssignment
             {
                 UserId = userId,
@@ -111,4 +187,8 @@ public static class TenantAdministrationEndpoints
 
     public sealed record ReplaceTenantMembershipRequest(IReadOnlyList<string> RoleKeys);
     public sealed record TenantMembershipResponse(string UserId, string OrganizationId, IReadOnlyList<string> RoleKeys);
+    public sealed record TenantOrganizationResponse(string Id, string Name);
+    public sealed record TenantMemberResponse(string UserId, string Name, string Email, IReadOnlyList<string> RoleKeys);
+
+    private sealed record TenantMemberCandidate(string Id, string Name, string Email);
 }

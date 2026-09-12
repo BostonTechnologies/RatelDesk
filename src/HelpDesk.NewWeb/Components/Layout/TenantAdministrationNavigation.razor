@@ -1,0 +1,20 @@
+@inject IHttpClientFactory HttpClientFactory
+
+@if (canManageMembers)
+{
+    <MudNavLink Href="/tenant-administration" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Groups">Tenant members</MudNavLink>
+}
+
+@code {
+    private bool canManageMembers;
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var response = await HttpClientFactory.CreateClient("HelpdeskApi")
+            .GetAsync("api/v1/tenant-admin/organizations");
+        canManageMembers = response.IsSuccessStatusCode &&
+            (await response.Content.ReadFromJsonAsync<List<TenantOrganization>>())?.Count > 0;
+    }
+
+    private sealed record TenantOrganization(string Id, string Name);
+}

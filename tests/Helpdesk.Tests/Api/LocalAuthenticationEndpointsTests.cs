@@ -467,6 +467,17 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         var createTarget = await instanceAdministrator.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
             "Tenant Target", "tenant.target@example.test") { OrganizationId = organizationId });
         var target = await createTarget.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
+        await using (var targetScope = _factory.Services.CreateAsyncScope())
+        {
+            var db = targetScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = target!.UserId,
+                OrganizationId = organizationId,
+                RoleKey = ScopedRoleCatalog.Technician
+            });
+            await db.SaveChangesAsync();
+        }
 
         using var tenantAdministrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         Assert.Equal(HttpStatusCode.NoContent, (await tenantAdministrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
@@ -477,9 +488,23 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([ScopedRoleCatalog.SelfServiceUser]));
         var otherTenant = await tenantAdministrator.PutAsJsonAsync(otherRoute,
             new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([ScopedRoleCatalog.SelfServiceUser]));
+        var availableOrganizations = await tenantAdministrator.GetFromJsonAsync<List<TenantAdministrationEndpoints.TenantOrganizationResponse>>(
+            "/api/v1/tenant-admin/organizations");
+        var members = await tenantAdministrator.GetFromJsonAsync<List<TenantAdministrationEndpoints.TenantMemberResponse>>(
+            $"/api/v1/tenant-admin/organizations/{organizationId}/users/");
 
         Assert.Equal(HttpStatusCode.NoContent, ownTenant.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, otherTenant.StatusCode);
+        Assert.Collection(availableOrganizations!, organization => Assert.Equal(organizationId, organization.Id));
+        var targetMembership = Assert.Single(members!, member => member.UserId == target.UserId);
+        Assert.Equal([ScopedRoleCatalog.SelfServiceUser], targetMembership.RoleKeys);
+        await using var verificationScope = _factory.Services.CreateAsyncScope();
+        var assignedRoles = await verificationScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().ScopedRoleAssignments
+            .Where(assignment => assignment.UserId == target.UserId && assignment.OrganizationId == organizationId)
+            .Select(assignment => assignment.RoleKey)
+            .ToListAsync();
+        Assert.Contains(ScopedRoleCatalog.SelfServiceUser, assignedRoles);
+        Assert.Contains(ScopedRoleCatalog.Technician, assignedRoles);
     }
 
     [Fact]

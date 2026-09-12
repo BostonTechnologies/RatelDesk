@@ -1,0 +1,181 @@
+@page "/tenant-administration"
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+
+<PageTitle>Tenant members</PageTitle>
+
+<div class="helpdesk-page">
+    <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+        <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Tenant members</MudText>
+        <MudText Typo="Typo.body2" Class="mb-4">
+            Manage the self-service membership for local accounts in a tenant you administer. Account credentials and all other roles remain instance-administrator actions.
+        </MudText>
+
+        @if (!string.IsNullOrWhiteSpace(error))
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@error</MudAlert>
+        }
+        else if (organizations.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">You do not have permission to manage tenant memberships.</MudAlert>
+        }
+        else
+        {
+            <MudSelect T="string" Label="Tenant" Value="selectedOrganizationId" ValueChanged="SelectOrganization" Class="mb-4">
+                @foreach (var organization in organizations)
+                {
+                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (loading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+            }
+            else
+            {
+                <MudTable Items="members" Hover="true" Dense="true" T="TenantMember" Breakpoint="Breakpoint.Sm" Class="helpdesk-table">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Email</MudTh>
+                        <MudTh>Self-service access</MudTh>
+                        <MudTh class="text-end"></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">@context.Name</MudTd>
+                        <MudTd DataLabel="Email">@context.Email</MudTd>
+                        <MudTd DataLabel="Self-service access">
+                            <MudSwitch T="bool"
+                                       Value="@HasSelfServiceAccess(context)"
+                                       ValueChanged="enabled => SetSelfServiceAccess(context, enabled)"
+                                       Color="Color.Primary"
+                                       Label="@SelfServiceLabel(context)" />
+                        </MudTd>
+                        <MudTd Class="text-end">
+                            <MudButton Variant="Variant.Text"
+                                       Color="Color.Primary"
+                                       Disabled="@(!IsChanged(context) || savingUserId == context.UserId)"
+                                       OnClick="() => SaveMembership(context)">
+                                @(savingUserId == context.UserId ? "Saving" : "Save")
+                            </MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText>No local accounts belong to this tenant.</MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            }
+        }
+    </MudPaper>
+</div>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<TenantOrganization> organizations = new();
+    private List<TenantMember> members = new();
+    private readonly Dictionary<string, bool> selfServiceAccess = new(StringComparer.OrdinalIgnoreCase);
+    private string? selectedOrganizationId;
+    private string? savingUserId;
+    private string? error;
+    private bool loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var response = await HelpdeskApi.GetAsync("api/v1/tenant-admin/organizations");
+        if (!response.IsSuccessStatusCode)
+        {
+            error = "Tenant memberships could not be loaded. Refresh the page and try again.";
+            return;
+        }
+
+        organizations = await response.Content.ReadFromJsonAsync<List<TenantOrganization>>() ?? new();
+        selectedOrganizationId = organizations.FirstOrDefault()?.Id;
+        if (!string.IsNullOrWhiteSpace(selectedOrganizationId))
+        {
+            await LoadMembers();
+        }
+    }
+
+    private async Task SelectOrganization(string organizationId)
+    {
+        selectedOrganizationId = organizationId;
+        await LoadMembers();
+    }
+
+    private async Task LoadMembers()
+    {
+        if (string.IsNullOrWhiteSpace(selectedOrganizationId))
+        {
+            return;
+        }
+
+        loading = true;
+        error = null;
+        try
+        {
+            var response = await HelpdeskApi.GetAsync($"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/");
+            if (!response.IsSuccessStatusCode)
+            {
+                error = "Tenant members could not be loaded. Refresh the page and try again.";
+                return;
+            }
+
+            members = await response.Content.ReadFromJsonAsync<List<TenantMember>>() ?? new();
+            selfServiceAccess.Clear();
+            foreach (var member in members)
+            {
+                selfServiceAccess[member.UserId] = member.RoleKeys.Contains(SelfServiceRoleKey, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private bool HasSelfServiceAccess(TenantMember member) =>
+        selfServiceAccess.TryGetValue(member.UserId, out var enabled) && enabled;
+
+    private bool IsChanged(TenantMember member) =>
+        HasSelfServiceAccess(member) != member.RoleKeys.Contains(SelfServiceRoleKey, StringComparer.OrdinalIgnoreCase);
+
+    private string SelfServiceLabel(TenantMember member) =>
+        HasSelfServiceAccess(member) ? "Granted" : "Not granted";
+
+    private void SetSelfServiceAccess(TenantMember member, bool enabled) => selfServiceAccess[member.UserId] = enabled;
+
+    private async Task SaveMembership(TenantMember member)
+    {
+        if (string.IsNullOrWhiteSpace(selectedOrganizationId))
+        {
+            return;
+        }
+
+        savingUserId = member.UserId;
+        error = null;
+        try
+        {
+            var roles = HasSelfServiceAccess(member) ? new[] { SelfServiceRoleKey } : Array.Empty<string>();
+            var response = await HelpdeskApi.PutAsJsonAsync(
+                $"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/{member.UserId}/assignments",
+                new ReplaceTenantMembershipRequest(roles));
+            if (!response.IsSuccessStatusCode)
+            {
+                error = "Tenant membership could not be saved. Confirm that you still have access to this tenant and try again.";
+                return;
+            }
+
+            await LoadMembers();
+        }
+        finally
+        {
+            savingUserId = null;
+        }
+    }
+
+    private const string SelfServiceRoleKey = "SelfServiceUser";
+
+    private sealed record TenantOrganization(string Id, string Name);
+    private sealed record TenantMember(string UserId, string Name, string Email, IReadOnlyList<string> RoleKeys);
+    private sealed record ReplaceTenantMembershipRequest(IReadOnlyList<string> RoleKeys);
+}
