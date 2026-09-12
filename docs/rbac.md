@@ -22,15 +22,19 @@ also include their corresponding user/read permission.
 
 The **Tenant members** navigation item appears only when the API resolves at
 least one tenant where the signed-in principal has `Tenant.Roles.Assign`. The
-page lists local accounts in those tenants and can add or remove only the
-`SelfServiceUser` assignment.
+page lists local accounts in those tenants, can add or remove only the
+`SelfServiceUser` assignment, and can invite a new local account directly into
+the selected tenant. The invitation response contains a one-time activation
+token; the administrator must share it through an approved secure channel.
 
-This workflow deliberately does not create global accounts, reset credentials,
-enable or disable accounts, grant instance access, expose non-delegable role
-assignments, or replace memberships in another tenant. A pre-existing
-technician, tenant-administrator, or custom role is preserved when a
-self-service assignment changes. Instance administrators use the full Team
-administration flow for those actions.
+This workflow deliberately cannot alter an existing global account, reset
+credentials, enable or disable accounts, grant instance access, expose
+non-delegable role assignments, or replace memberships in another tenant. A
+new invitation always creates a non-administrator local account with only the
+self-service assignment in the selected tenant. A pre-existing technician,
+tenant-administrator, or custom role is preserved when a self-service
+assignment changes. Instance administrators use the full Team administration
+flow for all broader account actions.
 
 The API remains authoritative for the page and all direct requests:
 

@@ -28,6 +28,28 @@
                 }
             </MudSelect>
 
+            <MudText Typo="Typo.h6" HtmlTag="h2">Invite a local account</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2">The account is created only in the selected tenant with self-service access. Share its one-time activation token through an approved secure channel.</MudText>
+            <MudGrid Class="mb-3" Spacing="2">
+                <MudItem xs="12" sm="5">
+                    <MudTextField T="string" @bind-Value="inviteName" Label="Display name" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="5">
+                    <MudTextField T="string" @bind-Value="inviteEmail" Label="Email" InputType="InputType.Email" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="2" Class="d-flex align-center">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="@inviting" OnClick="InviteAccount">
+                        @(inviting ? "Creating" : "Create")
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+            @if (invitation is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">Copy this activation token now. It is shown only once.</MudAlert>
+                <MudTextField T="string" Value="@invitation.Email" Label="Account email" ReadOnly="true" Variant="Variant.Outlined" Class="mb-2" />
+                <MudTextField T="string" Value="@invitation.ActivationToken" Label="Activation token" ReadOnly="true" Variant="Variant.Outlined" Class="mb-3" />
+            }
+
             @if (loading)
             {
                 <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
@@ -78,6 +100,10 @@
     private string? savingUserId;
     private string? error;
     private bool loading;
+    private bool inviting;
+    private string inviteName = string.Empty;
+    private string inviteEmail = string.Empty;
+    private TenantLocalAccountInvitation? invitation;
 
     protected override async Task OnInitializedAsync()
     {
@@ -99,7 +125,43 @@
     private async Task SelectOrganization(string organizationId)
     {
         selectedOrganizationId = organizationId;
+        invitation = null;
         await LoadMembers();
+    }
+
+    private async Task InviteAccount()
+    {
+        if (string.IsNullOrWhiteSpace(selectedOrganizationId) ||
+            string.IsNullOrWhiteSpace(inviteName) ||
+            string.IsNullOrWhiteSpace(inviteEmail))
+        {
+            error = "Enter a display name and email before creating the local account.";
+            return;
+        }
+
+        inviting = true;
+        error = null;
+        invitation = null;
+        try
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync(
+                $"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/",
+                new CreateTenantLocalAccountRequest(inviteName, inviteEmail));
+            if (!response.IsSuccessStatusCode)
+            {
+                error = "The local account could not be created. Confirm that the email is not already in use and try again.";
+                return;
+            }
+
+            invitation = await response.Content.ReadFromJsonAsync<TenantLocalAccountInvitation>();
+            inviteName = string.Empty;
+            inviteEmail = string.Empty;
+            await LoadMembers();
+        }
+        finally
+        {
+            inviting = false;
+        }
     }
 
     private async Task LoadMembers()
@@ -178,4 +240,6 @@
     private sealed record TenantOrganization(string Id, string Name);
     private sealed record TenantMember(string UserId, string Name, string Email, IReadOnlyList<string> RoleKeys);
     private sealed record ReplaceTenantMembershipRequest(IReadOnlyList<string> RoleKeys);
+    private sealed record CreateTenantLocalAccountRequest(string DisplayName, string Email);
+    private sealed record TenantLocalAccountInvitation(string UserId, string Email, string ActivationToken);
 }

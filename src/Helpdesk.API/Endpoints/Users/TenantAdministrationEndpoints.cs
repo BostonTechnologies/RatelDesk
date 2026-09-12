@@ -48,6 +48,80 @@ public static class TenantAdministrationEndpoints
             .WithTags("Tenant administration")
             .RequireAuthorization();
 
+        group.MapPost("/", async (
+            string organizationId,
+            CreateTenantLocalAccountRequest request,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            UserManager<ApplicationUser> users,
+            CancellationToken cancellationToken) =>
+        {
+            if (!await CanInviteAsync(context, accessService, organizationId, cancellationToken)) return Results.Forbid();
+            if (string.IsNullOrWhiteSpace(request.DisplayName) || string.IsNullOrWhiteSpace(request.Email))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["account"] = ["Display name and email are required."]
+                });
+            }
+
+            if (!await db.Organizations.AnyAsync(organization => organization.Id == organizationId && organization.IsEnabled, cancellationToken))
+            {
+                return Results.NotFound();
+            }
+
+            var email = request.Email.Trim();
+            if (await db.Users.AsNoTracking().AnyAsync(user => user.Email == email, cancellationToken) ||
+                await users.FindByEmailAsync(email) is not null)
+            {
+                return Results.Conflict(new { error = "local_account_already_exists" });
+            }
+
+            var account = new ApplicationUser
+            {
+                UserName = email,
+                Email = email,
+                DisplayName = request.DisplayName.Trim(),
+                EmailConfirmed = false,
+                IsInstanceAdministrator = false
+            };
+            var created = await users.CreateAsync(account);
+            if (!created.Succeeded)
+            {
+                return Results.Conflict(new { error = "local_account_could_not_be_created" });
+            }
+
+            try
+            {
+                db.Users.Add(new User
+                {
+                    Id = account.Id,
+                    Name = account.DisplayName,
+                    Email = account.Email!,
+                    Role = "User",
+                    OrganizationId = organizationId
+                });
+                db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+                {
+                    UserId = account.Id,
+                    OrganizationId = organizationId,
+                    RoleKey = ScopedRoleCatalog.SelfServiceUser
+                });
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (Exception)
+            {
+                await users.DeleteAsync(account);
+                return Results.Problem("The local account could not be linked to the tenant.", statusCode: StatusCodes.Status409Conflict);
+            }
+
+            var activationToken = await users.GeneratePasswordResetTokenAsync(account);
+            return Results.Created(
+                $"/api/v1/tenant-admin/organizations/{organizationId}/users/{account.Id}",
+                new TenantLocalAccountInvitationResponse(account.Id, account.Email!, activationToken));
+        });
+
         group.MapGet("/", async (
             string organizationId,
             HttpContext context,
@@ -170,6 +244,14 @@ public static class TenantAdministrationEndpoints
         return access.IsHelpdeskAdmin || access.HasPermission(HelpdeskPermissions.TenantRolesAssign, organizationId);
     }
 
+    private static async Task<bool> CanInviteAsync(HttpContext context, ICurrentUserAccessService accessService, string organizationId, CancellationToken cancellationToken)
+    {
+        var access = await accessService.ResolveAsync(context.User, cancellationToken);
+        return access.IsHelpdeskAdmin ||
+               (access.HasPermission(HelpdeskPermissions.TenantUsersManage, organizationId) &&
+                access.HasPermission(HelpdeskPermissions.TenantRolesAssign, organizationId));
+    }
+
     private static async Task<ApplicationUser?> FindTenantLocalUserAsync(
         string userId,
         string organizationId,
@@ -189,6 +271,8 @@ public static class TenantAdministrationEndpoints
     public sealed record TenantMembershipResponse(string UserId, string OrganizationId, IReadOnlyList<string> RoleKeys);
     public sealed record TenantOrganizationResponse(string Id, string Name);
     public sealed record TenantMemberResponse(string UserId, string Name, string Email, IReadOnlyList<string> RoleKeys);
+    public sealed record CreateTenantLocalAccountRequest(string DisplayName, string Email);
+    public sealed record TenantLocalAccountInvitationResponse(string UserId, string Email, string ActivationToken);
 
     private sealed record TenantMemberCandidate(string Id, string Name, string Email);
 }

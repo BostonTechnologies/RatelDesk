@@ -461,12 +461,19 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        using var instanceAdministrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
-        Assert.Equal(HttpStatusCode.NoContent, (await instanceAdministrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
-            "admin@example.test", "correct horse battery staple"))).StatusCode);
-        var createTarget = await instanceAdministrator.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
-            "Tenant Target", "tenant.target@example.test") { OrganizationId = organizationId });
-        var target = await createTarget.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
+        using var tenantAdministrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await tenantAdministrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "tenant.admin@example.test", "correct horse battery staple"))).StatusCode);
+        var createTarget = await tenantAdministrator.PostAsJsonAsync(
+            $"/api/v1/tenant-admin/organizations/{organizationId}/users/",
+            new TenantAdministrationEndpoints.CreateTenantLocalAccountRequest("Tenant Target", "tenant.target@example.test"));
+        var crossTenantInvitation = await tenantAdministrator.PostAsJsonAsync(
+            $"/api/v1/tenant-admin/organizations/{otherOrganizationId}/users/",
+            new TenantAdministrationEndpoints.CreateTenantLocalAccountRequest("Cross tenant", "cross.tenant@example.test"));
+        var target = await createTarget.Content.ReadFromJsonAsync<TenantAdministrationEndpoints.TenantLocalAccountInvitationResponse>();
+        Assert.Equal(HttpStatusCode.Created, createTarget.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, crossTenantInvitation.StatusCode);
+        Assert.False(string.IsNullOrWhiteSpace(target?.ActivationToken));
         await using (var targetScope = _factory.Services.CreateAsyncScope())
         {
             var db = targetScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
@@ -479,9 +486,6 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        using var tenantAdministrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
-        Assert.Equal(HttpStatusCode.NoContent, (await tenantAdministrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
-            "tenant.admin@example.test", "correct horse battery staple"))).StatusCode);
         var ownRoute = $"/api/v1/tenant-admin/organizations/{organizationId}/users/{target!.UserId}/assignments";
         var otherRoute = $"/api/v1/tenant-admin/organizations/{otherOrganizationId}/users/{target.UserId}/assignments";
         var ownTenant = await tenantAdministrator.PutAsJsonAsync(ownRoute,
