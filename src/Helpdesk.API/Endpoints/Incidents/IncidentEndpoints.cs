@@ -369,6 +369,7 @@ public static class IncidentEndpoints
             [FromServices] ITicketNotificationService ticketNotificationService,
             [FromServices] IHtmlSanitizerService sanitizer,
             [FromServices] IHtmlToPlainTextConverter plainTextConverter,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -390,7 +391,7 @@ public static class IncidentEndpoints
             }
 
             var customer = customerValidation.Customer!;
-            var access = CurrentUserAccessProfile.FromClaims(user);
+            var access = await accessService.ResolveAsync(user, token);
             if (!access.CanViewIncident(dto.OrganizationId, customer.Id, customer.Email))
             {
                 return Results.Forbid();

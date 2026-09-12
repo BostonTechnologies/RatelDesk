@@ -257,6 +257,7 @@ public static class RequestEndpoints
             [FromServices] ITicketNotificationService ticketNotificationService,
             [FromServices] IHtmlSanitizerService sanitizer,
             [FromServices] IHtmlToPlainTextConverter plainTextConverter,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -283,7 +284,7 @@ public static class RequestEndpoints
             }
 
             var customer = customerValidation.Customer!;
-            var access = CurrentUserAccessProfile.FromClaims(user);
+            var access = await accessService.ResolveAsync(user, token);
             if (!access.CanViewRequest(dto.OrganizationId, customer.Id, customer.Email))
             {
                 return Results.Forbid();

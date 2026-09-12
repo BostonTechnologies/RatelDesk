@@ -229,6 +229,7 @@ public static class ChangeEndpoints
             [FromServices] IDomainEventPublisher domainEvents,
             [FromServices] ICorrelationContext correlationContext,
             [FromServices] ILoggerFactory loggerFactory,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -257,7 +258,7 @@ public static class ChangeEndpoints
                 return Results.BadRequest("The selected organization could not be found.");
             }
 
-            var access = CurrentUserAccessProfile.FromClaims(user);
+            var access = await accessService.ResolveAsync(user, token);
             if (!access.CanManageChange(organization.Id))
             {
                 return Results.Forbid();
