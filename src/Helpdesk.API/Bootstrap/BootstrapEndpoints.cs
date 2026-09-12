@@ -14,7 +14,7 @@ public static class BootstrapEndpoints
             CancellationToken cancellationToken) =>
         {
             var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
-            return Results.Ok(new BootstrapStatusResponse(descriptor.State, descriptor.Provider));
+            return Results.Ok(ToResponse(descriptor));
         })
         .AllowAnonymous()
         .RequireRateLimiting("SetupUnlock")
@@ -101,8 +101,8 @@ public static class BootstrapEndpoints
                 }, cancellationToken);
 
                 return postgreSqlDescriptor.State == BootstrapState.Configuring
-                    ? Results.Ok(new BootstrapStatusResponse(postgreSqlDescriptor.State, postgreSqlDescriptor.Provider))
-                    : Results.Conflict(new BootstrapStatusResponse(postgreSqlDescriptor.State, postgreSqlDescriptor.Provider));
+                    ? Results.Ok(ToResponse(postgreSqlDescriptor))
+                    : Results.Conflict(ToResponse(postgreSqlDescriptor));
             }
 
             var sqlitePath = Path.GetFullPath(string.IsNullOrWhiteSpace(request.SqlitePath)
@@ -131,8 +131,8 @@ public static class BootstrapEndpoints
             }, cancellationToken);
 
             return descriptor.State == BootstrapState.Configuring
-                ? Results.Ok(new BootstrapStatusResponse(descriptor.State, descriptor.Provider))
-                : Results.Conflict(new BootstrapStatusResponse(descriptor.State, descriptor.Provider));
+                ? Results.Ok(ToResponse(descriptor))
+                : Results.Conflict(ToResponse(descriptor));
         })
         .AllowAnonymous()
         .WithTags("Setup");
@@ -159,7 +159,7 @@ public static class BootstrapEndpoints
             }
 
             _ = StopBootstrapHostAfterResponseAsync(applicationLifetime);
-            return Results.Ok(new BootstrapStatusResponse(result.Descriptor!.State, result.Descriptor.Provider));
+            return Results.Ok(ToResponse(result.Descriptor!));
         })
         .AllowAnonymous()
         .WithTags("Setup");
@@ -180,7 +180,10 @@ public static class BootstrapEndpoints
 
     private sealed record SetupSessionResponse(string Session, DateTimeOffset ExpiresAtUtc);
 
-    private sealed record BootstrapStatusResponse(BootstrapState State, string? Provider);
+    private static BootstrapStatusResponse ToResponse(BootstrapDescriptor descriptor) =>
+        new(descriptor.State.ToString(), descriptor.Provider);
+
+    private sealed record BootstrapStatusResponse(string State, string? Provider);
 
     private static async Task StopBootstrapHostAfterResponseAsync(IHostApplicationLifetime applicationLifetime)
     {
