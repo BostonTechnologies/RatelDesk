@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Linq.Expressions;
 using Dodo.Primitives;
 
 namespace Helpdesk.Shared.Services;
@@ -43,6 +44,13 @@ public class InMemoryRepository<T> : IRepository<T> where T : class
     /// <inheritdoc />
     public Task<IEnumerable<T>> GetAllAsync()
         => Task.FromResult(_store.Values.AsEnumerable());
+
+    /// <inheritdoc />
+    public Task<int> CountAsync(Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Query().Count(predicate));
+    }
 
     /// <inheritdoc />
     public Task<T?> UpdateAsync(T entity)
