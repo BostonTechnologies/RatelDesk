@@ -262,6 +262,51 @@ public sealed class BootstrapStateStoreTests
     }
 
     [Fact]
+    public async Task Legacy_adoption_marks_only_a_database_with_organization_and_user_evidence()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"rateldesk-adoption-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
+                .UseSqlite($"Data Source={databasePath}")
+                .Options;
+            await using var database = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
+                options,
+                new TestTenantContext(),
+                new HttpContextAccessor());
+            await database.Database.EnsureCreatedAsync();
+
+            var adoption = new LegacyInstallationAdoptionService();
+            Assert.Equal(LegacyInstallationAdoptionResult.NotEstablished,
+                await adoption.AdoptAsync(database, CancellationToken.None));
+
+            var organization = new Organization { Name = "Established organization" };
+            database.Organizations.Add(organization);
+            database.Users.Add(new User
+            {
+                Name = "Established administrator",
+                Email = "admin@example.test",
+                OrganizationId = organization.Id,
+                Role = "HelpdeskAdmin"
+            });
+            await database.SaveChangesAsync();
+
+            Assert.Equal(LegacyInstallationAdoptionResult.Adopted,
+                await adoption.AdoptAsync(database, CancellationToken.None));
+            Assert.Equal(LegacyInstallationAdoptionResult.AlreadyMarked,
+                await adoption.AdoptAsync(database, CancellationToken.None));
+            Assert.Single(await database.InstanceInitializations.ToListAsync());
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Initialization_rejects_an_external_http_application_url()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-bootstrap-{Guid.NewGuid():N}");

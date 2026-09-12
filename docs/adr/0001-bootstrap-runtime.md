@@ -22,6 +22,13 @@ only after that marker has committed, using the same operation ID. A restart
 recognizes a matching committed marker and activates the descriptor without
 duplicating the principal or reopening setup.
 
+An explicitly deployment-configured database may predate the descriptor. After
+its normal migrations complete, the runtime adopts it only when it finds both
+an application organization and a tenant-linked user with an email address.
+Schema history and an empty migrated database are never adoption evidence.
+The singleton marker makes this upgrade idempotent when multiple application
+instances start together.
+
 The normal runtime is composed once, after a persisted state transition. It
 must not mutate the built DI container or select a provider per request. A
 failed or missing selected database after prior initialization is

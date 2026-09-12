@@ -995,6 +995,20 @@ if (!skipDatabaseStartup)
         await SlaPolicySeed.SeedAsync(ctx);
         await RoleDefinitionSeeder.EnsureBuiltInsAsync(ctx);
 
+        // A deployment-managed database predates the bootstrap descriptor.
+        // Adopt only positive application evidence, never schema history or
+        // an empty migrated database, so first-run setup remains protected.
+        if (bootstrapDescriptor is null &&
+            !string.IsNullOrWhiteSpace(app.Configuration.GetConnectionString("HelpdeskDb")))
+        {
+            var adoption = new LegacyInstallationAdoptionService();
+            var adoptionResult = await adoption.AdoptAsync(ctx, CancellationToken.None);
+            if (adoptionResult is LegacyInstallationAdoptionResult.Adopted)
+            {
+                app.Logger.LogInformation("Recorded durable initialization evidence for an established deployment-managed RatelDesk instance.");
+            }
+        }
+
         var legacy = app.Configuration.GetSection("ExchangeEmail").Get<ExchangeEmailOptions>();
         if (legacy?.MailboxAddress?.Length > 0 &&
             !await ctx.EmailInboxSettings.AnyAsync(e => e.MailboxAddress == legacy.MailboxAddress))
