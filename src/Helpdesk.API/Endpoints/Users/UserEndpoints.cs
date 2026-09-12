@@ -35,6 +35,14 @@ public static class UserEndpoints
 
         group.MapPost("/", async ([FromBody] CreateUserRequest request, [FromServices] IRepository<User> repo) =>
         {
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["password"] = ["Create local accounts through /api/v1/local-auth/users; domain user records do not accept credentials."]
+                });
+            }
+
             var user = new User
             {
                 Id = Uuid.CreateVersion7().ToString(),
@@ -42,8 +50,7 @@ public static class UserEndpoints
                 Email = request.Email,
                 Role = request.Role,
                 IsTestUser = request.IsTestUser,
-                OrganizationId = string.IsNullOrWhiteSpace(request.OrganizationId) ? null : request.OrganizationId,
-                HashedPassword = string.IsNullOrWhiteSpace(request.Password) ? null : BCrypt.Net.BCrypt.HashPassword(request.Password)
+                OrganizationId = string.IsNullOrWhiteSpace(request.OrganizationId) ? null : request.OrganizationId
             };
             var created = await repo.CreateAsync(user);
             return Results.Created($"/api/v1/users/{created.Id}", ToDto(created));
@@ -104,16 +111,19 @@ public static class UserEndpoints
                 return Results.Problem("User not found", statusCode: 404);
             }
 
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["password"] = ["Change local credentials through /api/v1/local-auth/change-password."]
+                });
+            }
+
             existing.Name = request.Name;
             existing.Email = request.Email;
             existing.Role = request.Role;
             existing.IsTestUser = request.IsTestUser;
             existing.OrganizationId = string.IsNullOrWhiteSpace(request.OrganizationId) ? null : request.OrganizationId;
-            if (!string.IsNullOrEmpty(request.Password))
-            {
-                existing.HashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
-            }
-
             var updated = await repo.UpdateAsync(existing);
             return updated is null
                 ? Results.Problem("User not found", statusCode: 404)

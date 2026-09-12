@@ -84,6 +84,17 @@ public class UserEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal("org-2", updated!.OrganizationId);
     }
 
+    [Fact]
+    public async Task Domain_user_crud_rejects_password_writes()
+    {
+        var client = GetAuthenticatedClient();
+
+        var create = await client.PostAsJsonAsync("/api/v1/users", new CreateUserRequest(
+            "Legacy Password", "legacy.password@example.test", "not-a-local-account-password", "Technician"));
+
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, create.StatusCode);
+    }
+
     private HttpClient GetAuthenticatedClient()
     {
         var client = _factory.CreateClient();
