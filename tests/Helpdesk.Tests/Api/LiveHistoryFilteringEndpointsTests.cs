@@ -1291,10 +1291,14 @@ public sealed class LiveHistoryFilteringEndpointsTests
         var ownTasks = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/tasks");
         var foreignTasks = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks/tasks");
         var ownAiAudit = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/ai-audit");
+        var ownRequest = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks");
+        var foreignRequest = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks");
 
         Assert.Equal(System.Net.HttpStatusCode.OK, ownTasks.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignTasks.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, ownAiAudit.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.OK, ownRequest.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignRequest.StatusCode);
     }
 
     [Fact]

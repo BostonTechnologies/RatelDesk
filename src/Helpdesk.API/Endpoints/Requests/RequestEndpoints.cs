@@ -49,6 +49,7 @@ public static class RequestEndpoints
             [FromServices] IDomainEventPublisher domainEvents,
             [FromServices] ICorrelationContext correlationContext,
             [FromServices] ILoggerFactory loggerFactory,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -94,7 +95,7 @@ public static class RequestEndpoints
                     .FirstOrDefaultAsync()
                 : null;
 
-            var access = CurrentUserAccessProfile.FromClaims(user);
+            var access = await accessService.ResolveAsync(user, token);
             if (!access.CanViewRequest(entity.OrganizationId, customer?.Id ?? entity.CustomerId, customer?.Email ?? entity.RequesterEmail))
             {
                 return Results.Forbid();
