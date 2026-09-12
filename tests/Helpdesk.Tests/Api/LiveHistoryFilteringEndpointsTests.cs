@@ -9,6 +9,7 @@ using Helpdesk.API.Endpoints.Incidents;
 using Helpdesk.API.Endpoints.Requests;
 using Helpdesk.API.Endpoints.RequestTasks;
 using Helpdesk.Application.Events;
+using Helpdesk.Application.Messaging;
 using Helpdesk.Application.Services.Changes;
 using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Services.Notifications;
@@ -1255,10 +1256,14 @@ public sealed class LiveHistoryFilteringEndpointsTests
         var requestUpdate = await harness.Client.PutAsJsonAsync("/api/v1/requests/req-self-service-update", new UpdateRequestDto { State = TicketState.Resolved });
         var changeUpdate = await harness.Client.PutAsJsonAsync("/api/v1/changes/chg-self-service-update", new UpdateChangeDto { State = TicketState.Resolved, Priority = TicketPriority.Low });
         var changeDelete = await harness.Client.DeleteAsync("/api/v1/changes/chg-self-service-update");
+        var runReview = await harness.Client.PostAsJsonAsync("/api/v1/changes/chg-self-service-update/ai-review", new { });
+        var acknowledgeReview = await harness.Client.PostAsJsonAsync("/api/v1/changes/chg-self-service-update/ai-review/acknowledge", new { });
 
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, requestUpdate.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeUpdate.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeDelete.StatusCode);
+        Assert.True(runReview.StatusCode == System.Net.HttpStatusCode.Forbidden, await runReview.Content.ReadAsStringAsync());
+        Assert.True(acknowledgeReview.StatusCode == System.Net.HttpStatusCode.Forbidden, await acknowledgeReview.Content.ReadAsStringAsync());
         await harness.WithDbAsync(async db =>
         {
             Assert.Equal(TicketState.New, (await db.Requests.FindAsync("req-self-service-update"))!.State);
@@ -1431,6 +1436,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
             builder.Services.AddSingleton<IPublicTicketLinkSigner, TestPublicTicketLinkSigner>();
             builder.Services.AddSingleton<IImageLinkSigner, TestImageLinkSigner>();
             builder.Services.AddSingleton<ITimelineEventBus, TestTimelineEventBus>();
+            builder.Services.AddSingleton<IRequestSender, FailFastRequestSender>();
             builder.Services.AddSingleton<Helpdesk.Application.Services.Tickets.ITicketRefGeneratorService, Helpdesk.Application.Services.Tickets.TicketRefGeneratorService>();
             builder.Services.AddSingleton<IChangeReviewService, TestChangeReviewService>();
             builder.Services.AddSingleton<ITicketNotificationService, NoopTicketNotificationService>();
@@ -1763,6 +1769,12 @@ public sealed class LiveHistoryFilteringEndpointsTests
         public ValueTask PublishAsync(TicketTimelineEventDto evt) => ValueTask.CompletedTask;
     }
 
+    private sealed class FailFastRequestSender : IRequestSender
+    {
+        public Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException($"Unexpected request dispatch in this test harness: {request.GetType().Name}");
+    }
+
     private sealed class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
     {
         public TestAuthHandler(
@@ -1797,6 +1809,11 @@ public sealed class LiveHistoryFilteringEndpointsTests
             {
                 claims.Add(new Claim(ClaimTypes.Email, "self-service@example.com"));
                 claims.Add(new Claim("auth_mode", "local"));
+                foreach (var selfServiceRole in new[] { HelpdeskPermissions.RequestUser, HelpdeskPermissions.ChangeUser })
+                {
+                    claims.Add(new Claim(ClaimTypes.Role, selfServiceRole));
+                    claims.Add(new Claim("roles", selfServiceRole));
+                }
             }
 
             if (string.Equals(role, "Technician", StringComparison.OrdinalIgnoreCase))

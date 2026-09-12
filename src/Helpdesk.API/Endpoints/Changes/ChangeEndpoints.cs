@@ -100,6 +100,7 @@ public static class ChangeEndpoints
             [FromServices] ICorrelationContext correlationContext,
             [FromServices] ILoggerFactory loggerFactory,
             [FromServices] IChangeReviewService changeReviewService,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -121,7 +122,7 @@ public static class ChangeEndpoints
                     .FirstOrDefaultAsync()
                 : null;
 
-            var access = CurrentUserAccessProfile.FromClaims(user);
+            var access = await accessService.ResolveAsync(user, token);
             if (!access.CanViewChange(entity.OrganizationId, customer?.Id ?? entity.CustomerId, customer?.Email ?? entity.RequesterEmail))
             {
                 return Results.Forbid();
@@ -874,10 +875,21 @@ public static class ChangeEndpoints
         group.MapGet("/{id}/ai-review", async (
             [FromRoute] string id,
             [FromServices] IRepository<Change> repo,
-            [FromServices] IChangeReviewService changeReviewService) =>
+            [FromServices] IChangeReviewService changeReviewService,
+            [FromServices] ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
+            CancellationToken token) =>
         {
             var change = await repo.GetAsync(id);
-            return change is null ? Results.NotFound() : Results.Ok(changeReviewService.BuildReviewDto(change));
+            if (change is null)
+            {
+                return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            return access.CanViewChange(change.OrganizationId, change.CustomerId, change.RequesterEmail)
+                ? Results.Ok(changeReviewService.BuildReviewDto(change))
+                : Results.Forbid();
         });
 
         group.MapPost("/{id}/ai-review", async (
@@ -888,6 +900,7 @@ public static class ChangeEndpoints
             [FromServices] IRequestSender sender,
             [FromServices] IDomainEventPublisher domainEvents,
             [FromServices] ICorrelationContext correlationContext,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -895,6 +908,12 @@ public static class ChangeEndpoints
             if (change is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageChange(change.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             ChangeAiReviewDto review;
@@ -962,6 +981,7 @@ public static class ChangeEndpoints
             [FromServices] IRequestSender sender,
             [FromServices] IDomainEventPublisher domainEvents,
             [FromServices] ICorrelationContext correlationContext,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -969,6 +989,12 @@ public static class ChangeEndpoints
             if (change is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageChange(change.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             if (change.AiReviewStatus != ChangeReviewStatus.Complete)
@@ -1018,7 +1044,8 @@ public static class ChangeEndpoints
                 change.AiReviewAcknowledgedByName,
                 change.AiReviewAcknowledgementNotes
             });
-        });
+        })
+        .RequireAuthorization("ChangeManager");
 
         group.MapPost("/bulk/state", async (
             [FromBody] BulkStateChangeRequest req,
