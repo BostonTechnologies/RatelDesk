@@ -124,6 +124,15 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   --data '{"state":3,"priority":1}' \
   "$api_base_url/api/v1/incidents/$incident_id" > /dev/null
 
+attachment_id="$(curl --fail --silent --show-error \
+  --cookie "$cookie_jar" \
+  --form 'files=@/dev/null;filename=rc4-smoke.txt;type=text/plain' \
+  "$api_base_url/api/v1/tickets/$incident_id/attachments/" | jq -er '.[0].id')"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$api_base_url/api/v1/tickets/$incident_id/attachments/" | jq -e --arg id "$attachment_id" 'any(.[]; .id == $id)' > /dev/null
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$api_base_url/api/v1/attachments/$attachment_id" > /dev/null
+
 request_payload="$(jq -nc --arg customerId "$customer_id" --arg organizationId "$organization_id" '{title: "RC4 smoke request", description: "Production first-run request verification.", priority: 0, customerId: $customerId, organizationId: $organizationId}')"
 request_id="$(curl --fail --silent --show-error \
   --cookie "$cookie_jar" \
@@ -152,4 +161,4 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
 
 curl --fail --silent --show-error "$api_base_url/api/v1/setup/status" | jq -e '.state == "Ready"' > /dev/null
 
-echo "First-run $setup_provider setup, local sign-in, and core ticket CRUD smoke test passed."
+echo "First-run $setup_provider setup, local sign-in, core ticket CRUD, and attachment smoke test passed."
