@@ -56,6 +56,26 @@
     private string? _error;
     private bool _busy;
 
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var status = await HttpClientFactory.CreateClient("SystemApiNoAuth")
+                .GetFromJsonAsync<SetupStatus>("/api/v1/setup/status");
+            if (status?.State.ValueKind == System.Text.Json.JsonValueKind.String &&
+                string.Equals(status.State.GetString(), "Ready", StringComparison.OrdinalIgnoreCase))
+            {
+                Navigation.NavigateTo("/login", forceLoad: true);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // The setup host can still be starting; the page remains usable and
+            // reports the request error when the operator submits setup.
+            System.Diagnostics.Debug.WriteLine("Setup status endpoint unavailable while rendering setup.");
+        }
+    }
+
     private async Task InitializeAsync()
     {
         _busy = true;
@@ -143,4 +163,6 @@
     }
 
     private sealed record SetupSession(string Session);
+
+    private sealed record SetupStatus(System.Text.Json.JsonElement State);
 }
