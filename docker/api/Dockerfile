@@ -20,6 +20,7 @@ COPY Directory.Build.props Directory.Build.targets ./
 COPY src/Helpdesk.API/*.csproj             src/Helpdesk.API/
 COPY src/Helpdesk.Application/*.csproj     src/Helpdesk.Application/
 COPY src/Helpdesk.Infrastructure/*.csproj  src/Helpdesk.Infrastructure/
+COPY src/Helpdesk.Infrastructure.SqliteMigrations/*.csproj src/Helpdesk.Infrastructure.SqliteMigrations/
 COPY src/Helpdesk.Shared/*.csproj          src/Helpdesk.Shared/
 COPY src/Helpdesk.ServiceDefaults/*.csproj src/Helpdesk.ServiceDefaults/
 
@@ -29,6 +30,7 @@ RUN dotnet restore src/Helpdesk.API/Helpdesk.API.csproj
 COPY src/Helpdesk.API/             src/Helpdesk.API/
 COPY src/Helpdesk.Application/     src/Helpdesk.Application/
 COPY src/Helpdesk.Infrastructure/  src/Helpdesk.Infrastructure/
+COPY src/Helpdesk.Infrastructure.SqliteMigrations/ src/Helpdesk.Infrastructure.SqliteMigrations/
 COPY src/Helpdesk.Shared/          src/Helpdesk.Shared/
 COPY src/Helpdesk.ServiceDefaults/ src/Helpdesk.ServiceDefaults/
 
