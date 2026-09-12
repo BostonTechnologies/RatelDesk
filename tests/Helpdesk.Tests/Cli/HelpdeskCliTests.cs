@@ -416,7 +416,7 @@ public sealed class HelpdeskCliTests
             return Json(HttpStatusCode.OK, "[]");
         }, output);
         Assert.Equal(CliExitCodes.Success, code);
-        Assert.Equal("https://api.example/api/v1/roles/", calls.Single().RequestUri!.ToString());
+        Assert.Equal("https://api.example/api/v1/admin/role-definitions/", calls.Single().RequestUri!.ToString());
     }
 
     [Fact]

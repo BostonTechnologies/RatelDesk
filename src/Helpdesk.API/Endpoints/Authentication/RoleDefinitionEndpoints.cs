@@ -53,6 +53,32 @@ public static class RoleDefinitionEndpoints
             return Results.Ok(roles.Select(role => ToResponse(role, assignments.GetValueOrDefault(role.Key))));
         });
 
+        group.MapGet("/{id}", async (
+            string id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var access = await accessService.ResolveAsync(context.User, cancellationToken);
+            var role = await db.Roles.AsNoTracking()
+                .Include(candidate => candidate.Permissions)
+                .SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+            if (role is null) return Results.NotFound();
+            if (!CanManageOrganization(access, role.OwnerOrganizationId) && !role.IsBuiltIn) return Results.Forbid();
+            if (!access.IsHelpdeskAdmin && ManagedOrganizationIds(access).Count == 0) return Results.Forbid();
+
+            var assignments = db.ScopedRoleAssignments.AsNoTracking()
+                .Where(assignment => assignment.RoleKey == role.Key);
+            if (!access.IsHelpdeskAdmin)
+            {
+                var organizationIds = ManagedOrganizationIds(access);
+                assignments = assignments.Where(assignment => organizationIds.Contains(assignment.OrganizationId));
+            }
+
+            return Results.Ok(ToResponse(role, await assignments.CountAsync(cancellationToken)));
+        });
+
         group.MapPost("/", async (
             CreateRoleDefinitionRequest request,
             HttpContext context,

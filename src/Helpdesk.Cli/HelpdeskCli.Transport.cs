@@ -666,7 +666,7 @@ internal static partial class HelpdeskCli
             "/api/v1/organizations",
             "/api/v1/customers",
             "/api/v1/users",
-            "/api/v1/roles",
+            "/api/v1/admin/role-definitions",
             "/api/v1/categories",
             "/api/v1/services",
             "/api/v1/service-items",
