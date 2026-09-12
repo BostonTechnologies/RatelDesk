@@ -143,21 +143,24 @@ public static class TicketEndpoints
 
         group.MapPost("/{id:guid}/suggest-knowledge", async (
             Guid id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
             IAiSuggestionQueue queue,
             HelpdeskDbContext db,
             CancellationToken ct) =>
         {
-            var exists = await db.Tickets.AsNoTracking().AnyAsync(t => t.Id == id.ToString(), ct);
-            if (!exists) return Results.NotFound();
+            var ticketId = id.ToString();
+            var authorizationFailure = await AuthorizeTicketViewAsync("incidents", ticketId, context.User, accessService, db, ct);
+            if (authorizationFailure is not null) return authorizationFailure;
 
-            var orgId = await db.Tickets.Where(t => t.Id == id.ToString()).Select(t => t.OrganizationId).FirstAsync(ct);
+            var orgId = await db.Tickets.Where(t => t.Id == ticketId).Select(t => t.OrganizationId).FirstAsync(ct);
             var org = await db.OrganizationAiKbSettings.AsNoTracking()
                         .FirstOrDefaultAsync(o => o.OrganizationId == orgId, ct);
 
             if (org is null || org.EnableAiSearch == false)
                 return Results.StatusCode(StatusCodes.Status204NoContent);
 
-            await queue.QueueAsync(id.ToString(), ct);
+            await queue.QueueAsync(ticketId, ct);
             return Results.Accepted($"/api/v1/tickets/{id}/suggest-knowledge");
         })
         .WithSummary("Queue knowledge suggestions for a ticket")
@@ -817,7 +820,7 @@ public static class TicketEndpoints
         string.Equals(ticketType, "requests", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(ticketType, "changes", StringComparison.OrdinalIgnoreCase);
 
-    private static async Task<IResult?> AuthorizeTicketViewAsync(
+    internal static async Task<IResult?> AuthorizeTicketViewAsync(
         string ticketType,
         string ticketId,
         ClaimsPrincipal user,

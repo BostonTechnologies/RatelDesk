@@ -1,15 +1,19 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using Helpdesk.API;
 using Helpdesk.API.Endpoints.Authentication;
+using Helpdesk.API.Endpoints.Tickets;
 using Helpdesk.API.Endpoints.Users;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Auth;
 using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -652,6 +656,66 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Contains(roleAudits, audit => audit.Message.Contains($"Created custom role 'Tenant incident reader' in organization '{organizationId}'", StringComparison.Ordinal));
         Assert.Contains(roleAudits, audit => audit.Message.Contains("Updated custom role 'Tenant incident reader' to 'Tenant incident manager'", StringComparison.Ordinal) && audit.Message.Contains("->", StringComparison.Ordinal));
         Assert.Contains(roleAudits, audit => audit.Message.Contains($"Deleted custom role 'Tenant incident manager' in organization '{organizationId}'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Local_user_cannot_queue_a_knowledge_suggestion_for_a_foreign_tenant_ticket()
+    {
+        const string userOrganizationId = "knowledge-suggestion-user-organization";
+        const string ticketOrganizationId = "knowledge-suggestion-ticket-organization";
+        const string ticketId = "11111111-1111-1111-1111-111111111111";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "knowledge.suggestion.user@example.test", Email = "knowledge.suggestion.user@example.test", DisplayName = "Knowledge Suggestion User" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("knowledge.suggestion.user@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = userOrganizationId, Name = "Knowledge suggestion user organization" },
+                new Organization { Id = ticketOrganizationId, Name = "Knowledge suggestion ticket organization" });
+            db.Users.Add(new User
+            {
+                Id = userId,
+                Name = "Knowledge Suggestion User",
+                Email = "knowledge.suggestion.user@example.test",
+                OrganizationId = userOrganizationId,
+                Role = "User"
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = userId,
+                OrganizationId = userOrganizationId,
+                RoleKey = ScopedRoleCatalog.SelfServiceUser
+            });
+            db.Incidents.Add(new Incident
+            {
+                Id = ticketId,
+                OrganizationId = ticketOrganizationId,
+                RequesterEmail = "foreign.requester@example.test",
+                Title = "Foreign tenant incident",
+                Description = "A local user from another tenant must not queue AI work for this ticket."
+            });
+            await db.SaveChangesAsync();
+            Assert.True(await db.Tickets.AnyAsync(ticket => ticket.Id == ticketId));
+
+            var authorizationFailure = await TicketEndpoints.AuthorizeTicketViewAsync(
+                "incidents",
+                ticketId,
+                new ClaimsPrincipal(new ClaimsIdentity(
+                [
+                    new Claim(ClaimTypes.NameIdentifier, userId),
+                    new Claim("auth_mode", "local")
+                ], "Local")),
+                setupScope.ServiceProvider.GetRequiredService<ICurrentUserAccessService>(),
+                db,
+                CancellationToken.None);
+
+            Assert.IsType<ForbidHttpResult>(authorizationFailure);
+        }
     }
 
     [Fact]
