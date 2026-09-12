@@ -121,7 +121,22 @@ public static class AiAssistantChatEndpoints
                 ChatSnapshot snapshot;
                 // Fresh scope avoids stale tracked state during a long-lived response.
                 await using (var scope = scopes.CreateAsyncScope())
-                    snapshot = await scope.ServiceProvider.GetRequiredService<IAiAssistantChatStore>().LoadAsync(ticketType, ticketId, conversationId, position, Actor(context), ct);
+                {
+                    var services = scope.ServiceProvider;
+                    if (await AuthorizeTicketManagementAsync(
+                            ticketType,
+                            ticketId,
+                            context.User,
+                            services.GetRequiredService<HelpdeskDbContext>(),
+                            services.GetRequiredService<ICurrentUserAccessService>(),
+                            ct) is not null)
+                    {
+                        return;
+                    }
+
+                    snapshot = await services.GetRequiredService<IAiAssistantChatStore>()
+                        .LoadAsync(ticketType, ticketId, conversationId, position, Actor(context), ct);
+                }
                 if (!started)
                 {
                     context.Response.ContentType = "text/event-stream";
