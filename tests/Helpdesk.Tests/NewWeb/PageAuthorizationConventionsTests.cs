@@ -62,7 +62,7 @@ public class PageAuthorizationConventionsTests
         var navMenu = File.ReadAllText(Path.Combine(repoRoot, "src", "HelpDesk.NewWeb", "Components", "Layout", "NavMenu.razor"));
 
         Assert.Contains("@page \"/tenant-administration\"", page, StringComparison.Ordinal);
-        Assert.Contains("@attribute [Authorize]", page, StringComparison.Ordinal);
+        Assert.Contains("@attribute [Authorize(Roles = \"Tenant.Roles.Assign,HelpdeskAdmin\")]", page, StringComparison.Ordinal);
         Assert.Contains("api/v1/tenant-admin/organizations", page, StringComparison.Ordinal);
         Assert.Contains("api/v1/tenant-admin/organizations", navigation, StringComparison.Ordinal);
         Assert.Contains("Href=\"/admin/roles\"", navigation, StringComparison.Ordinal);
