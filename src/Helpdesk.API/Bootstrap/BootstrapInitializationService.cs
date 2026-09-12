@@ -79,12 +79,14 @@ public sealed class BootstrapInitializationService(
         var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
         var identityDb = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
         var isPostgreSql = string.Equals(descriptor.Provider, "PostgreSql", StringComparison.OrdinalIgnoreCase);
+        var postgreSqlLockHeld = false;
         if (isPostgreSql)
         {
             await db.Database.OpenConnectionAsync(cancellationToken);
             await db.Database.ExecuteSqlAsync(
                 $"SELECT pg_advisory_lock({PostgreSqlBootstrapLockId})",
                 cancellationToken);
+            postgreSqlLockHeld = true;
         }
 
         try
@@ -196,7 +198,7 @@ public sealed class BootstrapInitializationService(
         }
         finally
         {
-            if (isPostgreSql)
+            if (postgreSqlLockHeld)
             {
                 await db.Database.ExecuteSqlAsync(
                     $"SELECT pg_advisory_unlock({PostgreSqlBootstrapLockId})",
