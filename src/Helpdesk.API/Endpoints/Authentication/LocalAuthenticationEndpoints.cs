@@ -246,6 +246,115 @@ public static class LocalAuthenticationEndpoints
         })
         .RequireAuthorization("HelpdeskAdmin");
 
+        group.MapGet("/users/{userId}/assignments", async (
+            string userId,
+            [FromServices] UserManager<ApplicationUser> users,
+            [FromServices] HelpdeskDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            if (await users.FindByIdAsync(userId) is null ||
+                !await db.Users.AnyAsync(user => user.Id == userId, cancellationToken))
+            {
+                return Results.NotFound();
+            }
+
+            var assignments = await db.ScopedRoleAssignments.AsNoTracking()
+                .Where(assignment => assignment.UserId == userId)
+                .OrderBy(assignment => assignment.OrganizationId)
+                .ThenBy(assignment => assignment.RoleKey)
+                .Select(assignment => new LocalScopedRoleAssignment(assignment.RoleKey, assignment.OrganizationId))
+                .ToListAsync(cancellationToken);
+            return Results.Ok(new LocalScopedRoleAssignmentsResponse(assignments));
+        })
+        .RequireAuthorization("HelpdeskAdmin");
+
+        group.MapPut("/users/{userId}/assignments", async (
+            string userId,
+            [FromBody] ReplaceLocalScopedRoleAssignmentsRequest request,
+            [FromServices] UserManager<ApplicationUser> users,
+            [FromServices] HelpdeskDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var account = await users.FindByIdAsync(userId);
+            var domainUser = await db.Users.SingleOrDefaultAsync(user => user.Id == userId, cancellationToken);
+            if (account is null || domainUser is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (account.IsInstanceAdministrator)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["assignments"] = ["Instance administrator access is managed separately from tenant-scoped role assignments."]
+                });
+            }
+
+            var requestedAssignments = (request.Assignments ?? [])
+                .Select(assignment => new LocalScopedRoleAssignment(
+                    assignment.RoleKey?.Trim() ?? string.Empty,
+                    assignment.OrganizationId?.Trim() ?? string.Empty))
+                .ToArray();
+            if (requestedAssignments.Length == 0 ||
+                requestedAssignments.Any(assignment =>
+                    !ScopedRoleCatalog.IsSupported(assignment.RoleKey) ||
+                    string.IsNullOrWhiteSpace(assignment.OrganizationId)))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["assignments"] = ["Assign at least one supported local role to an enabled organization."]
+                });
+            }
+
+            if (requestedAssignments
+                .GroupBy(assignment => $"{assignment.RoleKey}\u001f{assignment.OrganizationId}", StringComparer.OrdinalIgnoreCase)
+                .Any(group => group.Count() > 1))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["assignments"] = ["Each local role can be assigned to an organization only once."]
+                });
+            }
+
+            var organizationIds = requestedAssignments
+                .Select(assignment => assignment.OrganizationId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var enabledOrganizationIds = await db.Organizations.AsNoTracking()
+                .Where(organization => organizationIds.Contains(organization.Id) && organization.IsEnabled)
+                .Select(organization => organization.Id)
+                .ToListAsync(cancellationToken);
+            if (enabledOrganizationIds.Count != organizationIds.Length)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["assignments"] = ["Every local role assignment must reference an enabled organization."]
+                });
+            }
+
+            var existingAssignments = await db.ScopedRoleAssignments
+                .Where(assignment => assignment.UserId == userId)
+                .ToListAsync(cancellationToken);
+            db.ScopedRoleAssignments.RemoveRange(existingAssignments);
+            db.ScopedRoleAssignments.AddRange(requestedAssignments.Select(assignment => new ScopedRoleAssignment
+            {
+                UserId = userId,
+                RoleKey = assignment.RoleKey,
+                OrganizationId = assignment.OrganizationId
+            }));
+            await db.SaveChangesAsync(cancellationToken);
+
+            account.AuthorizationRevision++;
+            var update = await users.UpdateAsync(account);
+            if (!update.Succeeded)
+            {
+                return Results.Problem("The local role assignments were saved, but the account authorization revision could not be updated.", statusCode: StatusCodes.Status409Conflict);
+            }
+
+            return Results.NoContent();
+        })
+        .RequireAuthorization("HelpdeskAdmin");
+
         group.MapPost("/users", async (
             [FromBody] CreateLocalAccountRequest request,
             [FromServices] UserManager<ApplicationUser> users,
@@ -421,6 +530,12 @@ public static class LocalAuthenticationEndpoints
     public sealed record LocalAccountActivationResponse(string UserId, string Email, string ActivationToken);
 
     public sealed record LocalAccountStatusResponse(bool IsEnabled);
+
+    public sealed record LocalScopedRoleAssignment(string RoleKey, string OrganizationId);
+
+    public sealed record LocalScopedRoleAssignmentsResponse(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
+
+    public sealed record ReplaceLocalScopedRoleAssignmentsRequest(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
 
     public sealed record EnableTwoFactorRequest(string Code);
 

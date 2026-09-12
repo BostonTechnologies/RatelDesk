@@ -313,6 +313,52 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Administrator_can_replace_a_local_accounts_tenant_scoped_role_assignments()
+    {
+        const string firstOrganizationId = "first-scoped-role-organization";
+        const string secondOrganizationId = "second-scoped-role-organization";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var setupDb = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            setupDb.Organizations.AddRange(
+                new Organization { Id = firstOrganizationId, Name = "First scoped role organization" },
+                new Organization { Id = secondOrganizationId, Name = "Second scoped role organization" });
+            await setupDb.SaveChangesAsync();
+        }
+
+        using var administratorClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+        var create = await administratorClient.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
+            "Scoped Operator", "scoped.operator@example.test")
+        {
+            OrganizationId = firstOrganizationId
+        });
+        var activation = await create.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        Assert.NotNull(activation);
+
+        var replace = await administratorClient.PutAsJsonAsync($"/api/v1/local-auth/users/{activation!.UserId}/assignments",
+            new LocalAuthenticationEndpoints.ReplaceLocalScopedRoleAssignmentsRequest(
+            [new LocalAuthenticationEndpoints.LocalScopedRoleAssignment(ScopedRoleCatalog.Technician, secondOrganizationId)]));
+        var assignments = await administratorClient.GetFromJsonAsync<LocalAuthenticationEndpoints.LocalScopedRoleAssignmentsResponse>(
+            $"/api/v1/local-auth/users/{activation.UserId}/assignments");
+
+        Assert.Equal(HttpStatusCode.NoContent, replace.StatusCode);
+        Assert.Equal([new LocalAuthenticationEndpoints.LocalScopedRoleAssignment(ScopedRoleCatalog.Technician, secondOrganizationId)], assignments!.Assignments);
+        Assert.Equal(HttpStatusCode.NoContent, (await administratorClient.PostAsJsonAsync("/api/v1/local-auth/activate", new LocalAuthenticationEndpoints.ActivateLocalAccountRequest(
+            activation.Email, activation.ActivationToken, "another secure passphrase"))).StatusCode);
+        using var accountClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await accountClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            activation.Email, "another secure passphrase"))).StatusCode);
+        var access = await accountClient.GetFromJsonAsync<CurrentUserAccessDto>("/api/v1/auth/me");
+
+        Assert.Contains(access!.ScopedPermissionGrants, grant =>
+            grant.OrganizationId == secondOrganizationId && grant.Permission == HelpdeskPermissions.IncidentManager);
+        Assert.DoesNotContain(access.ScopedPermissionGrants, grant => grant.OrganizationId == firstOrganizationId);
+    }
+
+    [Fact]
     public async Task Local_login_requires_an_authenticator_code_after_two_factor_is_enabled()
     {
         using var setupClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
