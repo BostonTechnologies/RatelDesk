@@ -1293,7 +1293,7 @@ app.MapPost("/api/v1/ingestEmail", async (
     }
 
     return Results.Created($"/api/v1/incidents/{ticket.Id}", ticket); // 201
-}).RequireAuthorization();
+}).RequireAuthorization("HelpdeskAdmin");
 
 app.MapHub<NotificationHub>("/notification-hub");
 

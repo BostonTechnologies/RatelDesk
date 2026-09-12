@@ -103,6 +103,25 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Authenticated_non_administrator_cannot_use_legacy_email_ingestion()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var create = await users.CreateAsync(
+            new ApplicationUser { UserName = "operator@example.test", Email = "operator@example.test", DisplayName = "Operator" },
+            "correct horse battery staple");
+        Assert.True(create.Succeeded, string.Join(", ", create.Errors.Select(error => error.Description)));
+
+        using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var login = await client.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "operator@example.test", "correct horse battery staple"));
+        var ingest = await client.PostAsJsonAsync("/api/v1/ingestEmail", "Subject\nBody");
+
+        Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, ingest.StatusCode);
+    }
+
+    [Fact]
     public async Task Last_enabled_instance_administrator_cannot_be_disabled()
     {
         using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
