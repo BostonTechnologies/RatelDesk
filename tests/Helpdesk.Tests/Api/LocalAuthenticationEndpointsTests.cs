@@ -565,6 +565,53 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Incident_activity_is_not_visible_outside_the_principal_tenant_scope()
+    {
+        const string incidentOrganizationId = "activity-incident-organization";
+        const string userOrganizationId = "activity-user-organization";
+        const string incidentId = "restricted-incident-activity";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var createUser = await identityUsers.CreateAsync(
+                new ApplicationUser { UserName = "activity.reader@example.test", Email = "activity.reader@example.test", DisplayName = "Activity Reader" },
+                "correct horse battery staple");
+            Assert.True(createUser.Succeeded);
+            var userId = (await identityUsers.FindByEmailAsync("activity.reader@example.test"))!.Id;
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.AddRange(
+                new Organization { Id = incidentOrganizationId, Name = "Restricted activity organization" },
+                new Organization { Id = userOrganizationId, Name = "Activity reader organization" });
+            db.Users.Add(new User { Id = userId, Name = "Activity Reader", Email = "activity.reader@example.test", OrganizationId = userOrganizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = userId, OrganizationId = userOrganizationId, RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Incidents.Add(new Incident
+            {
+                Id = incidentId,
+                OrganizationId = incidentOrganizationId,
+                Title = "Restricted incident",
+                Description = "Restricted incident description",
+                RequesterEmail = "other.requester@example.test"
+            });
+            db.ActivityLogs.Add(new ActivityLog { TicketId = incidentId, UserId = "other-user", Message = "Restricted activity" });
+            await db.SaveChangesAsync();
+        }
+
+        using var reader = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await reader.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "activity.reader@example.test", "correct horse battery staple"))).StatusCode);
+        var denied = await reader.GetAsync($"/api/v1/incidents/{incidentId}/activity");
+
+        using var administrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+        var permitted = await administrator.GetAsync($"/api/v1/incidents/{incidentId}/activity");
+
+        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, permitted.StatusCode);
+    }
+
+    [Fact]
     public async Task Local_login_requires_an_authenticator_code_after_two_factor_is_enabled()
     {
         using var setupClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
