@@ -1,5 +1,7 @@
 using Helpdesk.API.Bootstrap;
+using Helpdesk.Infrastructure;
 using Helpdesk.Infrastructure.Identity;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
@@ -7,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.DependencyInjection;
 using Pgvector.EntityFrameworkCore;
 using System.Text;
 using Testcontainers.PostgreSql;
@@ -73,6 +76,90 @@ public sealed class BootstrapStateStoreTests
 
             Assert.Null(token);
             Assert.False(File.Exists(databasePath));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Local_admin_recovery_reenables_an_instance_administrator_and_mints_a_single_use_activation_token()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-recovery-{Guid.NewGuid():N}");
+        try
+        {
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Database:Provider"] = "Sqlite",
+                ["Database:Sqlite:Path"] = Path.Combine(directory, "rateldesk.db"),
+                ["DataProtection:KeyRingPath"] = Path.Combine(directory, "keys")
+            }).Build();
+
+            await using (var provider = CreateRecoveryServiceProvider(configuration))
+            await using (var scope = provider.CreateAsyncScope())
+            {
+                var identity = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
+                await identity.Database.MigrateAsync();
+                var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+                var result = await users.CreateAsync(new ApplicationUser
+                {
+                    UserName = "admin@example.test",
+                    Email = "admin@example.test",
+                    DisplayName = "Recovered administrator",
+                    IsEnabled = false,
+                    DisabledAtUtc = DateTimeOffset.UtcNow,
+                    IsInstanceAdministrator = true,
+                    AuthorizationRevision = 41
+                }, "correct horse battery staple");
+                Assert.True(result.Succeeded, string.Join(", ", result.Errors.Select(error => error.Description)));
+            }
+
+            var token = await LocalAdminRecoveryCommand.GenerateActivationTokenAsync(configuration, "admin@example.test");
+
+            Assert.False(string.IsNullOrWhiteSpace(token));
+            await using var recoveryProvider = CreateRecoveryServiceProvider(configuration);
+            await using var recoveryScope = recoveryProvider.CreateAsyncScope();
+            var recoveryUsers = recoveryScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var administrator = await recoveryUsers.FindByEmailAsync("admin@example.test");
+            Assert.NotNull(administrator);
+            Assert.True(administrator.IsEnabled);
+            Assert.Null(administrator.DisabledAtUtc);
+            Assert.Equal(42, administrator.AuthorizationRevision);
+
+            var reset = await recoveryUsers.ResetPasswordAsync(administrator, token!, "another secure passphrase");
+            var replay = await recoveryUsers.ResetPasswordAsync(administrator, token, "a different secure passphrase");
+
+            Assert.True(reset.Succeeded, string.Join(", ", reset.Errors.Select(error => error.Description)));
+            Assert.False(replay.Succeeded);
+            Assert.True(await recoveryUsers.CheckPasswordAsync(administrator, "another secure passphrase"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Local_admin_recovery_returns_no_token_when_a_postgresql_identity_store_is_unavailable()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-recovery-{Guid.NewGuid():N}");
+        try
+        {
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Database:Provider"] = "PostgreSql",
+                ["ConnectionStrings:HelpdeskDb"] = "Host=127.0.0.1;Port=1;Database=rateldesk;Username=operator;Password=not-used;Timeout=1;Command Timeout=1;Pooling=false",
+                ["DataProtection:KeyRingPath"] = Path.Combine(directory, "keys")
+            }).Build();
+
+            Assert.Null(await LocalAdminRecoveryCommand.GenerateActivationTokenAsync(configuration, "admin@example.test"));
         }
         finally
         {
@@ -634,5 +721,16 @@ public sealed class BootstrapStateStoreTests
         public string? TenantId { get; set; }
         public string? UserId => null;
         public bool IsHelpdeskAdmin => true;
+    }
+
+    private static ServiceProvider CreateRecoveryServiceProvider(IConfiguration configuration)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDataProtection()
+            .PersistKeysToFileSystem(new DirectoryInfo(configuration["DataProtection:KeyRingPath"]!))
+            .SetApplicationName(configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring");
+        services.AddHelpdeskInfrastructure(configuration);
+        return services.BuildServiceProvider();
     }
 }
