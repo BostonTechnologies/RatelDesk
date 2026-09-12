@@ -110,6 +110,26 @@ public sealed class DatasetEndpointsAuthorizationTests
         Assert.Equal("org-other", dataset!.OrganizationId);
     }
 
+    [Fact]
+    public async Task ClientAdmin_CannotAccess_SelfService_Dataset_Options()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("ClientAdmin");
+
+        var response = await harness.Client.GetAsync("/api/v1/self-service/datasets/alpha-custom/options?page=1&pageSize=25");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SelfServiceUser_CanAccess_Its_Tenant_Dataset_Options()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("SelfService");
+
+        var response = await harness.Client.GetAsync("/api/v1/self-service/datasets/alpha-custom/options?page=1&pageSize=25");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     private sealed class DatasetEndpointsHarness : IDisposable
     {
         private readonly WebApplication _app;
@@ -129,6 +149,7 @@ public sealed class DatasetEndpointsAuthorizationTests
             builder.Services.AddSingleton<IDataManagementService, FakeDataManagementService>();
             builder.Services.AddSingleton<ICurrentUserAccessService, TestCurrentUserAccessService>();
             builder.Services.AddSingleton<IGraphDatasetSyncScheduleService, NoopGraphDatasetSyncScheduleService>();
+            builder.Services.AddSingleton<ITenantContext>(new TestTenantContext("org-alpha", "self-service", false));
             builder.Services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = "Test";
@@ -141,6 +162,12 @@ public sealed class DatasetEndpointsAuthorizationTests
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
                     policy.RequireRole(HelpdeskPermissions.HelpdeskAdmin, HelpdeskPermissions.DataManagementAdmin);
+                });
+                options.AddPolicy(HelpdeskPermissions.SelfServiceUser, policy =>
+                {
+                    policy.AddAuthenticationSchemes("Test");
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireRole(HelpdeskPermissions.SelfServiceUser, HelpdeskPermissions.HelpdeskAdmin);
                 });
             });
 
@@ -172,21 +199,30 @@ public sealed class DatasetEndpointsAuthorizationTests
             }
 
             var actor = header.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "ClientAdmin";
-            Claim[] claims = actor == "Admin"
-                ?
+            Claim[] claims = actor switch
+            {
+                "Admin" =>
                 [
                     new Claim(ClaimTypes.NameIdentifier, "admin"),
                     new Claim(ClaimTypes.Role, HelpdeskPermissions.HelpdeskAdmin),
                     new Claim("roles", HelpdeskPermissions.HelpdeskAdmin)
-                ]
-                :
+                ],
+                "SelfService" =>
+                [
+                    new Claim(ClaimTypes.NameIdentifier, "self-service"),
+                    new Claim("tenant_id", "org-alpha"),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.SelfServiceUser),
+                    new Claim("roles", HelpdeskPermissions.SelfServiceUser)
+                ],
+                _ =>
                 [
                     new Claim(ClaimTypes.NameIdentifier, "client-admin"),
                     new Claim("tenant_id", "org-alpha"),
                     new Claim(ClaimTypes.Role, HelpdeskPermissions.DataManagementAdmin),
                     new Claim("roles", HelpdeskPermissions.DataManagementAdmin),
                     new Claim("groups", AuthentikRbacGroups.ClientAdmin)
-                ];
+                ]
+            };
 
             var identity = new ClaimsIdentity(claims, Scheme.Name);
             var principal = new ClaimsPrincipal(identity);
@@ -238,6 +274,13 @@ public sealed class DatasetEndpointsAuthorizationTests
         public Task ReconcileAsync(string organizationId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ReconcileAllAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ApplyDiagnosticsAsync(TenantGraphDatasetSettingsDto dto, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class TestTenantContext(string? tenantId, string? userId, bool isHelpdeskAdmin) : ITenantContext
+    {
+        public string? TenantId { get; } = tenantId;
+        public string? UserId { get; } = userId;
+        public bool IsHelpdeskAdmin { get; } = isHelpdeskAdmin;
     }
 
     private sealed class FakeDataManagementService : IDataManagementService

@@ -344,7 +344,7 @@ public static class DatasetEndpoints
 
         var selfService = app.MapGroup("/api/v1/self-service/datasets")
             .WithTags("Self Service")
-            .RequireAuthorization();
+            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
 
         selfService.MapGet("/{datasetId}/options", async (
             string datasetId,
