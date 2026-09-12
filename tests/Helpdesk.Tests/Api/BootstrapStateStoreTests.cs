@@ -819,18 +819,6 @@ public sealed class BootstrapStateStoreTests
             OrganizationId = organization.Id
         };
         established.Customers.Add(customer);
-        established.CustomerAuthLinks.Add(new CustomerAuthLink
-        {
-            CustomerId = customer.Id,
-            AuthProviderType = "Oidc",
-            OidcIssuer = "https://id.example.test",
-            OidcSubject = "established-subject",
-            AuthentikUserId = "established-provider-user",
-            AuthentikUsername = "established.customer",
-            AuthentikEmail = customer.Email,
-            InviteStatus = CustomerInviteStatus.Active,
-            InviteAcceptedAtUtc = DateTimeOffset.UtcNow
-        });
         established.Users.Add(new User
         {
             Name = "Established administrator",
@@ -839,6 +827,16 @@ public sealed class BootstrapStateStoreTests
             Role = "HelpdeskAdmin"
         });
         await established.SaveChangesAsync();
+        var legacyLinkId = Guid.NewGuid().ToString("N");
+        var inviteAcceptedAtUtc = DateTimeOffset.UtcNow;
+        await established.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "CustomerAuthLinks" (
+                "Id", "CustomerId", "AuthProviderType", "OidcIssuer", "OidcSubject",
+                "AuthentikUserId", "AuthentikUsername", "AuthentikEmail", "InviteStatus", "InviteAcceptedAtUtc")
+            VALUES (
+                {legacyLinkId}, {customer.Id}, {"Oidc"}, {"https://id.example.test"}, {"established-subject"},
+                {"established-provider-user"}, {"established.customer"}, {customer.Email}, {(int)CustomerInviteStatus.Active}, {inviteAcceptedAtUtc});
+            """);
 
         await establishedMigrator.MigrateAsync();
         Assert.Equal(LegacyInstallationAdoptionResult.Adopted,

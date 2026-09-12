@@ -1286,8 +1286,9 @@ public sealed class LiveHistoryFilteringEndpointsTests
                 OrganizationId = "org-1",
                 RoleKey = ScopedRoleCatalog.SelfServiceUser
             });
+            AddSelfServiceCustomerAccess(db);
         });
-        await SeedRelationIncidentsAsync(harness, "self-service@example.com");
+        await SeedRelationIncidentsAsync(harness, "self-service@example.com", SelfServiceCustomerId);
         await harness.SeedAsync(db => db.TicketRelations.Add(new TicketRelation
         {
             SourceTicketId = "inc-source",
@@ -1361,8 +1362,9 @@ public sealed class LiveHistoryFilteringEndpointsTests
                 new Organization { Id = "org-2", Name = "Organization Two" });
             db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
             db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            AddSelfServiceCustomerAccess(db);
             db.Incidents.AddRange(
-                new Incident { Id = "inc-self-service-detail", TrackingId = "INC-SELF-DETAIL", Title = "Self-service incident", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Incident { Id = "inc-self-service-detail", TrackingId = "INC-SELF-DETAIL", Title = "Self-service incident", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
                 new Incident { Id = "inc-foreign-detail", TrackingId = "INC-FOREIGN-DETAIL", Title = "Foreign incident", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
         });
         harness.UseRole("SelfService");
@@ -1385,14 +1387,15 @@ public sealed class LiveHistoryFilteringEndpointsTests
                 new Organization { Id = "org-2", Name = "Organization Two" });
             db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
             db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            AddSelfServiceCustomerAccess(db);
             db.Incidents.AddRange(
-                new Incident { Id = "inc-list-own", TrackingId = "INC-LIST-OWN", Title = "Own incident", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Incident { Id = "inc-list-own", TrackingId = "INC-LIST-OWN", Title = "Own incident", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
                 new Incident { Id = "inc-list-foreign", TrackingId = "INC-LIST-FOREIGN", Title = "Foreign incident", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
             db.Requests.AddRange(
-                new Request { Id = "req-list-own", TrackingId = "REQ-LIST-OWN", Title = "Own request", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Request { Id = "req-list-own", TrackingId = "REQ-LIST-OWN", Title = "Own request", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
                 new Request { Id = "req-list-foreign", TrackingId = "REQ-LIST-FOREIGN", Title = "Foreign request", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
             db.Changes.AddRange(
-                new Change { Id = "chg-list-own", TrackingId = "CHG-LIST-OWN", Title = "Own change", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Change { Id = "chg-list-own", TrackingId = "CHG-LIST-OWN", Title = "Own change", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
                 new Change { Id = "chg-list-foreign", TrackingId = "CHG-LIST-FOREIGN", Title = "Foreign change", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
         });
         harness.UseRole("SelfService");
@@ -1449,8 +1452,9 @@ public sealed class LiveHistoryFilteringEndpointsTests
                 new Organization { Id = "org-2", Name = "Organization Two" });
             db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
             db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            AddSelfServiceCustomerAccess(db);
             db.Requests.AddRange(
-                new Request { Id = "req-self-service-tasks", TrackingId = "REQ-SELF-TASKS", Title = "Self-service request", OrganizationId = "org-1", RequesterEmail = "self-service@example.com" },
+                new Request { Id = "req-self-service-tasks", TrackingId = "REQ-SELF-TASKS", Title = "Self-service request", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
                 new Request { Id = "req-foreign-tasks", TrackingId = "REQ-FOREIGN-TASKS", Title = "Foreign request", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
         });
         harness.UseRole("SelfService");
@@ -1493,9 +1497,31 @@ public sealed class LiveHistoryFilteringEndpointsTests
         });
     }
 
+    private const string SelfServiceCustomerId = "customer-self-service-1";
+
+    private static void AddSelfServiceCustomerAccess(HelpdeskDbContext db)
+    {
+        db.Customers.Add(new Customer
+        {
+            Id = SelfServiceCustomerId,
+            Name = "Self-service customer",
+            Email = "self-service@example.com",
+            OrganizationId = "org-1"
+        });
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = SelfServiceCustomerId,
+            AuthProviderType = "Local",
+            LocalAccountId = "self-service-1",
+            InviteStatus = CustomerInviteStatus.Active,
+            InviteAcceptedAtUtc = DateTimeOffset.UtcNow
+        });
+    }
+
     private static async Task SeedRelationIncidentsAsync(
         LiveHistoryFilteringHarness harness,
-        string sourceRequesterEmail = "source-requester@example.com")
+        string sourceRequesterEmail = "source-requester@example.com",
+        string? sourceCustomerId = null)
     {
         await harness.SeedAsync(db =>
         {
@@ -1508,6 +1534,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
                     State = TicketState.InProgress,
                     Priority = TicketPriority.Medium,
                     OrganizationId = "org-1",
+                    CustomerId = sourceCustomerId,
                     RequesterEmail = sourceRequesterEmail,
                     CcRecipients = ["source-cc@example.com", "existing@example.com", "TARGET-REQUESTER@example.com"]
                 },
