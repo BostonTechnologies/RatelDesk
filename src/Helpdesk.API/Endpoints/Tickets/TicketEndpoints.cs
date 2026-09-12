@@ -863,7 +863,7 @@ public static class TicketEndpoints
             return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
         }
 
-        var ticket = await db.Tickets.AsNoTracking()
+        var ticket = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
             .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, cancellationToken);
         if (ticket is null)
         {
@@ -894,7 +894,7 @@ public static class TicketEndpoints
         HelpdeskDbContext db,
         CancellationToken cancellationToken)
     {
-        var ticket = await db.Tickets.AsNoTracking()
+        var ticket = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
             .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, cancellationToken);
         if (ticket is null)
         {
