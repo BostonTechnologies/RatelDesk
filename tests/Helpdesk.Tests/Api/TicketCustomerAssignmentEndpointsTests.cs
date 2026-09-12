@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Helpdesk.API.Endpoints.Tickets;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Authentication;
@@ -54,6 +55,22 @@ public sealed class TicketCustomerAssignmentEndpointsTests
         response.EnsureSuccessStatusCode();
         var ticket = await harness.GetTicketAsync("incidents", "incident-1");
         Assert.Equal("customer-1", ticket!.CustomerId);
+    }
+
+    [Fact]
+    public async Task CustomerAssignment_RejectsTechnicianOutsideTheirTenantScope()
+    {
+        await using var harness = await TicketCustomerAssignmentHarness.CreateAsync(role: "Technician");
+        await harness.SeedTicketAsync("incidents", "incident-1", "org-2");
+        await harness.SeedCustomerAsync("customer-1", "org-2", "Other Tenant User", "other-tenant@example.com");
+
+        var response = await harness.Client.PostAsJsonAsync(
+            "/api/v1/incidents/incident-1/customer",
+            new { CustomerId = "customer-1" });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var ticket = await harness.GetTicketAsync("incidents", "incident-1");
+        Assert.Null(ticket!.CustomerId);
     }
 
     [Fact]
@@ -145,6 +162,7 @@ public sealed class TicketCustomerAssignmentEndpointsTests
             builder.Services.AddSingleton<IRepository<TicketRequest>>(requests);
             builder.Services.AddSingleton<IRepository<Change>>(changes);
             builder.Services.AddSingleton<IRepository<Customer>>(customers);
+            builder.Services.AddSingleton<ICurrentUserAccessService, TestUserAccessService>();
             builder.Services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = "Test";
@@ -250,6 +268,44 @@ public sealed class TicketCustomerAssignmentEndpointsTests
             var principal = new ClaimsPrincipal(identity);
             var ticket = new AuthenticationTicket(principal, Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(ticket));
+        }
+    }
+
+    private sealed class TestUserAccessService : ICurrentUserAccessService
+    {
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
+        {
+            if (user.IsInRole(HelpdeskPermissions.HelpdeskAdmin))
+            {
+                return Task.FromResult(new CurrentUserAccessProfile(
+                    true,
+                    "Test",
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+            }
+
+            var permissions = user.IsInRole("Technician")
+                ? HelpdeskPermissions.TechnicalBundle.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return Task.FromResult(new CurrentUserAccessProfile(
+                true,
+                "Test",
+                null,
+                "org-1",
+                null,
+                null,
+                false,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { HelpdeskRoleBundles.Technical },
+                permissions,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "org-1" },
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
         }
     }
 }

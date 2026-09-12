@@ -795,17 +795,20 @@ public static class TicketEndpoints
             [FromServices] IRepository<TicketRequest> requests,
             [FromServices] IRepository<Change> changes,
             [FromServices] IRepository<Customer> customers,
-            ClaimsPrincipal user) =>
+            ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
         {
-            if (!IsTechnicianOrAdmin(user))
-            {
-                return Results.Forbid();
-            }
-
             var ticket = await GetTicketAsync(ticketType, ticketId, incidents, requests, changes);
             if (ticket is null)
             {
                 return Results.Problem("Ticket not found", statusCode: 404);
+            }
+
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticket, user, accessService, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
             }
 
             if (!string.IsNullOrWhiteSpace(ticket.CustomerId))
@@ -898,6 +901,15 @@ public static class TicketEndpoints
             return Results.NotFound();
         }
 
+        return await AuthorizeTicketManageAsync(ticket, user, accessService, cancellationToken);
+    }
+
+    private static async Task<IResult?> AuthorizeTicketManageAsync(
+        Ticket ticket,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        CancellationToken cancellationToken)
+    {
         var access = await accessService.ResolveAsync(user, cancellationToken);
         var canManage = ticket switch
         {
@@ -908,14 +920,6 @@ public static class TicketEndpoints
         };
         return canManage ? null : Results.Forbid();
     }
-
-    private static bool IsTechnicianOrAdmin(ClaimsPrincipal user) =>
-        user.IsInRole("HelpdeskAdmin") ||
-        user.IsInRole("Technician") ||
-        user.Claims.Any(c =>
-            (c.Type == ClaimTypes.Role || c.Type == "roles") &&
-            (string.Equals(c.Value, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(c.Value, "Technician", StringComparison.OrdinalIgnoreCase)));
 
     private static async Task<Ticket?> GetTicketAsync(
         string ticketType,
