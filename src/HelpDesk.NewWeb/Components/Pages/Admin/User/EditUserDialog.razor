@@ -10,12 +10,14 @@
         </MudText>
     </TitleContent>
     <DialogContent>
-        @if (isLocalAccount)
+        @if (hasScopedRoleAssignments)
         {
             <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
                 @(isInstanceAdministrator
                     ? "This account is an instance administrator. Its access is not limited by tenant-scoped roles."
-                    : "Local account access is granted per organization. Credentials and instance-administrator access are managed separately.")
+                    : isLocalAccount
+                        ? "Local account access is granted per organization. Credentials and instance-administrator access are managed separately."
+                        : "External identity access is granted per organization after its verified identity is linked to this application user.")
             </MudAlert>
             @if (!isInstanceAdministrator && !string.IsNullOrWhiteSpace(error))
             {
@@ -88,9 +90,9 @@
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        @if (!isLocalAccount || !isInstanceAdministrator)
+        @if (!hasScopedRoleAssignments || !isInstanceAdministrator)
         {
-            <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">@(isLocalAccount ? "Save access" : "Save")</MudButton>
+            <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">@(hasScopedRoleAssignments ? "Save access" : "Save")</MudButton>
         }
     </DialogActions>
 </MudDialog>
@@ -105,6 +107,7 @@
     private List<OrganizationDto> organizations = new();
     private List<LocalScopedRoleAssignment> assignments = new();
     private List<RoleDefinition> roleDefinitions = new();
+    private bool hasScopedRoleAssignments;
     private bool isLocalAccount;
     private bool isInstanceAdministrator;
     private string newRoleKey = "SelfServiceUser";
@@ -132,7 +135,8 @@
         {
             var response = await assignmentResponse.Content.ReadFromJsonAsync<LocalScopedRoleAssignmentsResponse>();
             assignments = response?.Assignments.ToList() ?? new();
-            isLocalAccount = true;
+            hasScopedRoleAssignments = true;
+            isLocalAccount = response?.IsLocalAccount == true;
             isInstanceAdministrator = response?.IsInstanceAdministrator == true;
             newOrganizationId = organizations.FirstOrDefault()?.Id;
             var roleResponse = await HelpdeskApi.GetAsync("api/v1/admin/role-definitions/");
@@ -147,11 +151,11 @@
     private async Task Submit()
     {
         error = null;
-        if (isLocalAccount)
+        if (hasScopedRoleAssignments)
         {
             if (assignments.Count == 0)
             {
-                error = "A local account must retain at least one scoped role.";
+                error = "An application user must retain at least one scoped role.";
                 return;
             }
 
@@ -239,7 +243,8 @@
 
     private sealed record LocalScopedRoleAssignmentsResponse(
         IReadOnlyList<LocalScopedRoleAssignment> Assignments,
-        bool IsInstanceAdministrator = false);
+        bool IsInstanceAdministrator = false,
+        bool IsLocalAccount = false);
 
     private sealed record ReplaceLocalScopedRoleAssignmentsRequest(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
 

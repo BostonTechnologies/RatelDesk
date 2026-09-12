@@ -58,7 +58,6 @@ public static class UserEndpoints
 
         app.MapPost("/api/v1/users/provision", async (
             ClaimsPrincipal principal,
-            [FromServices] IRepository<User> repo,
             [FromServices] HelpdeskDbContext db,
             [FromServices] ICurrentUserAccessService accessService) =>
         {
@@ -78,26 +77,29 @@ public static class UserEndpoints
                 });
             }
 
-            var all = await repo.GetAllAsync();
-            var existing = all.FirstOrDefault(u =>
-                string.Equals(u.Email, email, StringComparison.OrdinalIgnoreCase));
-
-            if (existing is not null)
+            var link = await FindCustomerLoginAsync(issuer, subject, authentikUserId, db);
+            if (link is null)
             {
-                await LinkCustomerLoginAsync(issuer, subject, authentikUserId, preferredUsername, email, db);
-                return Results.Ok(ToAccessDto(await accessService.ResolveAsync(principal)));
+                return Results.Forbid();
             }
 
-            var user = new User
+            var hasLinkedDomainUser = !string.IsNullOrWhiteSpace(link.DomainUserId) &&
+                                      await db.Users.AnyAsync(user => user.Id == link.DomainUserId);
+            if (!hasLinkedDomainUser)
             {
-                Id = Uuid.CreateVersion7().ToString(),
-                Name = principal.Identity?.Name ?? FirstClaim(principal, "name") ?? email,
-                Email = email,
-                Role = "Customer"
-            };
+                var user = new User
+                {
+                    Id = Uuid.CreateVersion7().ToString(),
+                    Name = principal.Identity?.Name ?? FirstClaim(principal, "name") ?? email,
+                    Email = email,
+                    Role = "Customer"
+                };
+                db.Users.Add(user);
+                link.DomainUserId = user.Id;
+            }
 
-            await repo.CreateAsync(user);
-            await LinkCustomerLoginAsync(issuer, subject, authentikUserId, preferredUsername, email, db);
+            UpdateCustomerLogin(link, issuer, subject, authentikUserId, preferredUsername, email);
+            await db.SaveChangesAsync();
             return Results.Ok(ToAccessDto(await accessService.ResolveAsync(principal)));
         })
         .RequireAuthorization()
@@ -150,12 +152,12 @@ public static class UserEndpoints
             access.Permissions.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray())
-        {
-            ScopedPermissionGrants = access.ScopedPermissionGrants
+    {
+        ScopedPermissionGrants = access.ScopedPermissionGrants
                 .OrderBy(grant => grant.OrganizationId, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(grant => grant.Permission, StringComparer.OrdinalIgnoreCase)
                 .ToArray()
-        };
+    };
 
     private static string? FirstClaim(ClaimsPrincipal principal, params string[] claimTypes)
     {
@@ -171,12 +173,10 @@ public static class UserEndpoints
         return null;
     }
 
-    private static async Task LinkCustomerLoginAsync(
+    private static async Task<CustomerAuthLink?> FindCustomerLoginAsync(
         string? issuer,
         string? subject,
         string? authentikUserId,
-        string? preferredUsername,
-        string email,
         HelpdeskDbContext db)
     {
         CustomerAuthLink? link = null;
@@ -192,9 +192,20 @@ public static class UserEndpoints
 
         if (link is null)
         {
-            return;
+            return null;
         }
 
+        return link;
+    }
+
+    private static void UpdateCustomerLogin(
+        CustomerAuthLink link,
+        string? issuer,
+        string? subject,
+        string? authentikUserId,
+        string? preferredUsername,
+        string email)
+    {
         link.OidcIssuer ??= issuer;
         link.OidcSubject ??= subject;
         link.AuthentikUserId ??= authentikUserId;
@@ -207,6 +218,5 @@ public static class UserEndpoints
             link.InviteAcceptedAtUtc ??= DateTimeOffset.UtcNow;
         }
 
-        await db.SaveChangesAsync();
     }
 }

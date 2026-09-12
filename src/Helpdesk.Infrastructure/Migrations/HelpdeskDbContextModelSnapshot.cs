@@ -1014,6 +1014,10 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                     b.Property<string>("DisabledByUserId")
                         .HasColumnType("text");
 
+                    b.Property<string>("DomainUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<DateTimeOffset?>("InviteAcceptedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -1055,6 +1059,9 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                     b.HasIndex("AuthentikUserId");
 
                     b.HasIndex("CustomerId");
+
+                    b.HasIndex("DomainUserId")
+                        .IsUnique();
 
                     b.HasIndex("LocalAccountId")
                         .IsUnique();

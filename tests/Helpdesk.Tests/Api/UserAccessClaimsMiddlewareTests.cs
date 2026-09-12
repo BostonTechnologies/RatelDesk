@@ -19,7 +19,9 @@ public sealed class UserAccessClaimsMiddlewareTests
                     new Claim("organization_id", "attacker-org"),
                     new Claim("allowed_organization_id", "attacker-org"),
                     new Claim("customer_id", "attacker-customer"),
-                    new Claim("scoped_permission", $"{HelpdeskPermissions.IncidentManager}|attacker-org")
+                    new Claim("scoped_permission", $"{HelpdeskPermissions.IncidentManager}|attacker-org"),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.ChangeManager),
+                    new Claim("roles", HelpdeskPermissions.ChangeManager)
                 ],
                 "Test"))
         };
@@ -53,6 +55,8 @@ public sealed class UserAccessClaimsMiddlewareTests
         Assert.Contains(context.User.Claims, claim => claim.Type == "scoped_permission" &&
             claim.Value == $"{HelpdeskPermissions.IncidentManager}|server-org");
         Assert.DoesNotContain(context.User.Claims, claim => claim.Value.StartsWith("attacker-", StringComparison.Ordinal));
+        Assert.DoesNotContain(context.User.Claims, claim =>
+            claim.Value == HelpdeskPermissions.ChangeManager);
     }
 
     private sealed class RecordingAccessService(CurrentUserAccessProfile profile) : ICurrentUserAccessService

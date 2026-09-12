@@ -273,8 +273,7 @@ public static class LocalAuthenticationEndpoints
             CancellationToken cancellationToken) =>
         {
             var account = await users.FindByIdAsync(userId);
-            if (account is null ||
-                !await db.Users.AnyAsync(user => user.Id == userId, cancellationToken))
+            if (!await db.Users.AnyAsync(user => user.Id == userId, cancellationToken))
             {
                 return Results.NotFound();
             }
@@ -285,7 +284,10 @@ public static class LocalAuthenticationEndpoints
                 .ThenBy(assignment => assignment.RoleKey)
                 .Select(assignment => new LocalScopedRoleAssignment(assignment.RoleKey, assignment.OrganizationId))
                 .ToListAsync(cancellationToken);
-            return Results.Ok(new LocalScopedRoleAssignmentsResponse(assignments, account.IsInstanceAdministrator));
+            return Results.Ok(new LocalScopedRoleAssignmentsResponse(
+                assignments,
+                account?.IsInstanceAdministrator == true,
+                account is not null));
         })
         .RequireAuthorization("HelpdeskAdmin");
 
@@ -298,12 +300,12 @@ public static class LocalAuthenticationEndpoints
         {
             var account = await users.FindByIdAsync(userId);
             var domainUser = await db.Users.SingleOrDefaultAsync(user => user.Id == userId, cancellationToken);
-            if (account is null || domainUser is null)
+            if (domainUser is null)
             {
                 return Results.NotFound();
             }
 
-            if (account.IsInstanceAdministrator)
+            if (account?.IsInstanceAdministrator == true)
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
@@ -385,11 +387,14 @@ public static class LocalAuthenticationEndpoints
             }));
             await db.SaveChangesAsync(cancellationToken);
 
-            account.AuthorizationRevision++;
-            var update = await users.UpdateAsync(account);
-            if (!update.Succeeded)
+            if (account is not null)
             {
-                return Results.Problem("The local role assignments were saved, but the account authorization revision could not be updated.", statusCode: StatusCodes.Status409Conflict);
+                account.AuthorizationRevision++;
+                var update = await users.UpdateAsync(account);
+                if (!update.Succeeded)
+                {
+                    return Results.Problem("The local role assignments were saved, but the account authorization revision could not be updated.", statusCode: StatusCodes.Status409Conflict);
+                }
             }
 
             return Results.NoContent();
@@ -592,7 +597,8 @@ public static class LocalAuthenticationEndpoints
 
     public sealed record LocalScopedRoleAssignmentsResponse(
         IReadOnlyList<LocalScopedRoleAssignment> Assignments,
-        bool IsInstanceAdministrator = false);
+        bool IsInstanceAdministrator = false,
+        bool IsLocalAccount = false);
 
     public sealed record ReplaceLocalScopedRoleAssignmentsRequest(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
 

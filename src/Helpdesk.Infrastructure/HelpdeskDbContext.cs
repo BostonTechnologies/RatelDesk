@@ -593,11 +593,13 @@ public class HelpdeskDbContext(
             entity.Property(x => x.OidcIssuer).HasMaxLength(512);
             entity.Property(x => x.OidcSubject).HasMaxLength(256);
             entity.Property(x => x.LocalAccountId).HasMaxLength(128);
+            entity.Property(x => x.DomainUserId).HasMaxLength(128);
             entity.Property(x => x.AuthentikUserId).HasMaxLength(64);
             entity.Property(x => x.AuthentikUsername).HasMaxLength(256);
             entity.Property(x => x.AuthentikEmail).HasMaxLength(254);
             entity.HasIndex(x => x.CustomerId);
             entity.HasIndex(x => x.LocalAccountId).IsUnique();
+            entity.HasIndex(x => x.DomainUserId).IsUnique();
             entity.HasIndex(x => x.AuthentikUserId);
             entity.HasIndex(x => new { x.OidcIssuer, x.OidcSubject }).IsUnique();
             entity.HasIndex(x => new { x.InviteStatus, x.InviteSentAtUtc });

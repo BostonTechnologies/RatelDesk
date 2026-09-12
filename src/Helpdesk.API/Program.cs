@@ -608,8 +608,7 @@ builder.Services.AddAuthentication(options =>
             {
                 if (roleMappings.TryGetValue(value, out var mappedRole) && !string.IsNullOrWhiteSpace(mappedRole))
                 {
-                    identity.AddClaim(new Claim("roles", mappedRole));
-                    identity.AddClaim(new Claim(ClaimTypes.Role, mappedRole));
+                    identity.AddClaim(new Claim("provider_role", mappedRole));
                 }
             }
 

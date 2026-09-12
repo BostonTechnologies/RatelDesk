@@ -44,11 +44,17 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
             }
         }
 
-        var groups = ClaimValues(user, "groups", ClaimTypes.Role, "roles").ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var groups = ClaimValues(user, "groups", "provider_role").ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var issuer = FirstClaim(user, "iss")?.TrimEnd('/');
+        if (IsApplicationRoleClaimSource(user) || string.IsNullOrWhiteSpace(issuer))
+        {
+            groups.UnionWith(ClaimValues(user, ClaimTypes.Role, "roles"));
+        }
         var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var bundles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var scopedPermissionGrants = new HashSet<ScopedPermissionGrant>();
-        var isAdmin = IsAdmin(user, groups);
+        var isAdmin = groups.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
+                      groups.Contains(AuthentikRbacGroups.HelpdeskAdmin);
 
         if (isAdmin)
         {
@@ -73,7 +79,6 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
         }
 
         var email = FirstClaim(user, ClaimTypes.Email, "email", "preferred_username");
-        var issuer = FirstClaim(user, "iss")?.TrimEnd('/');
         var subject = FirstClaim(user, "sub");
         var authentikUserId = FirstClaim(user, "authentik_user_id", "ak_user_id");
 
@@ -90,13 +95,14 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
         }
 
         var hasActiveCustomer = customer?.IsEnabled == true && organization?.IsEnabled == true;
-        var localDomainUser = string.IsNullOrWhiteSpace(localAccountId)
+        var domainUserId = localAccountId ?? link?.DomainUserId;
+        var domainUser = string.IsNullOrWhiteSpace(domainUserId)
             ? null
-            : await _db.Users.AsNoTracking().FirstOrDefaultAsync(domainUser => domainUser.Id == localAccountId, ct);
-        var localOrganization = localDomainUser is null || string.IsNullOrWhiteSpace(localDomainUser.OrganizationId)
+            : await _db.Users.AsNoTracking().FirstOrDefaultAsync(domainUser => domainUser.Id == domainUserId, ct);
+        var domainUserOrganization = domainUser is null || string.IsNullOrWhiteSpace(domainUser.OrganizationId)
             ? null
-            : await _db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == localDomainUser.OrganizationId, ct);
-        var hasActiveLocalDomainUser = localDomainUser is not null && localOrganization?.IsEnabled == true;
+            : await _db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == domainUser.OrganizationId, ct);
+        var hasActiveDomainUser = domainUser is not null && domainUserOrganization?.IsEnabled == true;
         if (hasActiveCustomer)
         {
             bundles.Add(HelpdeskRoleBundles.User);
@@ -114,13 +120,13 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
                 }
             }
         }
-        if (hasActiveLocalDomainUser)
+        if (hasActiveDomainUser)
         {
             var assignments = await (
                     from assignment in _db.ScopedRoleAssignments.AsNoTracking()
                     join assignmentOrganization in _db.Organizations.AsNoTracking()
                         on assignment.OrganizationId equals assignmentOrganization.Id
-                    where assignment.UserId == localDomainUser!.Id && assignmentOrganization.IsEnabled
+                    where assignment.UserId == domainUser!.Id && assignmentOrganization.IsEnabled
                     select assignment)
                 .ToListAsync(ct);
 
@@ -158,14 +164,14 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
 
             if (assignments.Count == 0)
             {
-                AddLocalRoleBundle(localDomainUser.Role, bundles, permissions);
+                AddLocalRoleBundle(domainUser.Role, bundles, permissions);
             }
         }
 
         var primaryOrganizationId = hasActiveCustomer
             ? customer!.OrganizationId
-            : hasActiveLocalDomainUser
-                ? localDomainUser!.OrganizationId
+            : hasActiveDomainUser
+                ? domainUser!.OrganizationId
                 : null;
         var allowedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var managedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -199,7 +205,7 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
             Name: user.Identity?.Name ?? FirstClaim(user, "name", "preferred_username") ?? email,
             Email: email,
             PrimaryOrganizationId: primaryOrganizationId,
-            PrimaryOrganizationName: organization?.Name ?? localOrganization?.Name,
+            PrimaryOrganizationName: organization?.Name ?? domainUserOrganization?.Name,
             CustomerId: hasActiveCustomer ? customer!.Id : null,
             IsHelpdeskAdmin: isAdmin,
             RoleBundles: bundles,
@@ -242,13 +248,13 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
         return null;
     }
 
-    private static bool IsAdmin(ClaimsPrincipal user, HashSet<string> groups) =>
-        user.IsInRole(HelpdeskPermissions.HelpdeskAdmin) ||
-        groups.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
-        groups.Contains(AuthentikRbacGroups.HelpdeskAdmin);
-
     private static bool IsLocalAccount(ClaimsPrincipal user) =>
         string.Equals(user.FindFirstValue("auth_mode"), "local", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsApplicationRoleClaimSource(ClaimsPrincipal user) =>
+        IsLocalAccount(user) ||
+        string.Equals(user.FindFirstValue("auth_mode"), "ai_agent", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(user.FindFirstValue("auth_mode"), "system", StringComparison.OrdinalIgnoreCase);
 
     private static void AddLocalRoleBundle(
         string role,

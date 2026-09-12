@@ -325,6 +325,44 @@ public class CurrentUserAccessServiceTests
     }
 
     [Fact]
+    public async Task External_identity_uses_its_verified_link_for_scoped_custom_role_grants()
+    {
+        await using var db = CreateDb();
+        db.Organizations.Add(new Organization { Id = "org-a", Name = "Organization A" });
+        db.Customers.Add(new Customer { Id = "customer-a", Name = "External user", Email = "shared@example.test", OrganizationId = "org-a" });
+        db.Users.Add(new User { Id = "external-domain-user", Name = "External user", Email = "shared@example.test", OrganizationId = "org-a", Role = "Customer" });
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = "customer-a",
+            DomainUserId = "external-domain-user",
+            OidcIssuer = "https://id.example.com/application/o/rateldesk",
+            OidcSubject = "external-subject",
+            InviteStatus = CustomerInviteStatus.Active
+        });
+        db.Roles.Add(new Role
+        {
+            Id = "custom-external-reader",
+            Key = "custom.external-reader",
+            Name = "External incident reader",
+            Scope = RoleScopeKind.Tenant,
+            OwnerOrganizationId = "org-a",
+            Permissions = [new RolePermission { Permission = HelpdeskPermissions.IncidentUser }]
+        });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "external-domain-user",
+            OrganizationId = "org-a",
+            RoleKey = "custom.external-reader"
+        });
+        await db.SaveChangesAsync();
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(User("different-profile-email@example.test", "external-subject"));
+
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-a"));
+        Assert.Equal("customer-a", access.CustomerId);
+    }
+
+    [Fact]
     public async Task Protected_built_in_role_definitions_seed_idempotently()
     {
         await using var db = CreateDb();
