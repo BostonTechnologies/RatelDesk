@@ -41,7 +41,7 @@ Complete `/setup` with host `postgres`, port `5432`, database/user `rateldesk`, 
 
 ### External PostgreSQL
 
-Select PostgreSQL at `/setup` and provide the host, port, database, username, password, and TLS preference. RatelDesk tests the connection with bounded timeouts and refuses a non-empty database that does not contain RatelDesk migration history. The setup principal must be able to apply the existing migrations but does not need superuser access; ensure an administrator has installed the required extensions before setup. Deployment-managed `ConnectionStrings__HelpdeskDb` remains the compatibility path for established installations.
+Select PostgreSQL at `/setup` and provide the host, port, database, username, password, and TLS preference. RatelDesk tests the connection with bounded timeouts and accepts only an empty target. It identifies a historical RatelDesk schema separately from an unrelated non-empty database, but refuses setup for both so an existing installation cannot be modified by a first-run session. The setup principal must be able to apply the existing migrations but does not need superuser access; ensure an administrator has installed the required extensions before setup. Deployment-managed `ConnectionStrings__HelpdeskDb` remains the compatibility path for established installations.
 
 ## Reverse proxy and Traefik
 

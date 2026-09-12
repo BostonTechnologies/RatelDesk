@@ -23,6 +23,34 @@ public sealed class BootstrapStateStoreTests
         Assert.Contains("connection string", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(true, true, 0, false, false, false, false, PostgreSqlTargetKind.Empty, true)]
+    [InlineData(true, true, 4, true, true, true, true, PostgreSqlTargetKind.EstablishedRatelDesk, false)]
+    [InlineData(true, true, 1, false, false, false, false, PostgreSqlTargetKind.UnrelatedOrUnrecognized, false)]
+    public void PostgreSql_preflight_classifies_empty_established_and_unrelated_targets(
+        bool hasVector,
+        bool hasTrigram,
+        long publicTableCount,
+        bool hasMigrationHistory,
+        bool hasOrganizationsTable,
+        bool hasUsersTable,
+        bool hasInitialRatelDeskMigration,
+        PostgreSqlTargetKind expectedTarget,
+        bool expectedSuccess)
+    {
+        var result = PostgreSqlSetupPreflightService.Classify(
+            hasVector,
+            hasTrigram,
+            publicTableCount,
+            hasMigrationHistory,
+            hasOrganizationsTable,
+            hasUsersTable,
+            hasInitialRatelDeskMigration);
+
+        Assert.Equal(expectedSuccess, result.Succeeded);
+        Assert.Equal(expectedTarget, result.Target);
+    }
+
     [Fact]
     public async Task Local_admin_recovery_does_not_create_a_missing_sqlite_database()
     {
