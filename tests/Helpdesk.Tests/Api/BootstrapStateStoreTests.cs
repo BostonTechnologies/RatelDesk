@@ -378,6 +378,75 @@ public sealed class BootstrapStateStoreTests
         }
     }
 
+    [Fact]
+    public async Task Failed_application_initialization_rolls_back_the_first_identity_principal()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-bootstrap-{Guid.NewGuid():N}");
+        var dataDirectory = Path.Combine(directory, "data");
+        try
+        {
+            var options = new BootstrapOptions
+            {
+                StateDirectory = directory,
+                DataDirectory = dataDirectory,
+                SetupCode = "operator-provided-code"
+            };
+            var store = new FileBootstrapStateStore(options);
+            await store.LoadOrCreateAsync();
+            var configured = await store.UpdateAsync(current => current with
+            {
+                State = BootstrapState.Configuring,
+                Provider = "Sqlite",
+                SqlitePath = Path.Combine(dataDirectory, "rateldesk.db"),
+                OperationId = Guid.NewGuid()
+            });
+            var dataProtection = DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(directory, "keys")));
+            var initializer = new BootstrapInitializationService(store, options, dataProtection);
+            Directory.CreateDirectory(dataDirectory);
+
+            // This existing row is harmless to an unconfigured database but
+            // makes the initializer's branding insert fail after Identity has
+            // attempted its insert.
+            var applicationOptions = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
+                .UseSqlite(
+                    $"Data Source={configured.SqlitePath}",
+                    sqlite => sqlite.MigrationsAssembly("Helpdesk.Infrastructure.SqliteMigrations"))
+                .ConfigureWarnings(warnings => warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
+                .Options;
+            await using (var application = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
+                applicationOptions,
+                new TestTenantContext(),
+                new HttpContextAccessor()))
+            {
+                await application.Database.MigrateAsync();
+                application.InstanceBrandings.Add(new InstanceBranding { Id = 1, ApplicationName = "Existing" });
+                await application.SaveChangesAsync();
+            }
+
+            var result = await initializer.InitializeAsync(configured, new FirstAdministratorRequest(
+                "admin@example.test",
+                "Instance Admin",
+                "correct horse battery staple",
+                "Example Organization",
+                "Example Desk",
+                "https://desk.example.test"), CancellationToken.None);
+
+            Assert.False(result.Succeeded);
+            var identityOptions = new DbContextOptionsBuilder<RatelDeskIdentityDbContext>()
+                .UseSqlite($"Data Source={configured.SqlitePath}")
+                .Options;
+            await using var identity = new RatelDeskIdentityDbContext(identityOptions);
+            Assert.False(await identity.Users.AnyAsync(user => user.Email == "admin@example.test"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
     private sealed class TestTenantContext : Helpdesk.Shared.Services.ITenantContext
     {
         public string? TenantId { get; set; }

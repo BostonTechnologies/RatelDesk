@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore.Storage;
 using System.Reflection;
 
 namespace Helpdesk.API.Bootstrap;
@@ -98,6 +99,14 @@ public sealed class BootstrapInitializationService(
             return BootstrapInitializationResult.AlreadyInitialized;
         }
 
+        // Identity and application data use the same selected physical
+        // database. Share one connection and transaction so a failed domain
+        // write never leaves an orphaned first local account behind.
+        await db.Database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        identityDb.Database.SetDbConnection(db.Database.GetDbConnection(), contextOwnsConnection: false);
+        await identityDb.Database.UseTransactionAsync(transaction.GetDbTransaction(), cancellationToken);
+
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var administrator = new ApplicationUser
         {
@@ -149,9 +158,10 @@ public sealed class BootstrapInitializationService(
         }
         catch (Exception)
         {
-            await userManager.DeleteAsync(administrator);
             return new BootstrapInitializationResult(false, "Initialization could not be completed.", null);
         }
+
+        await transaction.CommitAsync(cancellationToken);
 
         var ready = await stateStore.UpdateAsync(current => current with
         {

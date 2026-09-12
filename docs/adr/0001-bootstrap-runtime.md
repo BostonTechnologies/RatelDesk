@@ -17,7 +17,7 @@ The setup service prepares the selected provider and schema before it accepts
 the first administrator password. It creates the Identity principal first so
 the application database can link that stable principal ID. The organization,
 domain-user link, initialization marker, and branding are then persisted
-together in the application database. The descriptor is activated
+together with that principal in one transaction on the selected database. The descriptor is activated
 only after that marker has committed, using the same operation ID. A restart
 recognizes a matching committed marker and activates the descriptor without
 duplicating the principal or reopening setup.
