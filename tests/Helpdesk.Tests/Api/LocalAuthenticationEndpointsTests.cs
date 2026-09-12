@@ -19,6 +19,10 @@ namespace Helpdesk.Tests.Api;
 public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
 {
     private readonly WebApplicationFactory<Program> _factory;
+    private readonly InMemoryDatabaseRoot _applicationDatabaseRoot = new();
+    private readonly ServiceProvider _applicationDatabaseProvider = new ServiceCollection()
+        .AddEntityFrameworkInMemoryDatabase()
+        .BuildServiceProvider();
     private readonly InMemoryDatabaseRoot _identityDatabaseRoot = new();
     private readonly ServiceProvider _identityDatabaseProvider = new ServiceCollection()
         .AddEntityFrameworkInMemoryDatabase()
@@ -26,7 +30,8 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
 
     public LocalAuthenticationEndpointsTests()
     {
-        var databaseName = $"local-auth-{Guid.NewGuid():N}";
+        var identityDatabaseName = $"local-auth-identity-{Guid.NewGuid():N}";
+        var applicationDatabaseName = $"local-auth-application-{Guid.NewGuid():N}";
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
@@ -39,9 +44,13 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             }));
             builder.ConfigureServices(services =>
             {
+                services.RemoveAll<DbContextOptions<HelpdeskDbContext>>();
+                services.AddDbContext<HelpdeskDbContext>(options => options
+                    .UseInMemoryDatabase(applicationDatabaseName, _applicationDatabaseRoot)
+                    .UseInternalServiceProvider(_applicationDatabaseProvider));
                 services.RemoveAll<DbContextOptions<RatelDeskIdentityDbContext>>();
                 services.AddDbContext<RatelDeskIdentityDbContext>(options => options
-                    .UseInMemoryDatabase(databaseName, _identityDatabaseRoot)
+                    .UseInMemoryDatabase(identityDatabaseName, _identityDatabaseRoot)
                     .UseInternalServiceProvider(_identityDatabaseProvider));
             });
         });
@@ -62,6 +71,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _factory.DisposeAsync();
+        await _applicationDatabaseProvider.DisposeAsync();
         await _identityDatabaseProvider.DisposeAsync();
     }
 
