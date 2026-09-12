@@ -252,7 +252,8 @@ public static class LocalAuthenticationEndpoints
             [FromServices] HelpdeskDbContext db,
             CancellationToken cancellationToken) =>
         {
-            if (await users.FindByIdAsync(userId) is null ||
+            var account = await users.FindByIdAsync(userId);
+            if (account is null ||
                 !await db.Users.AnyAsync(user => user.Id == userId, cancellationToken))
             {
                 return Results.NotFound();
@@ -264,7 +265,7 @@ public static class LocalAuthenticationEndpoints
                 .ThenBy(assignment => assignment.RoleKey)
                 .Select(assignment => new LocalScopedRoleAssignment(assignment.RoleKey, assignment.OrganizationId))
                 .ToListAsync(cancellationToken);
-            return Results.Ok(new LocalScopedRoleAssignmentsResponse(assignments));
+            return Results.Ok(new LocalScopedRoleAssignmentsResponse(assignments, account.IsInstanceAdministrator));
         })
         .RequireAuthorization("HelpdeskAdmin");
 
@@ -533,7 +534,9 @@ public static class LocalAuthenticationEndpoints
 
     public sealed record LocalScopedRoleAssignment(string RoleKey, string OrganizationId);
 
-    public sealed record LocalScopedRoleAssignmentsResponse(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
+    public sealed record LocalScopedRoleAssignmentsResponse(
+        IReadOnlyList<LocalScopedRoleAssignment> Assignments,
+        bool IsInstanceAdministrator = false);
 
     public sealed record ReplaceLocalScopedRoleAssignmentsRequest(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
 

@@ -13,45 +13,50 @@
         @if (isLocalAccount)
         {
             <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
-                Local account access is granted per organization. Credentials and instance-administrator access are managed separately.
+                @(isInstanceAdministrator
+                    ? "This account is an instance administrator. Its access is not limited by tenant-scoped roles."
+                    : "Local account access is granted per organization. Credentials and instance-administrator access are managed separately.")
             </MudAlert>
-            @if (!string.IsNullOrWhiteSpace(error))
+            @if (!isInstanceAdministrator && !string.IsNullOrWhiteSpace(error))
             {
                 <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@error</MudAlert>
             }
-            <MudGrid Spacing="2">
-                <MudItem xs="12" sm="6">
-                    <MudSelect T="string" @bind-Value="newRoleKey" Label="Role" Required="true">
-                        <MudSelectItem T="string" Value="@("SelfServiceUser")">Self-service User</MudSelectItem>
-                        <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
-                    </MudSelect>
-                </MudItem>
-                <MudItem xs="12" sm="6">
-                    <MudSelect T="string" @bind-Value="newOrganizationId" Label="Organization" Required="true">
-                        @foreach (var organization in organizations)
-                        {
-                            <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
-                        }
-                    </MudSelect>
-                </MudItem>
-            </MudGrid>
-            <MudButton OnClick="AddAssignment" Variant="Variant.Outlined" Color="Color.Primary" Class="mt-2">Add scoped role</MudButton>
-            <MudList T="LocalScopedRoleAssignment" Dense="true" Class="mt-3">
-                @foreach (var assignment in assignments)
-                {
-                    <MudListItem T="LocalScopedRoleAssignment" Value="@assignment">
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="w-100">
-                            <MudText>@RoleLabel(assignment.RoleKey) — @OrganizationLabel(assignment.OrganizationId)</MudText>
-                            <MudSpacer />
-                            <MudIconButton Icon="@Icons.Material.Filled.Close"
-                                           Color="Color.Error"
-                                           Size="Size.Small"
-                                           aria-label="Remove scoped role"
-                                           OnClick="() => RemoveAssignment(assignment)" />
-                        </MudStack>
-                    </MudListItem>
-                }
-            </MudList>
+            @if (!isInstanceAdministrator)
+            {
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" sm="6">
+                        <MudSelect T="string" @bind-Value="newRoleKey" Label="Role" Required="true">
+                            <MudSelectItem T="string" Value="@("SelfServiceUser")">Self-service User</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("Technician")">Technician</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudSelect T="string" @bind-Value="newOrganizationId" Label="Organization" Required="true">
+                            @foreach (var organization in organizations)
+                            {
+                                <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                </MudGrid>
+                <MudButton OnClick="AddAssignment" Variant="Variant.Outlined" Color="Color.Primary" Class="mt-2">Add scoped role</MudButton>
+                <MudList T="LocalScopedRoleAssignment" Dense="true" Class="mt-3">
+                    @foreach (var assignment in assignments)
+                    {
+                        <MudListItem T="LocalScopedRoleAssignment" Value="@assignment">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Class="w-100">
+                                <MudText>@RoleLabel(assignment.RoleKey) — @OrganizationLabel(assignment.OrganizationId)</MudText>
+                                <MudSpacer />
+                                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                               Color="Color.Error"
+                                               Size="Size.Small"
+                                               aria-label="Remove scoped role"
+                                               OnClick="() => RemoveAssignment(assignment)" />
+                            </MudStack>
+                        </MudListItem>
+                    }
+                </MudList>
+            }
         }
         else
         {
@@ -81,7 +86,10 @@
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">@(isLocalAccount ? "Save access" : "Save")</MudButton>
+        @if (!isLocalAccount || !isInstanceAdministrator)
+        {
+            <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">@(isLocalAccount ? "Save access" : "Save")</MudButton>
+        }
     </DialogActions>
 </MudDialog>
 
@@ -95,6 +103,7 @@
     private List<OrganizationDto> organizations = new();
     private List<LocalScopedRoleAssignment> assignments = new();
     private bool isLocalAccount;
+    private bool isInstanceAdministrator;
     private string newRoleKey = "SelfServiceUser";
     private string? newOrganizationId;
     private string? error;
@@ -121,6 +130,7 @@
             var response = await assignmentResponse.Content.ReadFromJsonAsync<LocalScopedRoleAssignmentsResponse>();
             assignments = response?.Assignments.ToList() ?? new();
             isLocalAccount = true;
+            isInstanceAdministrator = response?.IsInstanceAdministrator == true;
             newOrganizationId = organizations.FirstOrDefault()?.Id;
         }
     }
@@ -211,7 +221,9 @@
 
     private sealed record LocalScopedRoleAssignment(string RoleKey, string OrganizationId);
 
-    private sealed record LocalScopedRoleAssignmentsResponse(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
+    private sealed record LocalScopedRoleAssignmentsResponse(
+        IReadOnlyList<LocalScopedRoleAssignment> Assignments,
+        bool IsInstanceAdministrator = false);
 
     private sealed record ReplaceLocalScopedRoleAssignmentsRequest(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
 }
