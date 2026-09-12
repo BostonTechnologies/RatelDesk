@@ -71,4 +71,9 @@ OIDC identities and local accounts use the same resolved role and scope model.
 External identity links are based on verified provider identity evidence; email
 is profile data and is not an authorization-link key. The Web client may use
 the effective-access projection to decide which navigation to display, but the
-API re-resolves access for every protected operation.
+API re-resolves access for every protected operation. On every authenticated
+OIDC Web request, the Web cookie is refreshed from that API projection: a
+scoped-role grant or revocation takes effect for both API operations and Web
+navigation on the next request. Local-account membership changes instead
+invalidate the account's authorization revision and security stamp, causing the
+next API request to reject the old local session.
