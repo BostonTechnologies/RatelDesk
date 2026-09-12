@@ -522,6 +522,85 @@ public sealed class BootstrapStateStoreTests
     }
 
     [Fact]
+    public async Task Unattended_initialization_uses_the_same_postgresql_bootstrap_pipeline()
+    {
+        await using var postgres = new PostgreSqlBuilder()
+            .WithImage("pgvector/pgvector:pg16")
+            .Build();
+        await postgres.StartAsync();
+
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-unattended-{Guid.NewGuid():N}");
+        try
+        {
+            await using (var connection = new Npgsql.NpgsqlConnection(postgres.GetConnectionString()))
+            {
+                await connection.OpenAsync();
+                await using var extensions = connection.CreateCommand();
+                extensions.CommandText = "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;";
+                await extensions.ExecuteNonQueryAsync();
+            }
+
+            var options = new BootstrapOptions
+            {
+                StateDirectory = directory,
+                DataDirectory = Path.Combine(directory, "data"),
+                SetupCode = "operator-provided-code",
+                Unattended = new BootstrapUnattendedOptions
+                {
+                    Provider = "PostgreSql",
+                    PostgreSqlConnectionString = postgres.GetConnectionString(),
+                    Email = "admin@example.test",
+                    DisplayName = "Instance Admin",
+                    Password = "correct horse battery staple",
+                    OrganizationName = "Example Organization",
+                    ApplicationName = "Example Desk",
+                    ApplicationUrl = "https://desk.example.test"
+                }
+            };
+            var store = new FileBootstrapStateStore(options);
+            var descriptor = await store.LoadOrCreateAsync();
+            var dataProtection = DataProtectionProvider.Create(
+                new DirectoryInfo(Path.Combine(directory, "keys")),
+                configuration => configuration.SetApplicationName("Helpdesk-Keyring"));
+            var command = new UnattendedBootstrapCommand(
+                store,
+                options,
+                dataProtection,
+                new PostgreSqlSetupPreflightService());
+
+            var result = await command.InitializeAsync(descriptor, CancellationToken.None);
+
+            Assert.True(result.Succeeded, result.Error);
+            Assert.Equal(BootstrapState.Ready, result.Descriptor!.State);
+
+            var identityOptions = new DbContextOptionsBuilder<RatelDeskIdentityDbContext>()
+                .UseNpgsql(postgres.GetConnectionString())
+                .Options;
+            await using var identity = new RatelDeskIdentityDbContext(identityOptions);
+            Assert.True(await identity.Users.AnyAsync(user => user.Email == "admin@example.test" && user.IsInstanceAdministrator));
+
+            var applicationOptions = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
+                .UseNpgsql(postgres.GetConnectionString(), npgsql => npgsql.UseVector())
+                .Options;
+            await using var application = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
+                applicationOptions,
+                new TestTenantContext(),
+                new HttpContextAccessor());
+            var initialization = await application.InstanceInitializations.SingleAsync();
+            Assert.Equal(result.Descriptor.InstanceId, initialization.InstanceId);
+            Assert.Equal(result.Descriptor.OperationId, initialization.OperationId);
+            Assert.Equal("Example Organization", (await application.Organizations.SingleAsync()).Name);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Legacy_adoption_marks_only_a_database_with_organization_and_user_evidence()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"rateldesk-adoption-{Guid.NewGuid():N}.db");
