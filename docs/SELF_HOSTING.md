@@ -2,11 +2,19 @@
 
 ## Architecture
 
-RatelDesk has an ASP.NET Core API, a Blazor web application, PostgreSQL with `pgvector`, and optional MCP HTTP hosting. The web application proxies `/api` traffic to the API. Run both application services behind a TLS-terminating reverse proxy in production.
+RatelDesk has an ASP.NET Core API and a Blazor web application. The default installation uses embedded SQLite and local accounts; PostgreSQL, OIDC, and MCP hosting are optional. The Web application proxies `/api` traffic to the API. Run both application services behind a TLS-terminating reverse proxy in production.
 
-## PostgreSQL and Docker
+## First use and Docker
 
-Use [docker/docker-compose.yml](../docker/docker-compose.yml) as a local starting point. Set `ConnectionStrings__HelpdeskDb` to a PostgreSQL connection string and keep database volumes outside the container lifecycle. Apply schema migrations as part of the application deployment process after backing up the database.
+Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. After the first API start, retrieve the operator-only setup code from `/var/lib/rateldesk/bootstrap/setup-code` in the API container and complete `http://localhost:8111/setup`. The code is consumed at completion and is never returned by HTTP APIs.
+
+For the documented localhost HTTP profile, both services set `Authentication__AllowInsecureLocalhost=true`; this intentionally uses the `RatelDesk.Local` cookie rather than a `__Host-` cookie. Public deployments must use HTTPS, set a durable shared `DataProtection__KeyRingPath`, and remove that localhost-only setting.
+
+Back up the SQLite data directory, bootstrap state directory, shared key ring, and attachment directory as one recovery set. Restoring a SQLite file without its initialization descriptor or data-protection key material can require operator recovery.
+
+## PostgreSQL
+
+An existing PostgreSQL deployment continues to use `ConnectionStrings__HelpdeskDb`; select `Database__Provider=PostgreSql` explicitly for new deployment-managed PostgreSQL configuration. Preserve the database and shared data-protection keys before an upgrade. PostgreSQL requires the extensions used by the existing migration chain, including `vector` and `pg_trgm`; do not point RatelDesk at an unrelated or non-empty database.
 
 ## Reverse proxy and Traefik
 
@@ -14,7 +22,7 @@ Any standards-compliant reverse proxy can front RatelDesk. A generic Traefik dep
 
 ## Identity
 
-OIDC is supported with Authentik and Microsoft Entra ID. Configure each provider with an issuer under a domain you control, a client ID, a client secret supplied outside source control, and public callback URLs. Use `id.example.com` and `helpdesk.example.com` only as documentation examples.
+Local accounts are the first-run default and public self-registration is disabled. OIDC is supported with Authentik and Microsoft Entra ID through `Authentication__Mode=Oidc` or `Hybrid`. Configure each provider with an issuer under a domain you control, a client ID, a client secret supplied outside source control, and public callback URLs. Use `id.example.com` and `helpdesk.example.com` only as documentation examples.
 
 ## Email
 
@@ -38,7 +46,7 @@ OpenTelemetry is enabled through standard `OTEL_*` settings. Export to an OTLP e
 
 ## Troubleshooting
 
-- Verify the database connection and `pgvector` extension first.
+- Verify the selected database; PostgreSQL additionally needs its required extensions.
 - Confirm the API is reachable from the web service's configured reverse-proxy destination.
 - Check OIDC issuer, callback, audience, and client-secret configuration when login fails.
 - Confirm `DataProtection__KeyRingPath` is writable and durable in production.
