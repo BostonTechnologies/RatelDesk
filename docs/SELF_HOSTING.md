@@ -24,6 +24,17 @@ Any standards-compliant reverse proxy can front RatelDesk. A generic Traefik dep
 
 Local accounts are the first-run default and public self-registration is disabled. OIDC is supported with Authentik and Microsoft Entra ID through `Authentication__Mode=Oidc` or `Hybrid`. Configure each provider with an issuer under a domain you control, a client ID, a client secret supplied outside source control, and public callback URLs. Use `id.example.com` and `helpdesk.example.com` only as documentation examples.
 
+### Local administrator recovery
+
+When SMTP is unavailable, an operator with container access can issue a one-time local-account recovery token without resetting the instance or opening setup:
+
+```bash
+docker compose -f docker/docker-compose.yml exec api \
+  dotnet Helpdesk.API.dll --recover-local-admin admin@example.com
+```
+
+The command only succeeds for an existing instance-administrator account in the selected identity store. It enables that account, invalidates old sessions, and writes a one-time token only to the command output. Give the administrator the `/activate` page and token through an approved secure channel; the token is consumed when a new passphrase is set.
+
 ## Email
 
 Microsoft Graph delivery is disabled by default. Enable it only after configuring a tenant ID, client ID, client secret, and mailbox. SMTP and IMAP settings are likewise deployment-owned credentials. Use a mailbox dedicated to RatelDesk and configure sender-domain controls deliberately.

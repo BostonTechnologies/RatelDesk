@@ -2,6 +2,7 @@ using Helpdesk.API.Bootstrap;
 using Helpdesk.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Configuration;
 
 namespace Helpdesk.Tests.Api;
 
@@ -16,6 +17,34 @@ public sealed class BootstrapStateStoreTests
 
         Assert.False(result.Succeeded);
         Assert.Contains("connection string", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Local_admin_recovery_does_not_create_a_missing_sqlite_database()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-recovery-{Guid.NewGuid():N}");
+        var databasePath = Path.Combine(directory, "missing.db");
+        try
+        {
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Database:Provider"] = "Sqlite",
+                ["Database:Sqlite:Path"] = databasePath,
+                ["DataProtection:KeyRingPath"] = Path.Combine(directory, "keys")
+            }).Build();
+
+            var token = await LocalAdminRecoveryCommand.GenerateActivationTokenAsync(configuration, "admin@example.test");
+
+            Assert.Null(token);
+            Assert.False(File.Exists(databasePath));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     [Fact]

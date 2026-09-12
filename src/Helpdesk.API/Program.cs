@@ -146,6 +146,19 @@ var localAuthenticationCookieName = localAuthenticationOptions.AllowInsecureLoca
     ? "RatelDesk.Local"
     : "__Host-RatelDesk.Local";
 
+if (args is ["--recover-local-admin", var recoveryEmail])
+{
+    var recoveryToken = await LocalAdminRecoveryCommand.GenerateActivationTokenAsync(builder.Configuration, recoveryEmail);
+    if (string.IsNullOrWhiteSpace(recoveryToken))
+    {
+        await Console.Error.WriteLineAsync("No matching local instance administrator was found, or the selected identity store is unavailable.");
+        return;
+    }
+
+    await Console.Out.WriteLineAsync(recoveryToken);
+    return;
+}
+
 if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not BootstrapState.Ready)
 {
     var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
