@@ -219,18 +219,34 @@ else
                 </MudStack>
             </Authorized>
             <NotAuthorized>
-                <AuthorizeView Roles="Incident.User,Incident.Manager,Request.User,Request.Manager,Change.User,Change.Manager" Context="workspaceAuth">
+                <AuthorizeView Roles="Tenant.Roles.Assign" Context="tenantAdministratorAuth">
                     <Authorized>
-                        <MudStack Spacing="2">
-                            <MudText Typo="Typo.h4">Welcome to Helpdesk</MudText>
-                            <MudText Typo="Typo.body1" Class="mud-text-secondary">Use the workspace navigation to access the modules assigned to you.</MudText>
+                        <MudStack Spacing="3">
+                            <MudText Typo="Typo.h4">Tenant administration</MudText>
+                            <MudText Typo="Typo.body1" Class="mud-text-secondary">
+                                Manage the tenant roles and member access assigned to your organization.
+                            </MudText>
+                            <MudStack Row="true" Spacing="2">
+                                <MudButton Href="/tenant-administration" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Group">Tenant Members</MudButton>
+                                <MudButton Href="/admin/roles" Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AdminPanelSettings">Tenant Roles</MudButton>
+                            </MudStack>
                         </MudStack>
                     </Authorized>
                     <NotAuthorized>
-                        <MudStack Spacing="2">
-                            <MudText Typo="Typo.h4">No module access assigned</MudText>
-                            <MudText Typo="Typo.body1" Class="mud-text-secondary">Ask an instance or tenant administrator to assign access for your organization.</MudText>
-                        </MudStack>
+                        <AuthorizeView Roles="Incident.User,Incident.Manager,Request.User,Request.Manager,Change.User,Change.Manager" Context="workspaceAuth">
+                            <Authorized>
+                                <MudStack Spacing="2">
+                                    <MudText Typo="Typo.h4">Welcome to Helpdesk</MudText>
+                                    <MudText Typo="Typo.body1" Class="mud-text-secondary">Use the workspace navigation to access the modules assigned to you.</MudText>
+                                </MudStack>
+                            </Authorized>
+                            <NotAuthorized>
+                                <MudStack Spacing="2">
+                                    <MudText Typo="Typo.h4">No module access assigned</MudText>
+                                    <MudText Typo="Typo.body1" Class="mud-text-secondary">Ask an instance or tenant administrator to assign access for your organization.</MudText>
+                                </MudStack>
+                            </NotAuthorized>
+                        </AuthorizeView>
                     </NotAuthorized>
                 </AuthorizeView>
             </NotAuthorized>
