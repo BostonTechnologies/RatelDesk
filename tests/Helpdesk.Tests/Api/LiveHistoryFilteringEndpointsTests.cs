@@ -19,6 +19,7 @@ using Helpdesk.Application.Timeline;
 using Helpdesk.Application.WorkLogs;
 using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.Change;
 using Helpdesk.Shared.DTOs.Incident;
@@ -1084,6 +1085,46 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task IncidentRelations_HideRelatedIncidentsOutsideSelfServiceScope()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.Add(new Organization { Id = "org-1", Name = "Organization One" });
+            db.Users.Add(new User
+            {
+                Id = "self-service-1",
+                Name = "Self-service user",
+                Email = "self-service@example.com",
+                OrganizationId = "org-1",
+                Role = "User"
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = "self-service-1",
+                OrganizationId = "org-1",
+                RoleKey = ScopedRoleCatalog.SelfServiceUser
+            });
+        });
+        await SeedRelationIncidentsAsync(harness, "self-service@example.com");
+        await harness.SeedAsync(db => db.TicketRelations.Add(new TicketRelation
+        {
+            SourceTicketId = "inc-source",
+            TargetTicketId = "inc-target",
+            RelationType = TicketRelationType.RelatedTo,
+            CreatedByUserId = "admin-1",
+            CreatedByUserName = "Admin One"
+        }));
+        harness.UseRole("SelfService");
+
+        var ownRelations = await GetRelationsAsync(harness.Client, "/api/v1/incidents/inc-source/relations");
+        var foreignRelations = await harness.Client.GetAsync("/api/v1/incidents/inc-target/relations");
+
+        Assert.Empty(ownRelations);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignRelations.StatusCode);
+    }
+
+    [Fact]
     public async Task IncidentRelations_DeleteRemovesExistingLink()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
@@ -1108,7 +1149,9 @@ public sealed class LiveHistoryFilteringEndpointsTests
         });
     }
 
-    private static async Task SeedRelationIncidentsAsync(LiveHistoryFilteringHarness harness)
+    private static async Task SeedRelationIncidentsAsync(
+        LiveHistoryFilteringHarness harness,
+        string sourceRequesterEmail = "source-requester@example.com")
     {
         await harness.SeedAsync(db =>
         {
@@ -1121,7 +1164,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
                     State = TicketState.InProgress,
                     Priority = TicketPriority.Medium,
                     OrganizationId = "org-1",
-                    RequesterEmail = "source-requester@example.com",
+                    RequesterEmail = sourceRequesterEmail,
                     CcRecipients = ["source-cc@example.com", "existing@example.com", "TARGET-REQUESTER@example.com"]
                 },
                 new Incident
@@ -1578,16 +1621,23 @@ public sealed class LiveHistoryFilteringEndpointsTests
                 role = header.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? role;
             }
 
+            var isSelfService = string.Equals(role, "SelfService", StringComparison.OrdinalIgnoreCase);
             var claims = new List<Claim>
             {
-                new Claim(ClaimTypes.NameIdentifier, "admin-1"),
-                new Claim(ClaimTypes.Name, "Admin One"),
+                new Claim(ClaimTypes.NameIdentifier, isSelfService ? "self-service-1" : "admin-1"),
+                new Claim(ClaimTypes.Name, isSelfService ? "Self-service user" : "Admin One"),
                 new Claim("iss", "https://id.example.test"),
                 new Claim("sub", "operator"),
                 new Claim("organization_id", "org-1"),
-                new Claim(ClaimTypes.Role, role),
-                new Claim("roles", role)
+                new Claim(ClaimTypes.Role, isSelfService ? HelpdeskPermissions.IncidentUser : role),
+                new Claim("roles", isSelfService ? HelpdeskPermissions.IncidentUser : role)
             };
+
+            if (isSelfService)
+            {
+                claims.Add(new Claim(ClaimTypes.Email, "self-service@example.com"));
+                claims.Add(new Claim("auth_mode", "local"));
+            }
 
             if (string.Equals(role, "Technician", StringComparison.OrdinalIgnoreCase))
             {

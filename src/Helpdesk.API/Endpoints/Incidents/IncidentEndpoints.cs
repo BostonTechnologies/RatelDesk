@@ -688,6 +688,8 @@ public static class IncidentEndpoints
 
         group.MapGet("/{id}/relations", async (
             [FromRoute] string id,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             CancellationToken token) =>
         {
@@ -695,6 +697,21 @@ public static class IncidentEndpoints
             if (incident is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            var viewedIncidentCustomer = !string.IsNullOrWhiteSpace(incident.CustomerId)
+                ? await db.Customers.AsNoTracking()
+                    .Where(customer => customer.Id == incident.CustomerId)
+                    .Select(customer => new { customer.Id, customer.Email })
+                    .FirstOrDefaultAsync(token)
+                : null;
+            if (!access.CanViewIncident(
+                    incident.OrganizationId,
+                    viewedIncidentCustomer?.Id ?? incident.CustomerId,
+                    viewedIncidentCustomer?.Email ?? incident.RequesterEmail))
+            {
+                return Results.Forbid();
             }
 
             var relations = await db.TicketRelations
@@ -713,9 +730,32 @@ public static class IncidentEndpoints
                 .AsNoTracking()
                 .Where(x => ticketIds.Contains(x.Id))
                 .ToDictionaryAsync(x => x.Id, token);
+            var customerIds = tickets.Values
+                .Select(ticket => ticket.CustomerId)
+                .Where(customerId => !string.IsNullOrWhiteSpace(customerId))
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var customerEmails = await db.Customers
+                .AsNoTracking()
+                .Where(customer => customerIds.Contains(customer.Id))
+                .ToDictionaryAsync(customer => customer.Id, customer => customer.Email, token);
+
+            bool CanView(Incident candidate)
+            {
+                var customerEmail = !string.IsNullOrWhiteSpace(candidate.CustomerId) &&
+                                    customerEmails.TryGetValue(candidate.CustomerId, out var email)
+                    ? email
+                    : candidate.RequesterEmail;
+                return access.CanViewIncident(candidate.OrganizationId, candidate.CustomerId, customerEmail);
+            }
 
             return Results.Ok(relations
-                .Where(x => tickets.ContainsKey(x.SourceTicketId) && tickets.ContainsKey(x.TargetTicketId))
+                .Where(x =>
+                    tickets.TryGetValue(x.SourceTicketId, out var source) &&
+                    tickets.TryGetValue(x.TargetTicketId, out var target) &&
+                    CanView(source) &&
+                    CanView(target))
                 .Select(x => ToRelationDto(x, tickets[x.SourceTicketId], tickets[x.TargetTicketId], incident.Id))
                 .ToList());
         })
