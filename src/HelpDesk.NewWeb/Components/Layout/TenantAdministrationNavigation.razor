@@ -10,6 +10,11 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (!RendererInfo.IsInteractive)
+        {
+            return;
+        }
+
         using var response = await HttpClientFactory.CreateClient("HelpdeskApi")
             .GetAsync("api/v1/tenant-admin/organizations");
         canManageMembers = response.IsSuccessStatusCode &&
