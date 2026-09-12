@@ -20,8 +20,13 @@ public partial class AddSqliteUtcTickColumns : Migration
 
     protected override void Down(MigrationBuilder migrationBuilder)
     {
+        migrationBuilder.DropIndex(name: "IX_TicketSlaStates_Status_CompletedAtUtcTicks", table: "TicketSlaStates");
+        migrationBuilder.DropIndex(name: "IX_TicketSlaStates_ResolutionDueAtUtcTicks", table: "TicketSlaStates");
         migrationBuilder.DropIndex(name: "IX_Tickets_Status_DueAtUtcTicks", table: "Tickets");
         migrationBuilder.DropIndex(name: "IX_Tickets_Status_NextRetryAtUtcTicks", table: "Tickets");
+        migrationBuilder.DropColumn(name: "CompletedAtUtcTicks", table: "TicketSlaStates");
+        migrationBuilder.DropColumn(name: "ResolutionDueAtUtcTicks", table: "TicketSlaStates");
+        migrationBuilder.DropColumn(name: "ResponseDueAtUtcTicks", table: "TicketSlaStates");
         migrationBuilder.DropColumn(name: "DueAtUtcTicks", table: "Tickets");
         migrationBuilder.DropColumn(name: "NextRetryAtUtcTicks", table: "Tickets");
     }

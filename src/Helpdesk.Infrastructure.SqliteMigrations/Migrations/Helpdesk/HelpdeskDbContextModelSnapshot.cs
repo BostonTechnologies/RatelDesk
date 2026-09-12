@@ -3126,6 +3126,11 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("CompletedAtUtcTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"CompletedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.Property<bool>("CompletedWithinResolutionSla")
                         .HasColumnType("INTEGER");
 
@@ -3153,11 +3158,21 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                     b.Property<DateTimeOffset>("ResolutionDueAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("ResolutionDueAtUtcTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"ResolutionDueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.Property<bool>("ResponseBreached")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTimeOffset>("ResponseDueAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("ResponseDueAtUtcTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"ResponseDueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
 
                     b.Property<DateTimeOffset?>("ResumeAt")
                         .HasColumnType("TEXT");
@@ -3179,6 +3194,10 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                     b.HasIndex("Status");
 
                     b.HasIndex("Status", "CompletedAt");
+
+                    b.HasIndex("Status", "CompletedAtUtcTicks");
+
+                    b.HasIndex("ResolutionDueAtUtcTicks");
 
                     b.ToTable("TicketSlaStates");
                 });
@@ -3537,6 +3556,11 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                     b.Property<DateTimeOffset?>("DueAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("DueAtUtcTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"DueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.Property<int?>("EscalateAfterMinutes")
                         .HasColumnType("INTEGER");
 
@@ -3588,6 +3612,11 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
 
                     b.Property<DateTimeOffset?>("NextRetryAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("NextRetryAtUtcTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"NextRetryAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
 
                     b.Property<string>("OrchestrationExternalRequestId")
                         .HasColumnType("TEXT");
@@ -3663,6 +3692,10 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                     b.HasIndex("Status", "DueAt");
 
                     b.HasIndex("Status", "NextRetryAt");
+
+                    b.HasIndex("Status", "DueAtUtcTicks");
+
+                    b.HasIndex("Status", "NextRetryAtUtcTicks");
 
                     b.HasDiscriminator().HasValue("RequestTask");
                 });
