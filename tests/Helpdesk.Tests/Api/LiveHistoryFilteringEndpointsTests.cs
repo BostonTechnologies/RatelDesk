@@ -1201,6 +1201,34 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task RequestAndChangeMutations_RequireScopedManagerAccess()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.Add(new Organization { Id = "org-1", Name = "Organization One" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Requests.Add(new Request { Id = "req-self-service-update", TrackingId = "REQ-SELF-UPDATE", Title = "Self-service request", OrganizationId = "org-1", RequesterEmail = "self-service@example.com", State = TicketState.New, Priority = TicketPriority.Low });
+            db.Changes.Add(new Change { Id = "chg-self-service-update", TrackingId = "CHG-SELF-UPDATE", Title = "Self-service change", OrganizationId = "org-1", RequesterEmail = "self-service@example.com", State = TicketState.New, Priority = TicketPriority.Low });
+        });
+        harness.UseRole("SelfService");
+
+        var requestUpdate = await harness.Client.PutAsJsonAsync("/api/v1/requests/req-self-service-update", new UpdateRequestDto { State = TicketState.Resolved });
+        var changeUpdate = await harness.Client.PutAsJsonAsync("/api/v1/changes/chg-self-service-update", new UpdateChangeDto { State = TicketState.Resolved, Priority = TicketPriority.Low });
+        var changeDelete = await harness.Client.DeleteAsync("/api/v1/changes/chg-self-service-update");
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, requestUpdate.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeUpdate.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeDelete.StatusCode);
+        await harness.WithDbAsync(async db =>
+        {
+            Assert.Equal(TicketState.New, (await db.Requests.FindAsync("req-self-service-update"))!.State);
+            Assert.Equal(TicketState.New, (await db.Changes.FindAsync("chg-self-service-update"))!.State);
+        });
+    }
+
+    [Fact]
     public async Task IncidentRelations_DeleteRemovesExistingLink()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
