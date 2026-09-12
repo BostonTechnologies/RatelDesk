@@ -12,6 +12,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+curl --retry 6 --retry-all-errors --retry-delay 2 --fail --silent --show-error \
+  "$web_base_url/setup" > /dev/null
+
 setup_code="$(docker compose -f "$compose_file" exec -T api sh -c 'cat /var/lib/rateldesk/bootstrap/setup-code')"
 password="Rc4-$(openssl rand -hex 24)"
 
