@@ -127,6 +127,7 @@ run_setup_wizard_validation() {
   HELPDESK_E2E_BASE_URL="$setup_web_url" \
   HELPDESK_E2E_IGNORE_HTTPS_ERRORS=true \
   HELPDESK_E2E_SETUP_CODE="$setup_code" \
+  HELPDESK_E2E_RUN_SETUP_WIZARD=true \
   npm run test:ux -- tests/ux/setup.spec.ts
 
   stop_process "$setup_web_pid"

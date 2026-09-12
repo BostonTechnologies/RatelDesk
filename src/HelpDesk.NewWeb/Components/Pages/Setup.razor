@@ -1,6 +1,6 @@
 @page "/setup"
 @attribute [AllowAnonymous]
-@rendermode InteractiveServer
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
 
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Navigation
