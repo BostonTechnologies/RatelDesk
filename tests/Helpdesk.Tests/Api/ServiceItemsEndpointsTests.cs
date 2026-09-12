@@ -5,6 +5,7 @@ using System.Text.Encodings.Web;
 using Helpdesk.API.Endpoints.Services;
 using Helpdesk.API.Services;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.Service;
 using Helpdesk.Shared.Models;
@@ -93,6 +94,16 @@ public sealed class ServiceItemsEndpointsTests
         Assert.Equal("Tenant child", breadcrumb.Name);
     }
 
+    [Fact]
+    public async Task ServiceItems_RequireSelfServiceAccess()
+    {
+        await using var harness = await ServiceItemsTestHarness.CreateAsync(selfServiceAccess: false);
+
+        var response = await harness.Client.GetAsync("/api/v1/service-items");
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     private sealed class ServiceItemsTestHarness : IAsyncDisposable
     {
         private readonly SqliteConnection _connection;
@@ -107,7 +118,9 @@ public sealed class ServiceItemsEndpointsTests
 
         public HttpClient Client { get; }
 
-        public static async Task<ServiceItemsTestHarness> CreateAsync(bool isHelpdeskAdmin = false)
+        public static async Task<ServiceItemsTestHarness> CreateAsync(
+            bool isHelpdeskAdmin = false,
+            bool selfServiceAccess = true)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -129,7 +142,12 @@ public sealed class ServiceItemsEndpointsTests
                 options.DefaultAuthenticateScheme = "Test";
                 options.DefaultChallengeScheme = "Test";
             }).AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
-            builder.Services.AddAuthorization();
+            builder.Services.AddAuthorization(options =>
+                options.AddPolicy(
+                    HelpdeskPermissions.SelfServiceUser,
+                    policy => policy.RequireRole(
+                        HelpdeskPermissions.SelfServiceUser,
+                        HelpdeskPermissions.HelpdeskAdmin)));
 
             var app = builder.Build();
             app.UseAuthentication();
@@ -160,7 +178,10 @@ public sealed class ServiceItemsEndpointsTests
 
             await app.StartAsync();
             var client = app.GetTestClient();
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "Requester");
+            var actor = isHelpdeskAdmin
+                ? "Admin"
+                : selfServiceAccess ? "SelfService" : "NoSelfService";
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", actor);
 
             return new ServiceItemsTestHarness(connection, app, client);
         }
@@ -215,11 +236,24 @@ public sealed class ServiceItemsEndpointsTests
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
-            var claims = new[]
+            var actor = AuthenticationHeaderValue.TryParse(Request.Headers.Authorization.ToString(), out var authorization)
+                ? authorization.Parameter
+                : null;
+            var claims = new List<Claim>
             {
                 new Claim(ClaimTypes.NameIdentifier, "user-1"),
                 new Claim(ClaimTypes.Name, "Requester")
             };
+
+            if (string.Equals(actor, "Admin", StringComparison.Ordinal))
+            {
+                claims.Add(new Claim(ClaimTypes.Role, HelpdeskPermissions.HelpdeskAdmin));
+            }
+            else if (!string.Equals(actor, "NoSelfService", StringComparison.Ordinal))
+            {
+                claims.Add(new Claim(ClaimTypes.Role, HelpdeskPermissions.SelfServiceUser));
+            }
+
             var identity = new ClaimsIdentity(claims, "Test");
             var principal = new ClaimsPrincipal(identity);
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, "Test")));

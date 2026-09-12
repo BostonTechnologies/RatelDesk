@@ -2,6 +2,7 @@
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Resources;
 using Helpdesk.Application.RequestTasks;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.RequestForm;
 using Helpdesk.Shared.DTOs.Service;
@@ -20,7 +21,7 @@ public static class ServiceEndpoints
         // -------- Mixed "items" (services + forms) for explorer --------
         var itemsGroup = app.MapGroup("/api/v1/service-items")
             .WithTags("Services")
-            .RequireAuthorization();
+            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
 
         itemsGroup.MapGet("/search", async (
             [FromServices] IRepository<Service> servicesRepo,
