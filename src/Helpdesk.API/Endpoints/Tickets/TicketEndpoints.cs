@@ -119,9 +119,22 @@ public static class TicketEndpoints
 
         MapTicketCustomerEndpoint(ticketCountGroup);
 
-        group.MapPost("/{ticketId}/mark-as-seen", async ([FromRoute] string ticketId, [FromServices] IRequestSender sender, ClaimsPrincipal user) =>
+        group.MapPost("/{ticketId}/mark-as-seen", async (
+            [FromRoute] string ticketId,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] IRequestSender sender,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
             {
-                await sender.Send(new MarkTicketAsSeenCommand(ticketId));
+                var authorizationFailure = await AuthorizeTicketViewAsync("incidents", ticketId, context.User, accessService, db, ct);
+                if (authorizationFailure is not null)
+                {
+                    return authorizationFailure;
+                }
+
+                await sender.Send(new MarkTicketAsSeenCommand(ticketId), ct);
                 return Results.NoContent();
             })
         .WithName("MarkTicketAsSeen")
