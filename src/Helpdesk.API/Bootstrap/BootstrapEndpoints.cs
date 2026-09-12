@@ -31,6 +31,7 @@ public static class BootstrapEndpoints
                 : Results.Unauthorized();
         })
         .AllowAnonymous()
+        .RequireRateLimiting("SetupUnlock")
         .WithTags("Setup");
 
         app.MapPost("/api/v1/setup/storage", async (
