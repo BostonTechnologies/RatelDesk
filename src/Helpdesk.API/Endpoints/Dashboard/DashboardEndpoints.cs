@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using Helpdesk.Application.Dashboard;
 using Helpdesk.Application.Messaging;
+using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Helpdesk.API.Endpoints.Dashboard;
@@ -20,14 +22,23 @@ public static class DashboardEndpoints
         .WithDescription("Returns live counts for incidents, requests, and change requests.")
         .RequireAuthorization("HelpdeskAdmin");
 
-        group.MapGet("/technician-summary", async ([FromServices] IRequestSender sender, ClaimsPrincipal user) =>
+        group.MapGet("/technician-summary", async (
+            [FromServices] IRequestSender sender,
+            [FromServices] ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
+            CancellationToken token) =>
         {
             var id = user.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            return await sender.Send(new GetTechnicianDashboardQuery(id));
+            var access = await accessService.ResolveAsync(user, token);
+            return await sender.Send(new GetTechnicianDashboardQuery(
+                id,
+                access.OrganizationIdsFor(HelpdeskPermissions.ChangeManager),
+                access.IsHelpdeskAdmin), token);
         })
         .WithName("GetTechnicianDashboard")
         .WithSummary("Technician dashboard metrics.")
-        .WithDescription("Returns open counts for the authenticated technician.");
+        .WithDescription("Returns scoped open counts for the authenticated technician.")
+        .RequireAuthorization("HelpdeskStaff");
 
         group.MapGet("/customer-summary", async ([FromServices] IRequestSender sender, ClaimsPrincipal user) =>
         {
