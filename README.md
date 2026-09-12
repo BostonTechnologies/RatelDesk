@@ -45,6 +45,16 @@ RATELDESK_POSTGRES_PASSWORD='replace-with-a-secret' \
 
 At `/setup`, select PostgreSQL and enter host `postgres`, port `5432`, database `rateldesk`, user `rateldesk`, and the password supplied above. For published images, replace the first Compose file with `docker/docker-compose.release.yml` and set `RATELDESK_VERSION` to an exact release tag.
 
+## External PostgreSQL
+
+For an externally managed PostgreSQL database, start the normal source or release stack and enter its connection details at `/setup`; the API must be able to reach the database network. The target must be empty for a new setup and have the required `vector` and `pg_trgm` extensions installed by the database operator.
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+Complete `/setup` with the external host, port, database, user, password, and TLS preference. For published images, replace the first Compose file with `docker/docker-compose.release.yml` and use an exact `RATELDESK_VERSION`. The included external overlay is for explicit unattended initialization and requires operator-supplied secrets; it never maps a fresh-install connection string directly into the normal runtime. See [self-hosting guidance](docs/SELF_HOSTING.md#external-postgresql) for preflight, unattended setup, upgrade, backup, and recovery requirements.
+
 ## Configuration
 
 The main public configuration surfaces are:

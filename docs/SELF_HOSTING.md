@@ -80,7 +80,25 @@ Complete `/setup` with host `postgres`, port `5432`, database/user `rateldesk`, 
 
 ### External PostgreSQL
 
-Select PostgreSQL at `/setup` and provide the host, port, database, username, password, and TLS preference. RatelDesk tests the connection with bounded timeouts and accepts only an empty target. It identifies a historical RatelDesk schema separately from an unrelated non-empty database, but refuses setup for both so an existing installation cannot be modified by a first-run session. The setup principal must be able to apply the existing migrations but does not need superuser access; ensure an administrator has installed the required extensions before setup. Deployment-managed `ConnectionStrings__HelpdeskDb` remains the compatibility path for established installations.
+For an interactive first run, start the default source or release Compose stack and select PostgreSQL at `/setup`. The API remains in the restricted setup host until it has preflighted the external connection and committed the one-time initialization. The external database must therefore be reachable from the API container, but its credential is supplied only in the setup request; it is never placed in the normal runtime environment.
+
+For deployment-managed unattended initialization, use [docker/docker-compose.external-postgres.yml](../docker/docker-compose.external-postgres.yml) with either base Compose file. It maps operator-supplied values only to the `Bootstrap__Unattended__*` settings; it does not set `ConnectionStrings__HelpdeskDb`, which is reserved for already-established deployments and their conservative adoption path.
+
+```bash
+RATELDESK_POSTGRES_CONNECTION_STRING='Host=db.example.test;Port=5432;Database=rateldesk;Username=rateldesk;Password=replace-with-a-secret;Ssl Mode=Require' \
+RATELDESK_BOOTSTRAP_ADMIN_EMAIL='admin@example.test' \
+RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME='Initial Administrator' \
+RATELDESK_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-passphrase' \
+RATELDESK_BOOTSTRAP_ORGANIZATION_NAME='Example Organization' \
+  docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.external-postgres.yml up -d
+
+docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.external-postgres.yml exec api \
+  dotnet Helpdesk.API.dll --initialize-unattended
+```
+
+For a new instance, the target must be empty. RatelDesk tests the connection with bounded timeouts before it creates schema. It identifies a historical RatelDesk schema separately from an unrelated non-empty database, but refuses setup for both so an existing installation cannot be modified by a first-run session. The setup principal must be able to apply the existing migrations but does not need superuser access. A database administrator must install the required `vector` and `pg_trgm` extensions in the target database before setup, and should enforce TLS, least-privilege credentials, and provider-managed backups. Deployment-managed `ConnectionStrings__HelpdeskDb` remains the compatibility path for established installations.
+
+Back up an external deployment as a complete recovery set: a consistent PostgreSQL backup (including required extensions and roles according to the database provider's procedure), the bootstrap state directory, the shared data-protection key ring, and attachments. Test restoring that set into an isolated target before relying on it. To upgrade, take and verify this backup, deploy one versioned image release, and let the API apply its existing migration chain. If the migration fails, stop the new image and restore the complete recovery set; never point the original initialized descriptor at a new empty database to recover it.
 
 ## Reverse proxy and Traefik
 

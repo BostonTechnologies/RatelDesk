@@ -218,6 +218,26 @@ jobs:
         if: always()
         run: docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml down --volumes --remove-orphans
 
+  compose-external-postgres-config:
+    name: External PostgreSQL Compose configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RATELDESK_POSTGRES_CONNECTION_STRING: Host=postgres.example.test;Port=5432;Database=rateldesk;Username=rateldesk;Password=ci-placeholder;Ssl Mode=Require
+      RATELDESK_BOOTSTRAP_ADMIN_EMAIL: admin@example.test
+      RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME: Initial Administrator
+      RATELDESK_BOOTSTRAP_ADMIN_PASSWORD: ci-placeholder-long-passphrase
+      RATELDESK_BOOTSTRAP_ORGANIZATION_NAME: Example Organization
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate the documented external PostgreSQL source recipe
+        run: docker compose -f docker/docker-compose.yml -f docker/docker-compose.external-postgres.yml config --quiet
+
+      - name: Validate the documented external PostgreSQL release recipe
+        run: docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.external-postgres.yml config --quiet
+
   layout:
     name: Layout and reference validation
     runs-on: ubuntu-latest

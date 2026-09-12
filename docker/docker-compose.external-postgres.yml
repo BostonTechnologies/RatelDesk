@@ -1,0 +1,12 @@
+services:
+  api:
+    environment:
+      Bootstrap__Unattended__Provider: PostgreSql
+      Bootstrap__Unattended__PostgreSqlConnectionString: ${RATELDESK_POSTGRES_CONNECTION_STRING:?Set RATELDESK_POSTGRES_CONNECTION_STRING before unattended external PostgreSQL initialization}
+      Bootstrap__Unattended__Email: ${RATELDESK_BOOTSTRAP_ADMIN_EMAIL:?Set RATELDESK_BOOTSTRAP_ADMIN_EMAIL before unattended external PostgreSQL initialization}
+      Bootstrap__Unattended__DisplayName: ${RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME:?Set RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME before unattended external PostgreSQL initialization}
+      Bootstrap__Unattended__Password: ${RATELDESK_BOOTSTRAP_ADMIN_PASSWORD:?Set RATELDESK_BOOTSTRAP_ADMIN_PASSWORD before unattended external PostgreSQL initialization}
+      Bootstrap__Unattended__OrganizationName: ${RATELDESK_BOOTSTRAP_ORGANIZATION_NAME:?Set RATELDESK_BOOTSTRAP_ORGANIZATION_NAME before unattended external PostgreSQL initialization}
+      Bootstrap__Unattended__ApplicationName: ${RATELDESK_BOOTSTRAP_APPLICATION_NAME:-}
+      Bootstrap__Unattended__ApplicationUrl: ${RATELDESK_BOOTSTRAP_APPLICATION_URL:-}
+      Bootstrap__Unattended__TimeZoneId: ${RATELDESK_BOOTSTRAP_TIME_ZONE_ID:-UTC}
