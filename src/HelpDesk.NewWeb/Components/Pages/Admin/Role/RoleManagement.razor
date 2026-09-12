@@ -1,5 +1,5 @@
 @page "/admin/roles"
-@attribute [Authorize]
+@attribute [Authorize(Roles = "Tenant.Roles.Assign,HelpdeskAdmin")]
 @using System.Net.Http.Json
 @using Helpdesk.Shared.Models
 @inject IHttpClientFactory HttpClientFactory
