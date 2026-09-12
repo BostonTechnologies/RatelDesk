@@ -1677,7 +1677,9 @@ public sealed class LiveHistoryFilteringEndpointsTests
     private sealed class NoopTicketSlaService : ITicketSlaService
     {
         public Task PauseAsync(string ticketId, string userId, string reason) => Task.CompletedTask;
+        public Task PauseAsync(Ticket ticket, string userId, string reason) => Task.CompletedTask;
         public Task ResumeAsync(string ticketId, string userId) => Task.CompletedTask;
+        public Task ResumeAsync(Ticket ticket, string userId) => Task.CompletedTask;
         public Task AutoResumeIfDueAsync(string ticketId) => Task.CompletedTask;
     }
 
