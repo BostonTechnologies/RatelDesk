@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Helpdesk.API.Endpoints.Categories;
+using Helpdesk.API.Endpoints.Dashboard;
 using Helpdesk.API.Endpoints.Services;
 using Helpdesk.API.Services;
 using Helpdesk.Infrastructure.Persistence;
@@ -104,11 +105,13 @@ public sealed class ServiceItemsEndpointsTests
         var serviceResponse = await harness.Client.GetAsync("/api/v1/services/root-a");
         var requestFormResponse = await harness.Client.GetAsync("/api/v1/request-forms/form-root");
         var categoriesResponse = await harness.Client.GetAsync("/api/v1/categories");
+        var customerDashboardResponse = await harness.Client.GetAsync("/api/v1/dashboard/customer-summary");
 
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, serviceItemsResponse.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, serviceResponse.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, requestFormResponse.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, categoriesResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, customerDashboardResponse.StatusCode);
     }
 
     private sealed class ServiceItemsTestHarness : IAsyncDisposable
@@ -161,6 +164,7 @@ public sealed class ServiceItemsEndpointsTests
             app.UseAuthorization();
             app.MapServiceEndpoints();
             app.MapTicketCategoryEndpoints();
+            app.MapDashboardEndpoints();
 
             using (var scope = app.Services.CreateScope())
             {

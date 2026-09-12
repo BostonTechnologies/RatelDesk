@@ -47,6 +47,7 @@ public static class DashboardEndpoints
         })
         .WithName("GetCustomerDashboard")
         .WithSummary("Customer dashboard metrics.")
-        .WithDescription("Returns ticket counts for the authenticated customer.");
+        .WithDescription("Returns ticket counts for the authenticated customer.")
+        .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
     }
 }
