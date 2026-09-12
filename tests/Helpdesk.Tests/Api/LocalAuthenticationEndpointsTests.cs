@@ -569,6 +569,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     {
         const string organizationId = "tenant-role-owner";
         const string otherOrganizationId = "other-role-owner";
+        string tenantAdministratorId = string.Empty;
         await using (var setupScope = _factory.Services.CreateAsyncScope())
         {
             var identityUsers = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
@@ -577,6 +578,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
                 "correct horse battery staple");
             Assert.True(createUser.Succeeded);
             var userId = (await identityUsers.FindByEmailAsync("tenant.role.admin@example.test"))!.Id;
+            tenantAdministratorId = userId;
 
             var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
             db.Organizations.AddRange(
@@ -613,6 +615,9 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             new RoleDefinitionEndpoints.CreateRoleDefinitionRequest(
                 "Tenant account manager", null, organizationId, [HelpdeskPermissions.TenantUsersManage]));
         var safeRole = await safeCreate.Content.ReadFromJsonAsync<RoleDefinitionEndpoints.RoleDefinitionResponse>();
+        var ownUpdate = await client.PutAsJsonAsync($"/api/v1/admin/role-definitions/{safeRole!.Id}",
+            new RoleDefinitionEndpoints.UpdateRoleDefinitionRequest(
+                "Tenant incident manager", [HelpdeskPermissions.IncidentUser, HelpdeskPermissions.IncidentManager]));
         var invitation = await client.PostAsJsonAsync($"/api/v1/tenant-admin/organizations/{organizationId}/users/",
             new TenantAdministrationEndpoints.CreateTenantLocalAccountRequest("Custom Role Member", "custom.role.member@example.test"));
         var target = await invitation.Content.ReadFromJsonAsync<TenantAdministrationEndpoints.TenantLocalAccountInvitationResponse>();
@@ -621,17 +626,32 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
             new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([safeRole!.Key]));
         var visibleRoles = await client.GetFromJsonAsync<List<RoleDefinitionEndpoints.RoleDefinitionResponse>>(
             "/api/v1/admin/role-definitions/");
+        var removeAssignment = await client.PutAsJsonAsync(
+            $"/api/v1/tenant-admin/organizations/{organizationId}/users/{target!.UserId}/assignments",
+            new TenantAdministrationEndpoints.ReplaceTenantMembershipRequest([]));
+        var deleteOwnRole = await client.DeleteAsync($"/api/v1/admin/role-definitions/{safeRole.Id}");
 
         Assert.Equal(HttpStatusCode.Created, safeCreate.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, crossTenantCreate.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, crossTenantUpdate.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, crossTenantDelete.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, elevatedCreate.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, ownUpdate.StatusCode);
         Assert.Equal(HttpStatusCode.Created, invitation.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, assignment.StatusCode);
-        Assert.Contains(visibleRoles!, role => role.Key == "custom.tenant-incident-reader" && role.OwnerOrganizationId == organizationId);
+        Assert.Equal(HttpStatusCode.NoContent, removeAssignment.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, deleteOwnRole.StatusCode);
+        Assert.Contains(visibleRoles!, role => role.Key == "custom.tenant-incident-reader" && role.Name == "Tenant incident manager" && role.OwnerOrganizationId == organizationId);
         Assert.DoesNotContain(visibleRoles!, role => role.Key == "custom.other-tenant-reader");
         Assert.Contains(visibleRoles!, role => role.IsBuiltIn);
+        await using var verificationScope = _factory.Services.CreateAsyncScope();
+        var roleAudits = await verificationScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().ActivityLogs
+            .Where(log => log.RelatedEntityId == safeRole.Id)
+            .ToListAsync();
+        Assert.All(roleAudits, audit => Assert.Equal(tenantAdministratorId, audit.UserId));
+        Assert.Contains(roleAudits, audit => audit.Message.Contains($"Created custom role 'Tenant incident reader' in organization '{organizationId}'", StringComparison.Ordinal));
+        Assert.Contains(roleAudits, audit => audit.Message.Contains("Updated custom role 'Tenant incident reader' to 'Tenant incident manager'", StringComparison.Ordinal) && audit.Message.Contains("->", StringComparison.Ordinal));
+        Assert.Contains(roleAudits, audit => audit.Message.Contains($"Deleted custom role 'Tenant incident manager' in organization '{organizationId}'", StringComparison.Ordinal));
     }
 
     [Fact]

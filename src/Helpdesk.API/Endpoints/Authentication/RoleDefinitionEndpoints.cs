@@ -4,6 +4,7 @@ using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace Helpdesk.API.Endpoints.Authentication;
 
@@ -114,6 +115,8 @@ public static class RoleDefinitionEndpoints
                 Permissions = validation.Permissions!.Select(permission => new RolePermission { Permission = permission }).ToList()
             };
             db.Roles.Add(role);
+            AddAuditLog(db, context.User, role,
+                $"Created custom role '{role.Name}' in organization '{role.OwnerOrganizationId}'. Permissions: [{FormatPermissions(role.Permissions.Select(permission => permission.Permission))}].");
             await db.SaveChangesAsync(cancellationToken);
             return Results.Created($"/api/v1/admin/role-definitions/{role.Id}", ToResponse(role, 0));
         });
@@ -150,9 +153,13 @@ public static class RoleDefinitionEndpoints
                 });
             }
 
+            var previousName = role.Name;
+            var previousPermissions = role.Permissions.Select(permission => permission.Permission).ToArray();
             role.Name = request.Name.Trim();
             db.RolePermissions.RemoveRange(role.Permissions);
             role.Permissions = validation.Permissions!.Select(permission => new RolePermission { RoleId = role.Id, Permission = permission }).ToList();
+            AddAuditLog(db, context.User, role,
+                $"Updated custom role '{previousName}' to '{role.Name}' in organization '{role.OwnerOrganizationId}'. Permissions: [{FormatPermissions(previousPermissions)}] -> [{FormatPermissions(validation.Permissions)}].");
             await db.SaveChangesAsync(cancellationToken);
             return Results.Ok(ToResponse(role, await db.ScopedRoleAssignments.CountAsync(assignment => assignment.RoleKey == role.Key, cancellationToken)));
         });
@@ -165,7 +172,8 @@ public static class RoleDefinitionEndpoints
             CancellationToken cancellationToken) =>
         {
             var access = await accessService.ResolveAsync(context.User, cancellationToken);
-            var role = await db.Roles.SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+            var role = await db.Roles.Include(candidate => candidate.Permissions)
+                .SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
             if (role is null) return Results.NotFound();
             if (!CanManageOrganization(access, role.OwnerOrganizationId)) return Results.Forbid();
             if (role.IsProtected || role.IsBuiltIn)
@@ -177,6 +185,8 @@ public static class RoleDefinitionEndpoints
                 return Results.Conflict(new { message = "Remove the role from all assignments before deleting it." });
             }
 
+            AddAuditLog(db, context.User, role,
+                $"Deleted custom role '{role.Name}' in organization '{role.OwnerOrganizationId}'. Permissions: [{FormatPermissions(role.Permissions.Select(permission => permission.Permission))}].");
             db.Roles.Remove(role);
             await db.SaveChangesAsync(cancellationToken);
             return Results.NoContent();
@@ -191,6 +201,23 @@ public static class RoleDefinitionEndpoints
         access.IsHelpdeskAdmin ||
         (!string.IsNullOrWhiteSpace(organizationId) &&
          access.HasPermission(HelpdeskPermissions.TenantRolesAssign, organizationId));
+
+    private static void AddAuditLog(HelpdeskDbContext db, ClaimsPrincipal user, Role role, string message) =>
+        db.ActivityLogs.Add(new ActivityLog
+        {
+            UserId = ResolveActorId(user),
+            RelatedEntityId = role.Id,
+            Message = message
+        });
+
+    private static string ResolveActorId(ClaimsPrincipal user) =>
+        user.FindFirstValue(ClaimTypes.NameIdentifier) ??
+        user.FindFirstValue("sub") ??
+        user.Identity?.Name ??
+        "unknown";
+
+    private static string FormatPermissions(IEnumerable<string> permissions) =>
+        string.Join(", ", permissions.OrderBy(permission => permission, StringComparer.Ordinal));
 
     private static async Task<RoleValidation> ValidateCustomRoleAsync(
         string? name,

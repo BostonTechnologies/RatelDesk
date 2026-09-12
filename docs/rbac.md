@@ -58,6 +58,11 @@ so revoked tenant access does not persist in an existing API session.
 Invitation and membership-change audit records contain the actor, target, and
 tenant-scoped action, but never the activation token or a credential.
 
+Custom-role creation, updates, and deletion are also recorded with the acting
+principal, role target, tenant scope, and the permission set (including the
+before/after set for an update). These records contain authorization metadata
+only; they never include credentials, activation tokens, or session material.
+
 ## External identities
 
 OIDC identities and local accounts use the same resolved role and scope model.
