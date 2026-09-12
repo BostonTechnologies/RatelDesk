@@ -606,6 +606,9 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         var crossTenantCreate = await client.PostAsJsonAsync("/api/v1/admin/role-definitions/",
             new RoleDefinitionEndpoints.CreateRoleDefinitionRequest(
                 "Other tenant incident reader", null, otherOrganizationId, [HelpdeskPermissions.IncidentUser]));
+        var crossTenantUpdate = await client.PutAsJsonAsync("/api/v1/admin/role-definitions/other-tenant-role",
+            new RoleDefinitionEndpoints.UpdateRoleDefinitionRequest("Changed other tenant role", [HelpdeskPermissions.IncidentUser]));
+        var crossTenantDelete = await client.DeleteAsync("/api/v1/admin/role-definitions/other-tenant-role");
         var elevatedCreate = await client.PostAsJsonAsync("/api/v1/admin/role-definitions/",
             new RoleDefinitionEndpoints.CreateRoleDefinitionRequest(
                 "Tenant account manager", null, organizationId, [HelpdeskPermissions.TenantUsersManage]));
@@ -621,6 +624,8 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Created, safeCreate.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, crossTenantCreate.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, crossTenantUpdate.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, crossTenantDelete.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, elevatedCreate.StatusCode);
         Assert.Equal(HttpStatusCode.Created, invitation.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, assignment.StatusCode);
