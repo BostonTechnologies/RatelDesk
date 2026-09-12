@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Helpdesk.Infrastructure.AiAssistant.Chat;
 
-public sealed class AiAssistantChatStore(HelpdeskDbContext db, ITenantContext tenant, IDomainEventPublisher domainEvents, ICorrelationContext correlation, ILogger<AiAssistantChatStore> logger, TimeProvider? timeProvider = null) : IAiAssistantChatStore
+public sealed class AiAssistantChatStore(HelpdeskDbContext db, IDomainEventPublisher domainEvents, ICorrelationContext correlation, ILogger<AiAssistantChatStore> logger, TimeProvider? timeProvider = null) : IAiAssistantChatStore
 {
     private DateTimeOffset Now => (timeProvider ?? TimeProvider.System).GetUtcNow();
     public async Task<IReadOnlyList<ChatConversationSummary>> HistoryAsync(string type, string ticketId, int skip, CancellationToken ct)
@@ -86,11 +86,9 @@ public sealed class AiAssistantChatStore(HelpdeskDbContext db, ITenantContext te
 
     private async Task<Ticket> AuthorizeAsync(string type, string id, CancellationToken ct)
     {
-        var ticket = await db.Tickets.SingleOrDefaultAsync(x => x.Id == id, ct);
+        var ticket = await db.Tickets.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == id, ct);
         if (ticket is null || !(type switch { "incidents" => ticket is Incident, "requests" => ticket is Request, "changes" => ticket is Change, _ => false }))
             throw new KeyNotFoundException("Ticket not found.");
-        if (!tenant.IsHelpdeskAdmin && (string.IsNullOrEmpty(tenant.TenantId) || ticket.OrganizationId != tenant.TenantId))
-            throw new UnauthorizedAccessException();
         return ticket;
     }
 

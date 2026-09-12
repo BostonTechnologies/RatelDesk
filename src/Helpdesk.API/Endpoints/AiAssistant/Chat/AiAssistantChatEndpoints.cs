@@ -2,7 +2,11 @@ using System.Security.Claims;
 using System.Text.Json;
 using Helpdesk.Application.AiAssistant.Chat;
 using Helpdesk.Infrastructure.AiAssistant.Chat;
+using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.AiAssistant.Chat;
+using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Helpdesk.API.Endpoints.AiAssistant.Chat;
@@ -16,6 +20,16 @@ public static class AiAssistantChatEndpoints
         {
             if (!context.HttpContext.RequestServices.GetRequiredService<IOptions<AiAssistantChatOptions>>().Value.Enabled)
                 return Results.Problem("Chat is not enabled.", statusCode: 503);
+            var routeValues = context.HttpContext.Request.RouteValues;
+            var failure = await AuthorizeTicketManagementAsync(
+                routeValues["ticketType"]?.ToString(),
+                routeValues["ticketId"]?.ToString(),
+                context.HttpContext.User,
+                context.HttpContext.RequestServices.GetRequiredService<HelpdeskDbContext>(),
+                context.HttpContext.RequestServices.GetRequiredService<ICurrentUserAccessService>(),
+                context.HttpContext.RequestAborted);
+            if (failure is not null)
+                return failure;
             try { return await next(context); }
             catch (ChatConflictException ex) { return Results.Conflict(new { message = ex.Message }); }
             catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
@@ -59,6 +73,39 @@ public static class AiAssistantChatEndpoints
     }
 
     private static string Actor(HttpContext context) => context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub") ?? throw new UnauthorizedAccessException();
+
+    private static async Task<IResult?> AuthorizeTicketManagementAsync(
+        string? ticketType,
+        string? ticketId,
+        ClaimsPrincipal user,
+        HelpdeskDbContext db,
+        ICurrentUserAccessService accessService,
+        CancellationToken ct)
+    {
+        var ticket = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, ct);
+        if (ticket is null || !MatchesTicketType(ticket, ticketType))
+            return Results.NotFound();
+
+        var access = await accessService.ResolveAsync(user, ct);
+        var canManage = ticket switch
+        {
+            Incident => access.CanManageIncident(ticket.OrganizationId),
+            Request => access.CanManageRequest(ticket.OrganizationId),
+            Change => access.CanManageChange(ticket.OrganizationId),
+            _ => false
+        };
+        return canManage ? null : Results.Forbid();
+    }
+
+    private static bool MatchesTicketType(Ticket ticket, string? ticketType) =>
+        ticketType?.ToLowerInvariant() switch
+        {
+            "incidents" => ticket is Incident,
+            "requests" => ticket is Request,
+            "changes" => ticket is Change,
+            _ => false
+        };
 
     private static async Task StreamAsync(string ticketType, string ticketId, Guid conversationId, long? cursor, HttpContext context, IChatLiveFeed feed, IServiceScopeFactory scopes, CancellationToken ct)
     {
