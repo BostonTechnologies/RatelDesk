@@ -34,7 +34,8 @@ public sealed class BootstrapInitializationService(
             string.IsNullOrWhiteSpace(request.DisplayName) ||
             string.IsNullOrWhiteSpace(request.OrganizationName) ||
             string.IsNullOrWhiteSpace(request.Password) ||
-            !IsPermittedApplicationUrl(request.ApplicationUrl))
+            !IsPermittedApplicationUrl(request.ApplicationUrl) ||
+            !IsPermittedTimeZone(request.TimeZoneId))
         {
             return BootstrapInitializationResult.InvalidRequest;
         }
@@ -141,6 +142,7 @@ public sealed class BootstrapInitializationService(
                 InstanceId = descriptor.InstanceId,
                 OperationId = descriptor.OperationId.Value,
                 SetupVersion = GetSetupVersion(),
+                TimeZoneId = request.TimeZoneId?.Trim() ?? "UTC",
                 CompletedAtUtc = completedAtUtc
             });
             if (!string.IsNullOrWhiteSpace(request.ApplicationName) || !string.IsNullOrWhiteSpace(request.ApplicationUrl))
@@ -189,6 +191,28 @@ public sealed class BootstrapInitializationService(
                 (applicationUri.Scheme == Uri.UriSchemeHttp && applicationUri.IsLoopback));
     }
 
+    private static bool IsPermittedTimeZone(string? timeZoneId)
+    {
+        if (string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            return true;
+        }
+
+        try
+        {
+            _ = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId.Trim());
+            return true;
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return false;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return false;
+        }
+    }
+
     private static string GetSetupVersion() =>
         typeof(BootstrapInitializationService).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
@@ -201,7 +225,8 @@ public sealed record FirstAdministratorRequest(
     string Password,
     string OrganizationName,
     string? ApplicationName,
-    string? ApplicationUrl);
+    string? ApplicationUrl,
+    string? TimeZoneId = null);
 
 public sealed record BootstrapInitializationResult(bool Succeeded, string? Error, BootstrapDescriptor? Descriptor)
 {

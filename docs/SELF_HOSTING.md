@@ -29,8 +29,9 @@ at API startup. For SQLite, set `Bootstrap__Unattended__Provider=Sqlite`,
 `Bootstrap__Unattended__OrganizationName`; optional
 `Bootstrap__Unattended__ApplicationName` and
 `Bootstrap__Unattended__ApplicationUrl` use the same branding behavior as the
-wizard. The password belongs in an operator-controlled secret input, not a
-committed Compose file.
+wizard. `Bootstrap__Unattended__TimeZoneId` accepts an installed IANA time-zone
+ID and defaults to `UTC`. The password belongs in an operator-controlled secret
+input, not a committed Compose file.
 
 Run the command in the API container:
 

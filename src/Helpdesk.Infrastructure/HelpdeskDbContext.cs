@@ -104,6 +104,7 @@ public class HelpdeskDbContext(
             entity.ToTable("InstanceInitializations");
             entity.HasKey(initialization => initialization.Id);
             entity.Property(initialization => initialization.SetupVersion).HasMaxLength(64);
+            entity.Property(initialization => initialization.TimeZoneId).HasMaxLength(128).HasDefaultValue("UTC");
             entity.HasIndex(initialization => initialization.InstanceId).IsUnique();
         });
         modelBuilder.Entity<Helpdesk.Shared.AiAssistant.Chat.AiAssistantChatConversation>(entity =>

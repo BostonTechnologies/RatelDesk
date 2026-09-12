@@ -1671,6 +1671,12 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasDefaultValue("UTC")
+                        .HasColumnType("character varying(128)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("InstanceId")

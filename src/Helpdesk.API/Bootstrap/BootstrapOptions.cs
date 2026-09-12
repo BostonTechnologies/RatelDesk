@@ -32,4 +32,6 @@ public sealed class BootstrapUnattendedOptions
     public string? ApplicationName { get; init; }
 
     public string? ApplicationUrl { get; init; }
+
+    public string? TimeZoneId { get; init; }
 }

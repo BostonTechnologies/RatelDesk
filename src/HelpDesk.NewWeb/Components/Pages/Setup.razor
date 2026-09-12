@@ -40,6 +40,7 @@
                         <MudTextField T="string" @bind-Value="_organization" Label="Initial organization" Required="true" FullWidth="true" />
                         <MudTextField T="string" @bind-Value="_applicationName" Label="Application name" Required="true" FullWidth="true" />
                         <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL" InputType="InputType.Url" Required="true" FullWidth="true" HelperText="HTTPS is required except for localhost HTTP." />
+                        <MudTextField T="string" @bind-Value="_timeZoneId" Label="Time zone" Required="true" FullWidth="true" HelperText="IANA time-zone ID; UTC is the default (for example, Africa/Johannesburg)." />
                     </MudStep>
                     <MudStep Title="First administrator">
                         <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" FullWidth="true" />
@@ -57,6 +58,7 @@
                             <tr><td>Organization</td><td>@_organization</td></tr>
                             <tr><td>Application</td><td>@(_keepDefaults ? "RatelDesk defaults" : _applicationName)</td></tr>
                             <tr><td>Public URL</td><td>@_applicationUrl</td></tr>
+                            <tr><td>Time zone</td><td>@_timeZoneId</td></tr>
                             <tr><td>Administrator</td><td>@_displayName (@_email)</td></tr>
                         </tbody></MudSimpleTable>
                     </MudStep>
@@ -81,7 +83,7 @@
     private string? _error, _session;
     private string _setupCode = string.Empty, _provider = "Sqlite", _host = string.Empty, _database = string.Empty, _username = string.Empty, _databasePassword = string.Empty;
     private int _port = 5432;
-    private string _organization = string.Empty, _applicationName = "RatelDesk", _applicationUrl = string.Empty, _displayName = string.Empty, _email = string.Empty, _password = string.Empty, _confirmPassword = string.Empty;
+    private string _organization = string.Empty, _applicationName = "RatelDesk", _applicationUrl = string.Empty, _timeZoneId = "UTC", _displayName = string.Empty, _email = string.Empty, _password = string.Empty, _confirmPassword = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -133,7 +135,7 @@
     {
         _error = _step switch
         {
-            2 when string.IsNullOrWhiteSpace(_organization) || string.IsNullOrWhiteSpace(_applicationName) || !ValidUrl(_applicationUrl) => "Enter an organization, application name, and permitted public URL.",
+            2 when string.IsNullOrWhiteSpace(_organization) || string.IsNullOrWhiteSpace(_applicationName) || string.IsNullOrWhiteSpace(_timeZoneId) || !ValidUrl(_applicationUrl) => "Enter an organization, application name, permitted public URL, and time zone.",
             3 when string.IsNullOrWhiteSpace(_displayName) || string.IsNullOrWhiteSpace(_email) || string.IsNullOrWhiteSpace(_password) || _password != _confirmPassword => "Enter administrator details and matching passphrases.",
             _ => null
         };
@@ -146,7 +148,7 @@
         _busy = true; _error = null;
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize") { Content = JsonContent.Create(new { email = _email, displayName = _displayName, password = _password, organizationName = _organization, applicationName = _keepDefaults ? null : _applicationName, applicationUrl = _applicationUrl }) };
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize") { Content = JsonContent.Create(new { email = _email, displayName = _displayName, password = _password, organizationName = _organization, applicationName = _keepDefaults ? null : _applicationName, applicationUrl = _applicationUrl, timeZoneId = _timeZoneId }) };
             request.Headers.Add("X-RatelDesk-Setup-Session", _session);
             using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
             if (!response.IsSuccessStatusCode) { _error = "Initialization could not be completed. Check the setup details and passphrase."; return; }

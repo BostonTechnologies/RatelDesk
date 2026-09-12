@@ -93,6 +93,7 @@ public sealed class UnattendedBootstrapCommand(
             unattended.Password,
             unattended.OrganizationName,
             unattended.ApplicationName,
-            unattended.ApplicationUrl), cancellationToken);
-    }
+            unattended.ApplicationUrl,
+            unattended.TimeZoneId), cancellationToken);
+}
 }

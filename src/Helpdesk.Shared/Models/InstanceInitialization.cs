@@ -18,5 +18,11 @@ public sealed class InstanceInitialization
 
     public string SetupVersion { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Instance-level default selected during first-run setup. This is kept
+    /// separate from working calendars so setup does not invent a schedule.
+    /// </summary>
+    public string TimeZoneId { get; set; } = "UTC";
+
     public DateTimeOffset CompletedAtUtc { get; set; }
 }

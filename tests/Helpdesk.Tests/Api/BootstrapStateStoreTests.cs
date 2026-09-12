@@ -252,6 +252,7 @@ public sealed class BootstrapStateStoreTests
             Assert.Equal(configured.InstanceId, initialization.InstanceId);
             Assert.Equal(configured.OperationId, initialization.OperationId);
             Assert.NotEqual("unknown", initialization.SetupVersion);
+            Assert.Equal("UTC", initialization.TimeZoneId);
 
             var interruptedDescriptor = await store.UpdateAsync(current => current with
             {
@@ -278,6 +279,7 @@ public sealed class BootstrapStateStoreTests
 
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("InitialSqliteApplication", StringComparison.Ordinal));
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("AddInstanceInitialization", StringComparison.Ordinal));
+            Assert.Contains(appliedMigrations, migration => migration.EndsWith("AddInitializationTimeZone", StringComparison.Ordinal));
             Assert.Contains(appliedMigrations, migration => migration.EndsWith("InitialSqliteIdentity", StringComparison.Ordinal));
         }
         finally
@@ -418,6 +420,53 @@ public sealed class BootstrapStateStoreTests
                 "Example Organization",
                 "Example Desk",
                 "http://desk.example.test"), CancellationToken.None);
+
+            Assert.Equal(BootstrapInitializationResult.InvalidRequest, result);
+            Assert.False(File.Exists(Path.Combine(options.DataDirectory, "rateldesk.db")));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Initialization_rejects_an_unknown_time_zone_before_creating_the_database()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-bootstrap-{Guid.NewGuid():N}");
+        try
+        {
+            var options = new BootstrapOptions
+            {
+                StateDirectory = directory,
+                DataDirectory = Path.Combine(directory, "data"),
+                SetupCode = "operator-provided-code"
+            };
+            var store = new FileBootstrapStateStore(options);
+            await store.LoadOrCreateAsync();
+            var configured = await store.UpdateAsync(current => current with
+            {
+                State = BootstrapState.Configuring,
+                Provider = "Sqlite",
+                SqlitePath = Path.Combine(options.DataDirectory, "rateldesk.db"),
+                OperationId = Guid.NewGuid()
+            });
+            var initializer = new BootstrapInitializationService(
+                store,
+                options,
+                DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(directory, "keys"))));
+
+            var result = await initializer.InitializeAsync(configured, new FirstAdministratorRequest(
+                "admin@example.test",
+                "Instance Admin",
+                "correct horse battery staple",
+                "Example Organization",
+                "Example Desk",
+                "https://desk.example.test",
+                "Not/A-TimeZone"), CancellationToken.None);
 
             Assert.Equal(BootstrapInitializationResult.InvalidRequest, result);
             Assert.False(File.Exists(Path.Combine(options.DataDirectory, "rateldesk.db")));

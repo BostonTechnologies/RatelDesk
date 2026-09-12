@@ -1650,6 +1650,12 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasDefaultValue("UTC")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("InstanceId")
