@@ -19,7 +19,7 @@ public static class TimelineEndpoints
     {
         group
             .WithTags("Timeline")
-            .RequireAuthorization();
+            .RequireAuthorization("HelpdeskAdmin");
 
         group.MapPost("/{id:guid}/retry",
             async (
