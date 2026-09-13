@@ -220,7 +220,9 @@ public sealed class CustomerInvitationService(
     }
 
     private Task<CustomerAuthLink?> FindLinkAsync(string customerId, CancellationToken ct)
-        => _db.CustomerAuthLinks.FirstOrDefaultAsync(x => x.CustomerId == customerId, ct);
+        => _db.CustomerAuthLinks.FirstOrDefaultAsync(
+            x => x.CustomerId == customerId && x.AuthProviderType != "Local",
+            ct);
 
     private async Task<CustomerAuthLink> FindOrCreateLinkAsync(Customer customer, CancellationToken ct)
     {

@@ -1,39 +1,44 @@
-﻿@implements IDisposable
+@implements IDisposable
 @inject NavigationManager NavigationManager
 
 <MudNavMenu>
     <MudNavLink Href="home" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Home</MudNavLink>
 
-    <AuthorizeView>
+    <AuthorizeView Roles="SelfService.User,HelpdeskAdmin">
         <MudNavGroup Title="Portal" Icon="@Icons.Material.Filled.Apps" Expanded="false">
             <MudNavLink Href="self-service" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Storefront">Self Service</MudNavLink>
             <MudNavLink Href="self-service/my-requests" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ReceiptLong">My Requests</MudNavLink>
         </MudNavGroup>
     </AuthorizeView>
 
-    <AuthorizeView Roles="Incident.User,Incident.Manager,Request.User,Request.Manager,Change.User,Change.Manager,DataManagement.Admin,HelpdeskAdmin">
+    <AuthorizeView Roles="Incident.User,Incident.Read,Incident.Write,Incident.Manager,Request.User,Request.Read,Request.Write,Request.Execute,Request.Manager,Change.User,Change.Read,Change.Write,Change.Manager,DataManagement.Admin,HelpdeskAdmin">
         @*
         <MudNavLink Href="/technician/dashboard" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Dashboard">Technician Dashboard</MudNavLink>
         *@
         
         <MudNavGroup Title="Workspace" Icon="@Icons.Material.Filled.Workspaces" Expanded="false">
-            <AuthorizeView Roles="Incident.User,Incident.Manager,HelpdeskAdmin" Context="incidentAuth">
+            <AuthorizeView Roles="Incident.User,Incident.Read,Incident.Write,Incident.Manager,HelpdeskAdmin" Context="incidentAuth">
                 <MudNavLink Href="incidents" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ListAlt">Incidents</MudNavLink>
             </AuthorizeView>
-            <AuthorizeView Roles="Request.User,Request.Manager,HelpdeskAdmin" Context="requestAuth">
+            <AuthorizeView Roles="Request.User,Request.Read,Request.Write,Request.Execute,Request.Manager,HelpdeskAdmin" Context="requestAuth">
                 <MudNavLink Href="requests" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.List">Requests</MudNavLink>
+            </AuthorizeView>
+            <AuthorizeView Roles="Request.Read,Request.Write,Request.Execute,Request.Manager,HelpdeskAdmin" Context="tasksAuth">
                 <MudNavLink Href="tasks" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.TaskAlt">Tasks</MudNavLink>
             </AuthorizeView>
-            <AuthorizeView Roles="Change.User,Change.Manager,HelpdeskAdmin" Context="changeAuth">
+            <AuthorizeView Roles="Change.User,Change.Read,Change.Write,Change.Manager,HelpdeskAdmin" Context="changeAuth">
                 <MudNavLink Href="changes" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ChangeCircle">Changes</MudNavLink>
             </AuthorizeView>
         </MudNavGroup>
 
-        <AuthorizeView Roles="Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin" Context="opsGate">
+        <AuthorizeView Roles="Incident.Write,Incident.Manager,Request.Read,Request.Write,Request.Execute,Request.Manager,Change.Write,Change.Manager,HelpdeskAdmin" Context="opsGate">
         <MudNavGroup Title="Operations" Icon="@Icons.Material.Filled.SettingsSuggest" Expanded="false">
-            <MudNavLink Href="/ops/slas" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Schedule">SLA Ops</MudNavLink>
-            <MudNavLink Href="/ops/workflows" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.AccountTree">Workflow Ops</MudNavLink>
-            <MudNavLink Href="notifications" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Notifications">Notifications</MudNavLink>
+            <AuthorizeView Roles="Incident.Write,Incident.Manager,Request.Write,Request.Manager,Change.Write,Change.Manager,HelpdeskAdmin" Context="slaOpsAuth">
+                <MudNavLink Href="/ops/slas" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Schedule">SLA Ops</MudNavLink>
+            </AuthorizeView>
+            <AuthorizeView Roles="Request.Read,Request.Write,Request.Execute,Request.Manager,HelpdeskAdmin" Context="workflowOpsAuth">
+                <MudNavLink Href="/ops/workflows" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.AccountTree">Workflow Ops</MudNavLink>
+            </AuthorizeView>
             <AuthorizeView Roles="HelpdeskAdmin" Context="operationsAuth">
                 <MudNavLink Href="/ops/hangfire" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Timer">Hangfire Ops</MudNavLink>
                 <MudNavLink Href="/settings/connectivity" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.CloudSync">Connectivity</MudNavLink>
@@ -44,7 +49,7 @@
 
         <AuthorizeView Roles="Incident.Manager,Request.Manager,Change.Manager,DataManagement.Admin,HelpdeskAdmin" Context="resourcesGate">
         <MudNavGroup Title="Resources" Icon="@Icons.Material.Filled.Source" Expanded="false">
-             <AuthorizeView Roles="Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin" Context="assetAuth">
+             <AuthorizeView Roles="HelpdeskAdmin" Context="assetAuth">
                 <MudNavLink Href="assets" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Inventory">Assets</MudNavLink>
              </AuthorizeView>
              <AuthorizeView Roles="HelpdeskAdmin,DataManagement.Admin" Context="dataManagementAuth">
@@ -67,6 +72,8 @@
     <AuthorizeView>
         <Authorized>
             <MudNavLink Href="auth" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Person">@context.User.Identity?.Name</MudNavLink>
+            <MudNavLink Href="notifications" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Notifications">Notifications</MudNavLink>
+            <TenantAdministrationNavigation />
             <AuthorizeView Roles="HelpdeskAdmin" Context="adminAuth">
                 <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="false">
                     <MudNavGroup Title="Accounts & Orgs" Icon="@Icons.Material.Filled.AccountTree" Expanded="false">

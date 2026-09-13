@@ -45,6 +45,7 @@ using Helpdesk.Shared.Auth;
 using Helpdesk.API.Ops;
 using Helpdesk.API.Validators;
 using Helpdesk.API.Background;
+using Helpdesk.API.Bootstrap;
 using Helpdesk.Application.Incidents;
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Notifications;
@@ -53,9 +54,11 @@ using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Sla;
 using Helpdesk.Application.WorkLogs;
 using Helpdesk.Infrastructure;
+using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Infrastructure.Logging;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Infrastructure.Persistence.SeedData;
+using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Health;
 using Helpdesk.Infrastructure.Services;
 using Helpdesk.Shared.Models;
@@ -63,7 +66,10 @@ using Helpdesk.Shared.Enums;
 using Helpdesk.Shared.Services;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Hangfire.Storage.SQLite;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
@@ -78,6 +84,7 @@ using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using Microsoft.AspNetCore.Identity;
 using Npgsql;
 using System.IdentityModel.Tokens.Jwt;
 using System.IO;
@@ -90,20 +97,221 @@ using AppServices = Helpdesk.Application.Services;
 using SharedServices = Helpdesk.Shared.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var systemTokenSecret = builder.Configuration["SYSTEM_TOKEN_SECRET"] ?? builder.Configuration["SystemTokenSecret"];
 var aiAgentOpsLogBuffer = new AiAgentOpsLogBuffer();
 var skipDatabaseStartup = builder.Configuration.GetValue<bool>("Helpdesk:SkipDatabaseStartup");
+var bootstrapSettings = builder.Configuration.GetSection(BootstrapOptions.SectionName).Get<BootstrapOptions>() ?? new BootstrapOptions();
+var bootstrapOptions = new BootstrapOptions
+{
+    StateDirectory = bootstrapSettings.StateDirectory,
+    DataDirectory = bootstrapSettings.DataDirectory,
+    SetupCode = bootstrapSettings.SetupCode,
+    Unattended = bootstrapSettings.Unattended,
+    Interactive = new BootstrapInteractiveOptions
+    {
+        OrganizationName = bootstrapSettings.Interactive.OrganizationName ?? builder.Configuration["Branding:OrganizationName"],
+        ApplicationName = bootstrapSettings.Interactive.ApplicationName ?? builder.Configuration["Branding:ApplicationName"],
+        ApplicationUrl = bootstrapSettings.Interactive.ApplicationUrl ?? builder.Configuration["Branding:ApplicationUrl"],
+        TimeZoneId = bootstrapSettings.Interactive.TimeZoneId
+    }
+};
+var bootstrapStateStore = new FileBootstrapStateStore(bootstrapOptions);
+BootstrapDescriptor? bootstrapDescriptor = null;
+if (!skipDatabaseStartup)
+{
+    var startupKeyPath = builder.Configuration["DataProtection:KeyRingPath"] ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    var startupProtection = DataProtectionProvider.Create(new DirectoryInfo(startupKeyPath),
+        options => options.SetApplicationName(builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring"));
+    bootstrapDescriptor = await new BootstrapStartupService(bootstrapStateStore, bootstrapOptions, startupProtection)
+        .ResolveAsync(builder.Configuration);
+}
+
+if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "Sqlite", SqlitePath: not null })
+{
+    var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
+                              ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    var bootstrapApplicationName = builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring";
+    var runtimeSettings = new Dictionary<string, string?>
+    {
+        ["Database:Provider"] = "Sqlite",
+        ["Database:Sqlite:Path"] = bootstrapDescriptor.SqlitePath,
+        ["Database:Sqlite:CreateIfMissing"] = "false",
+        ["Authentication:Mode"] = builder.Configuration["Authentication:Mode"] ?? (bootstrapDescriptor.AdoptedLegacy ? "Oidc" : "Local"),
+        ["DataProtection:KeyRingPath"] = bootstrapKeyRingPath
+    };
+    if (string.IsNullOrWhiteSpace(builder.Configuration["StorageOptions:ImageSigningSecret"]))
+    {
+        runtimeSettings["StorageOptions:ImageSigningSecret"] = BootstrapRuntimeSecretStore.GetOrCreateImageSigningSecret(
+            bootstrapOptions,
+            bootstrapKeyRingPath,
+            bootstrapApplicationName);
+    }
+    builder.Configuration.AddInMemoryCollection(runtimeSettings);
+}
+else if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "PostgreSql", ProtectedPostgreSqlConnection: not null })
+{
+    var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
+                              ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    var bootstrapApplicationName = builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring";
+    try
+    {
+        var provider = DataProtectionProvider.Create(
+            new DirectoryInfo(bootstrapKeyRingPath),
+            configuration => configuration.SetApplicationName(bootstrapApplicationName));
+        var connectionString = provider
+            .CreateProtector("RatelDesk.Bootstrap.PostgreSqlConnection.v1")
+            .Unprotect(bootstrapDescriptor.ProtectedPostgreSqlConnection);
+        var runtimeSettings = new Dictionary<string, string?>
+        {
+            ["Database:Provider"] = "PostgreSql",
+            ["ConnectionStrings:HelpdeskDb"] = connectionString,
+            ["Authentication:Mode"] = builder.Configuration["Authentication:Mode"] ?? (bootstrapDescriptor.AdoptedLegacy ? "Oidc" : "Local"),
+            ["DataProtection:KeyRingPath"] = bootstrapKeyRingPath
+        };
+        if (string.IsNullOrWhiteSpace(builder.Configuration["StorageOptions:ImageSigningSecret"]))
+        {
+            runtimeSettings["StorageOptions:ImageSigningSecret"] = BootstrapRuntimeSecretStore.GetOrCreateImageSigningSecret(
+                bootstrapOptions,
+                bootstrapKeyRingPath,
+                bootstrapApplicationName);
+        }
+        builder.Configuration.AddInMemoryCollection(runtimeSettings);
+    }
+    catch (Exception exception) when (exception is CryptographicException or IOException)
+    {
+        throw new InvalidOperationException("The PostgreSQL bootstrap descriptor cannot be recovered. Operator recovery is required.", exception);
+    }
+}
+
+var localAuthenticationOptions = builder.Configuration.GetSection(LocalAuthenticationOptions.SectionName).Get<LocalAuthenticationOptions>() ?? new LocalAuthenticationOptions();
+var localAuthenticationCookieName = localAuthenticationOptions.AllowInsecureLocalhost
+    ? "RatelDesk.Local"
+    : "__Host-RatelDesk.Local";
+
+if (args is ["--initialize-unattended"])
+{
+    if (bootstrapDescriptor is null)
+    {
+        await Console.Error.WriteLineAsync("Unattended initialization is available only for a bootstrap-managed, unconfigured instance.");
+        return;
+    }
+
+    var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
+                              ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    var bootstrapApplicationName = builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring";
+    var dataProtection = DataProtectionProvider.Create(
+        new DirectoryInfo(bootstrapKeyRingPath),
+        configuration => configuration.SetApplicationName(bootstrapApplicationName));
+    var command = new UnattendedBootstrapCommand(
+        bootstrapStateStore,
+        bootstrapOptions,
+        dataProtection,
+        new PostgreSqlSetupPreflightService());
+    var result = await command.InitializeAsync(bootstrapDescriptor, CancellationToken.None);
+    if (!result.Succeeded)
+    {
+        await Console.Error.WriteLineAsync(result.Error ?? "Unattended initialization could not be completed.");
+        return;
+    }
+
+    await Console.Out.WriteLineAsync("RatelDesk initialization completed. Start the API normally to serve the application.");
+    return;
+}
+
+if (args is ["--recover-local-admin", var recoveryEmail])
+{
+    var recoveryToken = await LocalAdminRecoveryCommand.GenerateActivationTokenAsync(builder.Configuration, recoveryEmail);
+    if (string.IsNullOrWhiteSpace(recoveryToken))
+    {
+        await Console.Error.WriteLineAsync("No matching local instance administrator was found, or the selected identity store is unavailable.");
+        return;
+    }
+
+    await Console.Out.WriteLineAsync(recoveryToken);
+    return;
+}
+
+if (args is ["--rotate-setup-code"])
+{
+    if (bootstrapDescriptor is null)
+    {
+        await Console.Error.WriteLineAsync("No bootstrap-managed setup state was found for the selected configuration.");
+        return;
+    }
+
+    await using var rotationLease = await BootstrapOperationLease.AcquireAsync(bootstrapOptions.StateDirectory, CancellationToken.None);
+    var setupCode = await bootstrapStateStore.RotateSetupCodeAsync();
+    if (string.IsNullOrWhiteSpace(setupCode))
+    {
+        await Console.Error.WriteLineAsync("The setup code cannot be rotated after setup is complete or while recovery is required.");
+        return;
+    }
+
+    await Console.Out.WriteLineAsync(setupCode);
+    return;
+}
+
+if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not BootstrapState.Ready)
+{
+    var bootstrapKeyRingPath = builder.Configuration["DataProtection:KeyRingPath"]
+                              ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    Directory.CreateDirectory(bootstrapKeyRingPath);
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(bootstrapKeyRingPath))
+        .SetApplicationName(builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring");
+    builder.Services.AddSingleton(bootstrapOptions);
+    builder.Services.AddSingleton<IBootstrapStateStore>(bootstrapStateStore);
+    builder.Services.AddSingleton<BootstrapSessionService>();
+    builder.Services.AddSingleton<BootstrapInitializationService>();
+    builder.Services.AddSingleton<PostgreSqlSetupPreflightService>();
+    builder.Services.AddHostedService<BootstrapRuntimeTransitionWatcher>();
+    builder.Services.AddProblemDetails();
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.AddPolicy("SetupUnlock", context =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    AutoReplenishment = true,
+                    PermitLimit = 5,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0
+                }));
+    });
+
+    var bootstrapApp = builder.Build();
+    bootstrapApp.UseExceptionHandler();
+    bootstrapApp.UseRateLimiter();
+    bootstrapApp.MapGet("/health/live", () => Results.Ok(new { status = "alive" })).AllowAnonymous();
+    bootstrapApp.MapGet("/health/ready", () => bootstrapDescriptor.State == BootstrapState.RecoveryRequired
+        ? Results.Json(new { status = "recovery-required" }, statusCode: StatusCodes.Status503ServiceUnavailable)
+        : Results.Json(new { status = "awaiting-setup" })).AllowAnonymous();
+    bootstrapApp.MapBootstrapEndpoints();
+    await bootstrapApp.RunAsync();
+    return;
+}
 
 builder.AddServiceDefaults();
 builder.Services.AddSingleton(aiAgentOpsLogBuffer);
 builder.Logging.AddProvider(new AiAgentOpsLoggerProvider(aiAgentOpsLogBuffer));
-AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 // TODO: GlobalTypeMapper is deprecated, switch to AddJsonOptions
 NpgsqlConnection.GlobalTypeMapper.EnableDynamicJson(); // Opt in to Npgsql's dynamic JSON (https://www.npgsql.org/doc/types/json.html)
 var runStartupTasks = Environment.GetEnvironmentVariable("RUN_MIGRATIONS") == "true";
 var hangfireSettings = builder.Configuration.GetSection("Hangfire").Get<HangfireSettings>() ?? new HangfireSettings();
 var hangfireConnectionString = builder.Configuration.GetConnectionString(hangfireSettings.ConnectionStringName);
-if (!skipDatabaseStartup && string.IsNullOrWhiteSpace(hangfireConnectionString))
+var databaseOptions = builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
+var databaseProvider = databaseOptions.ResolveProvider(builder.Configuration.GetConnectionString("HelpdeskDb"));
+var usePostgreSqlHangfire = !skipDatabaseStartup && databaseProvider is DatabaseProvider.PostgreSql;
+var useSqliteHangfire = !skipDatabaseStartup && databaseProvider is DatabaseProvider.Sqlite;
+var useHangfireRuntime = usePostgreSqlHangfire || useSqliteHangfire;
+var sqliteHangfirePath = useSqliteHangfire
+    ? Path.Combine(
+        Path.GetDirectoryName(Path.GetFullPath(databaseOptions.Sqlite.Path))!,
+        "rateldesk.hangfire.db")
+    : null;
+if (usePostgreSqlHangfire && string.IsNullOrWhiteSpace(hangfireConnectionString))
 {
     throw new InvalidOperationException($"ConnectionStrings:{hangfireSettings.ConnectionStringName} is required.");
 }
@@ -142,16 +350,24 @@ builder.Services.Configure<SlaEvaluationJobSettings>(options =>
 builder.Services.AddSingleton(new HangfireRuntimeStatus(
     hangfireSettings.QueueName,
     "/hangfire",
-    "Ops UI / database",
-    "Application PostgreSQL database"));
-if (!skipDatabaseStartup)
+    useHangfireRuntime ? "Ops UI / database" : "Disabled for test runtime",
+    usePostgreSqlHangfire ? "Application PostgreSQL database" :
+    useSqliteHangfire ? "Dedicated SQLite job database" : "No scheduler storage configured"));
+if (useHangfireRuntime)
 {
     builder.Services.AddHangfire(config =>
     {
         config
             .UseSimpleAssemblyNameTypeSerializer()
-            .UseRecommendedSerializerSettings()
-            .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(hangfireConnectionString!));
+            .UseRecommendedSerializerSettings();
+        if (usePostgreSqlHangfire)
+        {
+            config.UsePostgreSqlStorage(options => options.UseNpgsqlConnection(hangfireConnectionString!));
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(sqliteHangfirePath!)!);
+        config.UseSQLiteStorage(sqliteHangfirePath!);
     });
     builder.Services.AddHangfireServer(options =>
     {
@@ -229,9 +445,7 @@ builder.Services.AddRateLimiter(options =>
 {
     options.AddPolicy("TicketSubmission", httpContext =>
     {
-        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ??
-                 httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault() ??
-                 "unknown";
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
         return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: ip,
@@ -244,6 +458,17 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0
             });
     });
+    options.AddPolicy("LocalLogin", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                AutoReplenishment = true,
+                PermitLimit = 100,
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            }));
 
     options.OnRejected = (context, ct) =>
     {
@@ -273,7 +498,9 @@ builder.Services.AddAuthentication(options =>
         // If there is no bearer token, forward to a concrete scheme (NOT to "Bearer")
         var auth = context.Request.Headers["Authorization"].ToString();
         if (string.IsNullOrEmpty(auth) || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            return "Azure";
+            return localAuthenticationOptions.SupportsLocalAccounts && context.Request.Cookies.ContainsKey(localAuthenticationCookieName)
+                ? LocalAuthenticationOptions.Scheme
+                : "Azure";
 
         var token = auth.Substring("Bearer ".Length).Trim();
         try
@@ -313,6 +540,56 @@ builder.Services.AddAuthentication(options =>
         return "Azure";
     };
 })
+.AddCookie(LocalAuthenticationOptions.Scheme, options =>
+{
+    options.Cookie.Name = localAuthenticationCookieName;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.Path = "/";
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = localAuthenticationOptions.AllowInsecureLocalhost
+        ? CookieSecurePolicy.SameAsRequest
+        : CookieSecurePolicy.Always;
+    options.ExpireTimeSpan = TimeSpan.FromHours(8);
+    options.SlidingExpiration = true;
+    options.Events.OnValidatePrincipal = async context =>
+    {
+        if (!localAuthenticationOptions.SupportsLocalAccounts)
+        {
+            context.RejectPrincipal();
+            return;
+        }
+        var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            context.RejectPrincipal();
+            return;
+        }
+
+        var users = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await users.FindByIdAsync(userId);
+        var claimedRevision = context.Principal!.FindFirstValue("authorization_revision");
+        var claimedStamp = context.Principal.FindFirstValue("security_stamp");
+        var hasAdministratorClaim = context.Principal.IsInRole("HelpdeskAdmin");
+        if (user is null || !user.IsEnabled ||
+            !string.Equals(claimedRevision, user.AuthorizationRevision.ToString(global::System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal) ||
+            !string.Equals(claimedStamp, user.SecurityStamp, StringComparison.Ordinal) ||
+            hasAdministratorClaim != user.IsInstanceAdministrator)
+        {
+            context.RejectPrincipal();
+            await context.HttpContext.SignOutAsync(LocalAuthenticationOptions.Scheme);
+        }
+    };
+    options.Events.OnRedirectToLogin = context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return Task.CompletedTask;
+    };
+})
 .AddJwtBearer("Authentik", options =>
 {
     var authority = builder.Configuration["Authentication:Authentik:Authority"];
@@ -341,8 +618,19 @@ builder.Services.AddAuthentication(options =>
     };
     options.Events = new JwtBearerEvents
     {
+        OnMessageReceived = context =>
+        {
+            if (string.Equals(localAuthenticationOptions.Mode, "Local", StringComparison.OrdinalIgnoreCase))
+                context.NoResult();
+            return Task.CompletedTask;
+        },
         OnTokenValidated = context =>
         {
+            if (string.Equals(localAuthenticationOptions.Mode, "Local", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Fail("External user authentication is disabled.");
+                return Task.CompletedTask;
+            }
             if (context.Principal?.Identity is not ClaimsIdentity identity)
             {
                 return Task.CompletedTask;
@@ -360,8 +648,7 @@ builder.Services.AddAuthentication(options =>
             {
                 if (roleMappings.TryGetValue(value, out var mappedRole) && !string.IsNullOrWhiteSpace(mappedRole))
                 {
-                    identity.AddClaim(new Claim("roles", mappedRole));
-                    identity.AddClaim(new Claim(ClaimTypes.Role, mappedRole));
+                    identity.AddClaim(new Claim("provider_role", mappedRole));
                 }
             }
 
@@ -402,11 +689,21 @@ builder.Services.AddAuthentication(options =>
 
     options.IncludeErrorDetails = builder.Environment.IsDevelopment();
 
-    // Optional: log failures to see the exact reason
     options.Events = new JwtBearerEvents
     {
+        OnTokenValidated = context =>
+        {
+            if (string.Equals(localAuthenticationOptions.Mode, "Local", StringComparison.OrdinalIgnoreCase))
+                context.Fail("External user authentication is disabled.");
+            return Task.CompletedTask;
+        },
         OnMessageReceived = ctx =>
         {
+            if (string.Equals(localAuthenticationOptions.Mode, "Local", StringComparison.OrdinalIgnoreCase))
+            {
+                ctx.NoResult();
+                return Task.CompletedTask;
+            }
             if (string.IsNullOrWhiteSpace(ctx.Token) &&
                 ctx.Request.Path.StartsWithSegments("/api/v1/incidents", StringComparison.OrdinalIgnoreCase) &&
                 ctx.Request.Path.Value?.Contains("/timeline/stream", StringComparison.OrdinalIgnoreCase) == true)
@@ -418,44 +715,6 @@ builder.Services.AddAuthentication(options =>
                 }
             }
 
-            // Peek header+payload (no signature) to verify token type, aud, iss
-            var raw = ctx.Token ?? ctx.Request.Headers["Authorization"].ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
-            if (!string.IsNullOrEmpty(raw))
-            {
-                try
-                {
-                    var parts = raw.Split('.');
-                    if (parts.Length >= 2)
-                    {
-                        string B64(string s) => s.Replace('-', '+').Replace('_', '/').PadRight((s.Length + 3) / 4 * 4, '=');
-                        var headerJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(B64(parts[0])));
-                        var claimsJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(B64(parts[1])));
-                        Console.WriteLine($"AZURE TOKEN HEADER: {headerJson}");
-                        Console.WriteLine($"AZURE TOKEN CLAIMS: {claimsJson}");
-                    }
-                }
-                catch { /* ignore */ }
-            }
-            return Task.CompletedTask;
-        },
-        OnAuthenticationFailed = ctx =>
-        {
-            Console.WriteLine($"AUTH FAILED (Azure): {ctx.Exception}");
-            return Task.CompletedTask;
-        },
-        OnTokenValidated = ctx =>
-        {
-            // Works with JsonWebToken (default) and JwtSecurityToken (legacy handler)
-            string iss = ctx.SecurityToken?.Issuer
-                         ?? ctx.Principal?.FindFirst("iss")?.Value
-                         ?? "(unknown)";
-
-            var auds =
-                (ctx.SecurityToken as Microsoft.IdentityModel.JsonWebTokens.JsonWebToken)?.Audiences
-                ?? (ctx.SecurityToken as System.IdentityModel.Tokens.Jwt.JwtSecurityToken)?.Audiences
-                ?? Array.Empty<string>();
-
-            Console.WriteLine($"AUTH OK ({ctx.Scheme.Name}): iss={iss} aud={string.Join(",", auds)}");
             return Task.CompletedTask;
         }
     };
@@ -683,7 +942,10 @@ builder.Services.AddAuthorization(opts =>
                  string.Equals(c.Value, "Technician", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(c.Value, HelpdeskPermissions.IncidentManager, StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(c.Value, HelpdeskPermissions.RequestManager, StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(c.Value, HelpdeskPermissions.ChangeManager, StringComparison.OrdinalIgnoreCase)));
+                 string.Equals(c.Value, HelpdeskPermissions.ChangeManager, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(c.Value, HelpdeskPermissions.IncidentWrite, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(c.Value, HelpdeskPermissions.RequestWrite, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(c.Value, HelpdeskPermissions.ChangeWrite, StringComparison.OrdinalIgnoreCase)));
         });
     });
 
@@ -709,13 +971,18 @@ builder.Services.AddAuthorization(opts =>
     opts.AddPolicy("TenantPowerUser", p => p.RequireRole("PowerUser"));
     opts.AddPolicy("TenantUser", p => p.RequireRole("User"));
     opts.AddPolicy(HelpdeskPermissions.SelfServiceUser, p => p.RequireRole(HelpdeskPermissions.SelfServiceUser, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("IncidentAccess", p => p.RequireRole(HelpdeskPermissions.IncidentUser, HelpdeskPermissions.IncidentManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("IncidentManager", p => p.RequireRole(HelpdeskPermissions.IncidentManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("RequestAccess", p => p.RequireRole(HelpdeskPermissions.RequestUser, HelpdeskPermissions.RequestManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("RequestManager", p => p.RequireRole(HelpdeskPermissions.RequestManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("ChangeAccess", p => p.RequireRole(HelpdeskPermissions.ChangeUser, HelpdeskPermissions.ChangeManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("ChangeManager", p => p.RequireRole(HelpdeskPermissions.ChangeManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("NotificationAccess", p => p.RequireRole(HelpdeskPermissions.IncidentManager, HelpdeskPermissions.RequestManager, HelpdeskPermissions.ChangeManager, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("IncidentAccess", p => p.RequireRole(HelpdeskPermissions.IncidentUser, HelpdeskPermissions.IncidentManager, HelpdeskPermissions.IncidentRead, HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.IncidentDelete, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("IncidentManager", p => p.RequireRole(HelpdeskPermissions.IncidentManager, HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("RequestAccess", p => p.RequireRole(HelpdeskPermissions.RequestUser, HelpdeskPermissions.RequestManager, HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestDelete, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("RequestManager", p => p.RequireRole(HelpdeskPermissions.RequestManager, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("ChangeAccess", p => p.RequireRole(HelpdeskPermissions.ChangeUser, HelpdeskPermissions.ChangeManager, HelpdeskPermissions.ChangeRead, HelpdeskPermissions.ChangeWrite, HelpdeskPermissions.ChangeDelete, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("ChangeManager", p => p.RequireRole(HelpdeskPermissions.ChangeManager, HelpdeskPermissions.ChangeWrite, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("TicketReadAccess", p => p.RequireRole(
+        HelpdeskPermissions.IncidentRead, HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.IncidentUser, HelpdeskPermissions.IncidentManager,
+        HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestUser, HelpdeskPermissions.RequestManager,
+        HelpdeskPermissions.ChangeRead, HelpdeskPermissions.ChangeWrite, HelpdeskPermissions.ChangeUser, HelpdeskPermissions.ChangeManager,
+        HelpdeskPermissions.SelfServiceUser, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("NotificationAccess", p => p.RequireAuthenticatedUser());
 
     opts.AddPolicy("SystemBlazorWeb", p =>
     {
@@ -730,88 +997,11 @@ builder.Services.AddAuthorization(opts =>
         p.RequireAuthenticatedUser();
     });
 
-    // Attachments anyone authenticated by either scheme can read
-    opts.AddPolicy("AttachmentRead", p =>
-    {
-        p.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, "System");
-        p.RequireAuthenticatedUser();
-    });
-
-    // Attachments � write allowed for system token OR admin user
-    opts.AddPolicy("AttachmentWrite", p =>
-    {
-        p.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, "System");
-        p.RequireAuthenticatedUser();
-        p.RequireAssertion(ctx =>
-        {
-            try
-            {
-                var roleClaims = string.Join(",", ctx.User.Claims.Where(c => c.Type == "roles" || c.Type == ClaimTypes.Role).Select(c => c.Value));
-                var scopes = ctx.User.FindFirst("scp")?.Value ?? string.Empty;
-                Console.WriteLine($"[AttachmentWrite] roles=[{roleClaims}] scp=[{scopes}]");
-            }
-            catch { }
-
-            if (ctx.User.IsInRole("system.blazor-web")) return true;
-
-            // Role via IsInRole (respects RoleClaimType)
-            if (ctx.User.IsInRole("HelpdeskAdmin") || ctx.User.IsInRole("helpdeskadmin")) return true;
-
-            // Explicit role claims, case-insensitive
-            bool hasAdminRoleClaim = ctx.User.Claims.Any(c =>
-                (c.Type == "roles" || c.Type == ClaimTypes.Role) &&
-                string.Equals(c.Value, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase));
-
-            if (hasAdminRoleClaim) return true;
-
-            // Fallback: accept API scope that indicates admin capability
-            var scp = ctx.User.FindFirst("scp")?.Value?.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? Array.Empty<string>();
-            if (scp.Contains("Helpdesk.Admin", StringComparer.OrdinalIgnoreCase)) return true;
-
-            return false;
-        });
-    });
 });
 
 
 builder.Logging.AddFilter("Microsoft.AspNetCore.Authentication", LogLevel.Debug);
 builder.Logging.AddFilter("Helpdesk", LogLevel.Warning);
-
-Microsoft.IdentityModel.Logging.IdentityModelEventSource.ShowPII = true;
-
-builder.Services.PostConfigureAll<JwtBearerOptions>(o =>
-{
-    o.Events ??= new JwtBearerEvents();
-    var existingAuthenticationFailed = o.Events.OnAuthenticationFailed;
-    var existingTokenValidated = o.Events.OnTokenValidated;
-
-    o.Events.OnAuthenticationFailed = async ctx =>
-    {
-        if (existingAuthenticationFailed is not null)
-        {
-            await existingAuthenticationFailed(ctx);
-        }
-        Console.WriteLine($"[{ctx.Scheme.Name}] auth failed: {ctx.Exception.Message}");
-    };
-
-    o.Events.OnTokenValidated = async ctx =>
-    {
-        if (existingTokenValidated is not null)
-        {
-            await existingTokenValidated(ctx);
-        }
-        string iss = ctx.SecurityToken?.Issuer
-                     ?? ctx.Principal?.FindFirst("iss")?.Value
-                     ?? "(unknown)";
-
-        var auds =
-            (ctx.SecurityToken as Microsoft.IdentityModel.JsonWebTokens.JsonWebToken)?.Audiences
-            ?? (ctx.SecurityToken as System.IdentityModel.Tokens.Jwt.JwtSecurityToken)?.Audiences
-            ?? Array.Empty<string>();
-
-        Console.WriteLine($"[{ctx.Scheme.Name}] OK aud={string.Join(",", auds)} iss={iss}");
-    };
-});
 
 builder.Services.AddOpenApi(options =>
 {
@@ -865,9 +1055,12 @@ if (!skipDatabaseStartup)
     using (var scope = app.Services.CreateScope())
     {
         var ctx = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        var identityDb = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
         await ctx.Database.MigrateAsync();
+        await identityDb.Database.MigrateAsync();
         await TicketCategorySeed.SeedAsync(ctx);
         await SlaPolicySeed.SeedAsync(ctx);
+        await RoleDefinitionSeeder.EnsureBuiltInsAsync(ctx);
 
         var legacy = app.Configuration.GetSection("ExchangeEmail").Get<ExchangeEmailOptions>();
         if (legacy?.MailboxAddress?.Length > 0 &&
@@ -906,25 +1099,19 @@ if (app.Environment.IsDevelopment() &&
     await SeedLocalE2eDataAsync(app);
 }
 
-if (app.Environment.IsDevelopment() && !skipDatabaseStartup)
-{
-    using var scope = app.Services.CreateScope();
-    var services = scope.ServiceProvider;
-    try
-    {
-        var context = services.GetRequiredService<HelpdeskDbContext>();
-        context.Database.Migrate();
-    }
-    catch (Exception ex)
-    {
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while migrating the database.");
-    }
-}
-
 app.UseExceptionHandler();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ExceptionNotificationMiddleware>();
+// Legacy private attachments must only be served through parent-resource authorization.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/attachments", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    await next(context);
+});
 app.UseStaticFiles();
 
 app.MapOpenApi().AllowAnonymous();
@@ -951,11 +1138,12 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseAuthentication();
+app.UseMiddleware<Helpdesk.API.Middleware.LocalCookieCsrfMiddleware>();
 app.UseMiddleware<UserAccessClaimsMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 
-if (!skipDatabaseStartup)
+if (useHangfireRuntime)
 {
     app.UseHangfireDashboard("/hangfire", new DashboardOptions
     {
@@ -963,14 +1151,18 @@ if (!skipDatabaseStartup)
     });
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapAuthenticationEndpoints();
-}
 app.MapCurrentUserAccessEndpoint();
+app.MapGet("/api/v1/setup/status", () => Results.Ok(new { state = "Ready" }))
+    .AllowAnonymous()
+    .WithTags("Setup");
 app.MapInstanceBrandingEndpoints();
+if (localAuthenticationOptions.SupportsLocalAccounts)
+{
+    app.MapLocalAuthenticationEndpoints();
+}
 
 app.MapUserEndpoints();
+app.MapTenantAdministrationEndpoints();
 app.MapCustomerAuthEndpoints();
 app.MapPresenceEndpoints();
 app.MapDashboardEndpoints();
@@ -1079,7 +1271,7 @@ app.MapGet("/health/vector", async ([FromServices] HelpdeskDbContext db, Cancell
 
 app.MapKbEndpoints();
 app.MapGlobalSearchLookupEndpoints();
-MapCrudEndpoints<Role>(app, "/api/v1/roles");
+app.MapRoleDefinitionEndpoints();
 MapCrudEndpoints<Organization>(app, "/api/v1/organizations");
 MapCrudEndpoints<Customer>(app, "/api/v1/customers");
 MapCrudEndpoints<KnowledgeBaseCategory>(app, "/api/v1/knowledgebase/categories");
@@ -1134,9 +1326,10 @@ app.MapPost("/api/v1/ingestEmail", async (
     }
 
     return Results.Created($"/api/v1/incidents/{ticket.Id}", ticket); // 201
-}).RequireAuthorization();
+}).RequireAuthorization("HelpdeskAdmin");
 
-app.MapHub<NotificationHub>("/notification-hub");
+app.MapHub<NotificationHub>("/notification-hub")
+    .RequireAuthorization("NotificationAccess");
 
 if (app.Environment.IsDevelopment())
 {
@@ -1161,7 +1354,7 @@ if (!skipDatabaseStartup)
     await SeedEmailTemplatesAsync(app);
 }
 
-if (!skipDatabaseStartup)
+if (useHangfireRuntime)
 {
     var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
     if (hangfireSettings.SlaEvaluationEnabled)
@@ -1249,7 +1442,7 @@ static void MapCrudEndpoints<T>(WebApplication app, string route) where T : clas
 {
     var group = app.MapGroup(route)
         .WithTags(typeof(T).Name + "s")
-        .RequireAuthorization();
+        .RequireAuthorization("HelpdeskAdmin");
     group.MapGet("/", async ([FromServices] SharedServices.IRepository<T> repo) => await repo.GetAllAsync());
     group.MapGet("/{id}", async ([FromRoute] string id, [FromServices] SharedServices.IRepository<T> repo) =>
         await repo.GetAsync(id) is T entity ? Results.Ok(entity) : Results.Problem("Resource not found", statusCode: 404));

@@ -1,6 +1,7 @@
-﻿@using System.Security.Claims
+@using Helpdesk.Shared.Services
+@using System.Security.Claims
 @using Helpdesk.Shared.DTOs.Worklog
-@attribute [Authorize(Roles = "Incident.User,Incident.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Incident.User,Incident.Read,Incident.Write,Incident.Manager,HelpdeskAdmin")]
 
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
@@ -40,11 +41,14 @@
         <MudText Typo="Typo.body2">No worklogs have been added yet.</MudText>
     }
 
+    @if (canContribute)
+    {
     <MudPaper Elevation="25" Class="d-flex pa-2 mt-4" Outlined="true">
         <MudNumericField @bind-Value="newWorklog.Hours" Label="Hours" Variant="Variant.Outlined" Min="0" Max="24" Step="0.1" HideSpinButtons="true" Style="width: 100px;" Class="mr-2"/>
         <MudTextField @bind-Value="newWorklog.Notes" Label="Add a note or worklog..." Variant="Variant.Outlined" Class="flex-grow-1" Lines="1" OnKeyUp="OnEnter"/>
         <MudButton Icon="@Icons.Material.Filled.Send" Color="Color.Primary" OnClick="HandleAddWorklog" Class="ml-2 align-self-center"/>
     </MudPaper>
+    }
 </MudPaper>
 
 
@@ -55,6 +59,7 @@
     private List<WorkLogDto>? worklogs;
     private CreateWorkLogDto newWorklog = new();
     private bool loading = true;
+    private bool canContribute;
     private string? currentUserId;
     private string? currentUserName; // Store the current user's name
 
@@ -65,6 +70,9 @@
         currentUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
         currentUserName = user.Identity?.Name; // Get the user's name for display
         
+        var incident = await HelpdeskApi.GetFromJsonAsync<IncidentDto>($"api/v1/incidents/{IncidentId}");
+        var access = CurrentUserAccessProfile.FromClaims(user);
+        canContribute = incident is not null && access.CanContributeIncident(incident.OrganizationId, incident.CustomerId, incident.RequesterEmail);
         await LoadWorklogsAsync();
     }
     
@@ -99,7 +107,7 @@
     
     private async Task HandleAddWorklog()
     {
-        if (string.IsNullOrWhiteSpace(newWorklog.Notes))
+        if (!canContribute || string.IsNullOrWhiteSpace(newWorklog.Notes))
         {
             return;
         }

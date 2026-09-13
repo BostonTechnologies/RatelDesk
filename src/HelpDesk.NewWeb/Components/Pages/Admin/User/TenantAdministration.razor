@@ -1,0 +1,281 @@
+@page "/tenant-administration"
+@attribute [Authorize(Roles = "Tenant.Roles.Assign,HelpdeskAdmin")]
+@inject IHttpClientFactory HttpClientFactory
+
+<PageTitle>Tenant members</PageTitle>
+
+<div class="helpdesk-page">
+    <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+        <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Tenant members</MudText>
+        <MudText Typo="Typo.body2" Class="mb-4">
+            Manage delegable tenant roles for local accounts in a tenant you administer. Account credentials and instance-administrator access remain instance-administrator actions.
+        </MudText>
+
+        @if (!string.IsNullOrWhiteSpace(error))
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@error</MudAlert>
+        }
+        else if (organizations.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">You do not have permission to manage tenant memberships.</MudAlert>
+        }
+        else
+        {
+            <MudSelect T="string" Label="Tenant" Value="selectedOrganizationId" ValueChanged="SelectOrganization" Class="mb-4">
+                @foreach (var organization in organizations)
+                {
+                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudText Typo="Typo.h6" HtmlTag="h2">Invite a local account</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2">The account is created only in the selected tenant with self-service access. Share its one-time activation token through an approved secure channel.</MudText>
+            <MudGrid Class="mb-3" Spacing="2">
+                <MudItem xs="12" sm="5">
+                    <MudTextField T="string" @bind-Value="inviteName" Label="Display name" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="5">
+                    <MudTextField T="string" @bind-Value="inviteEmail" Label="Email" InputType="InputType.Email" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="2" Class="d-flex align-center">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="@inviting" OnClick="InviteAccount">
+                        @(inviting ? "Creating" : "Create")
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+            @if (invitation is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">Copy this activation token now. It is shown only once.</MudAlert>
+                <MudTextField T="string" Value="@invitation.Email" Label="Account email" ReadOnly="true" Variant="Variant.Outlined" Class="mb-2" />
+                <MudTextField T="string" Value="@invitation.ActivationToken" Label="Activation token" ReadOnly="true" Variant="Variant.Outlined" Class="mb-3" />
+            }
+
+            @if (loading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+            }
+            else
+            {
+                <MudTable Items="members" Hover="true" Dense="true" T="TenantMember" Breakpoint="Breakpoint.Sm" Class="helpdesk-table">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Email</MudTh>
+                        <MudTh>Delegable roles</MudTh>
+                        <MudTh class="text-end"></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">@context.Name</MudTd>
+                        <MudTd DataLabel="Email">@context.Email</MudTd>
+                        <MudTd DataLabel="Delegable roles">
+                            <MudStack Spacing="0">
+                                @foreach (var role in availableRoles)
+                                {
+                                    <MudCheckBox T="bool"
+                                                 Value="@HasRole(context, role.Key)"
+                                                 ValueChanged="enabled => SetRole(context, role.Key, enabled)"
+                                                 Color="Color.Primary"
+                                                 Label="@role.Name" />
+                                }
+                            </MudStack>
+                        </MudTd>
+                        <MudTd Class="text-end">
+                            <MudButton Variant="Variant.Text"
+                                       Color="Color.Primary"
+                                       Disabled="@(!IsChanged(context) || savingUserId == context.UserId)"
+                                       OnClick="() => SaveMembership(context)">
+                                @(savingUserId == context.UserId ? "Saving" : "Save")
+                            </MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText>No local accounts belong to this tenant.</MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            }
+        }
+    </MudPaper>
+</div>
+
+@code {
+    private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<TenantOrganization> organizations = new();
+    private List<TenantMember> members = new();
+    private List<TenantDelegableRole> availableRoles = new();
+    private readonly Dictionary<string, HashSet<string>> roleAssignments = new(StringComparer.OrdinalIgnoreCase);
+    private string? selectedOrganizationId;
+    private string? savingUserId;
+    private string? error;
+    private bool loading;
+    private bool inviting;
+    private string inviteName = string.Empty;
+    private string inviteEmail = string.Empty;
+    private TenantLocalAccountInvitation? invitation;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var response = await HelpdeskApi.GetAsync("api/v1/tenant-admin/organizations");
+        if (!response.IsSuccessStatusCode)
+        {
+            error = "Tenant memberships could not be loaded. Refresh the page and try again.";
+            return;
+        }
+
+        organizations = await response.Content.ReadFromJsonAsync<List<TenantOrganization>>() ?? new();
+        selectedOrganizationId = organizations.FirstOrDefault()?.Id;
+        if (!string.IsNullOrWhiteSpace(selectedOrganizationId))
+        {
+            await LoadMembers();
+        }
+    }
+
+    private async Task SelectOrganization(string organizationId)
+    {
+        selectedOrganizationId = organizationId;
+        invitation = null;
+        await LoadMembers();
+    }
+
+    private async Task InviteAccount()
+    {
+        if (string.IsNullOrWhiteSpace(selectedOrganizationId) ||
+            string.IsNullOrWhiteSpace(inviteName) ||
+            string.IsNullOrWhiteSpace(inviteEmail))
+        {
+            error = "Enter a display name and email before creating the local account.";
+            return;
+        }
+
+        inviting = true;
+        error = null;
+        invitation = null;
+        try
+        {
+            var response = await HelpdeskApi.PostAsJsonAsync(
+                $"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/",
+                new CreateTenantLocalAccountRequest(inviteName, inviteEmail));
+            if (!response.IsSuccessStatusCode)
+            {
+                error = "The local account could not be created. Confirm that the email is not already in use and try again.";
+                return;
+            }
+
+            invitation = await response.Content.ReadFromJsonAsync<TenantLocalAccountInvitation>();
+            inviteName = string.Empty;
+            inviteEmail = string.Empty;
+            await LoadMembers();
+        }
+        finally
+        {
+            inviting = false;
+        }
+    }
+
+    private async Task LoadMembers()
+    {
+        if (string.IsNullOrWhiteSpace(selectedOrganizationId))
+        {
+            return;
+        }
+
+        loading = true;
+        error = null;
+        try
+        {
+            var rolesResponse = await HelpdeskApi.GetAsync($"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/roles");
+            if (!rolesResponse.IsSuccessStatusCode)
+            {
+                error = "Delegable tenant roles could not be loaded. Refresh the page and try again.";
+                return;
+            }
+
+            var response = await HelpdeskApi.GetAsync($"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/");
+            if (!response.IsSuccessStatusCode)
+            {
+                error = "Tenant members could not be loaded. Refresh the page and try again.";
+                return;
+            }
+
+            availableRoles = await rolesResponse.Content.ReadFromJsonAsync<List<TenantDelegableRole>>() ?? new();
+            members = await response.Content.ReadFromJsonAsync<List<TenantMember>>() ?? new();
+            roleAssignments.Clear();
+            foreach (var member in members)
+            {
+                roleAssignments[member.UserId] = member.RoleKeys
+                    .Where(roleKey => availableRoles.Any(role => string.Equals(role.Key, roleKey, StringComparison.OrdinalIgnoreCase)))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private bool HasRole(TenantMember member, string roleKey) =>
+        roleAssignments.TryGetValue(member.UserId, out var selectedRoles) && selectedRoles.Contains(roleKey);
+
+    private bool IsChanged(TenantMember member) =>
+        !CurrentRoleKeys(member).SetEquals(member.RoleKeys
+            .Where(roleKey => availableRoles.Any(role => string.Equals(role.Key, roleKey, StringComparison.OrdinalIgnoreCase))));
+
+    private void SetRole(TenantMember member, string roleKey, bool enabled)
+    {
+        var selectedRoles = CurrentRoleKeys(member);
+        if (enabled)
+        {
+            selectedRoles.Add(roleKey);
+        }
+        else
+        {
+            selectedRoles.Remove(roleKey);
+        }
+    }
+
+    private async Task SaveMembership(TenantMember member)
+    {
+        if (string.IsNullOrWhiteSpace(selectedOrganizationId))
+        {
+            return;
+        }
+
+        savingUserId = member.UserId;
+        error = null;
+        try
+        {
+            var response = await HelpdeskApi.PutAsJsonAsync(
+                $"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/{member.UserId}/assignments",
+                new ReplaceTenantMembershipRequest(CurrentRoleKeys(member)
+                    .OrderBy(roleKey => roleKey, StringComparer.OrdinalIgnoreCase)
+                    .ToArray()));
+            if (!response.IsSuccessStatusCode)
+            {
+                error = "Tenant membership could not be saved. Confirm that you still have access to this tenant and try again.";
+                return;
+            }
+
+            await LoadMembers();
+        }
+        finally
+        {
+            savingUserId = null;
+        }
+    }
+
+    private HashSet<string> CurrentRoleKeys(TenantMember member)
+    {
+        if (!roleAssignments.TryGetValue(member.UserId, out var selectedRoles))
+        {
+            selectedRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            roleAssignments[member.UserId] = selectedRoles;
+        }
+
+        return selectedRoles;
+    }
+
+    private sealed record TenantOrganization(string Id, string Name);
+    private sealed record TenantMember(string UserId, string Name, string Email, IReadOnlyList<string> RoleKeys);
+    private sealed record TenantDelegableRole(string Key, string Name);
+    private sealed record ReplaceTenantMembershipRequest(IReadOnlyList<string> RoleKeys);
+    private sealed record CreateTenantLocalAccountRequest(string DisplayName, string Email);
+    private sealed record TenantLocalAccountInvitation(string UserId, string Email, string ActivationToken);
+}

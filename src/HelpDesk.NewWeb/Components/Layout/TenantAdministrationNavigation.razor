@@ -1,0 +1,11 @@
+<AuthorizeView Roles="Tenant.Roles.Assign,HelpdeskAdmin">
+    <MudNavLink Href="/tenant-administration" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Groups">Tenant members</MudNavLink>
+    <AuthorizeView Roles="HelpdeskAdmin" Context="tenantRoleAdmin">
+        <NotAuthorized>
+            <MudNavLink Href="/admin/roles" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Security">Tenant roles</MudNavLink>
+        </NotAuthorized>
+    </AuthorizeView>
+</AuthorizeView>
+<AuthorizeView Roles="Tenant.Settings.Manage,HelpdeskAdmin">
+    <MudNavLink Href="/tenant-settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Apartment">Tenant settings</MudNavLink>
+</AuthorizeView>

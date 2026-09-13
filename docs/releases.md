@@ -8,7 +8,7 @@ Assemblies contain the semantic version, source repository, source revision, and
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.1.0-rc.4",
   "commitHash": "abcdef1234567890",
   "buildTimestamp": "2026-09-10T10:34:00Z",
   "assemblyName": "Helpdesk.API",
@@ -25,8 +25,8 @@ After the release-engineering pull request is merged and `main` is green, verify
 ```bash
 dotnet msbuild src/Helpdesk.API/Helpdesk.API.csproj -nologo -getProperty:Version
 git status --short
-git tag -a v0.1.0 -m "RatelDesk 0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.0-rc.4 -m "RatelDesk 0.1.0-rc.4"
+git push origin v0.1.0-rc.4
 ```
 
 The tag must be a SemVer tag (`vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-prerelease`) on `main`, and its value must exactly equal MSBuild's evaluated repository version. The tag workflow reruns release validation, builds Web and API images for amd64 and arm64, attaches provenance/SBOM data, then creates the GitHub Release only after both image pushes complete.
@@ -36,7 +36,7 @@ Stable releases publish `ghcr.io/bostontechnologies/rateldesk-web` and `ghcr.io/
 To use released images locally, set required credentials and run:
 
 ```bash
-RATELDESK_VERSION=0.1.0 docker compose -f docker/docker-compose.release.yml up -d
+RATELDESK_VERSION=0.1.0-rc.4 docker compose -f docker/docker-compose.release.yml up -d
 ```
 
 The GitHub Release records the source commit, UTC build timestamp, and immutable Web/API digests. Before a private deployment is updated, operators should clean-pull both public images and pin the deployment to those recorded digests.

@@ -1,0 +1,260 @@
+@page "/setup"
+@implements IDisposable
+@attribute [AllowAnonymous]
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Set up RatelDesk</PageTitle>
+
+<section class="helpdesk-login-page" data-testid="setup-wizard" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")">
+    <MudPaper Elevation="2" Class="helpdesk-login-panel">
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.h4" HtmlTag="h1">Set up RatelDesk</MudText>
+            <MudText Typo="Typo.body1">Complete first-time initialization with the operator-only setup code.</MudText>
+            @if (_managedFields.Count > 0) { <MudAlert Severity="Severity.Info">Deployment-managed setup values are shown read-only.</MudAlert> }
+            @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+            @if (_ready)
+            {
+                <MudAlert Severity="@(_applicationReady ? Severity.Success : Severity.Info)">@(_applicationReady ? "Your instance is ready. Sign in with your administrator account." : "RatelDesk is restarting into its normal application host. You can sign in shortly.")</MudAlert>
+            }
+
+            @if (_recoveryRequired)
+            {
+                <MudAlert Severity="Severity.Error">This instance needs storage recovery. Restore its matching application database, bootstrap state and data-protection keys, then restart the API. Initialization is unavailable while the saved instance and database do not match.</MudAlert>
+            }
+            else if (_ready)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_applicationReady)" Href="/login">Sign in</MudButton>
+                @if (!_applicationReady && !_busy)
+                {
+                    <MudButton OnClick="WaitForApplicationAsync">Check again</MudButton>
+                }
+            }
+            else
+            {
+            <MudStepper @ref="_stepper" @bind-ActiveIndex="_step" NonLinear="false">
+                <ChildContent>
+                    <MudStep Title="Unlock setup">
+                        <MudText Typo="Typo.body2">Enter the code retrieved from the API container. It is never returned by this page.</MudText>
+                        <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" Disabled="@(!RendererInfo.IsInteractive)" InputType="InputType.Password" Required="true" FullWidth="true" />
+                    </MudStep>
+                    <MudStep Title="Storage">
+                        <MudSelect T="string" @bind-Value="_provider" Disabled="@_storageManaged" Label="Storage provider" FullWidth="true">
+                            <MudSelectItem Value="@("Sqlite")">Embedded SQLite — no database service required</MudSelectItem>
+                            <MudSelectItem Value="@("PostgreSql")">PostgreSQL</MudSelectItem>
+                        </MudSelect>
+                        @if (_provider == "PostgreSql" && !_storageManaged)
+                        {
+                            <MudTextField T="string" @bind-Value="_host" Label="PostgreSQL host" Required="true" FullWidth="true" />
+                            <MudTextField T="int" @bind-Value="_port" Label="Port" Required="true" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_database" Label="Database" Required="true" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_username" Label="Username" Required="true" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_databasePassword" Label="Password" InputType="InputType.Password" Required="true" FullWidth="true" />
+                            <MudCheckBox T="bool" @bind-Value="_useTls" Label="Require TLS" />
+                            <MudText Typo="Typo.caption">RatelDesk validates the connection and required vector and pg_trgm extensions before continuing.</MudText>
+                        }
+                    </MudStep>
+                    <MudStep Title="Instance">
+                        <MudTextField T="string" @bind-Value="_organization" Label="Initial organization" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.OrganizationName))" />
+                        <MudTextField T="string" @bind-Value="_applicationName" Label="Application name" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.ApplicationName))" />
+                        <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL" InputType="InputType.Url" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.ApplicationUrl))" HelperText="HTTPS is required except for localhost HTTP." />
+                        <MudTextField T="string" @bind-Value="_timeZoneId" Label="Time zone" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.TimeZoneId))" HelperText="IANA time-zone ID; UTC is the default (for example, Africa/Johannesburg)." />
+                    </MudStep>
+                    <MudStep Title="First administrator">
+                        <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" FullWidth="true" />
+                        <MudTextField T="string" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" FullWidth="true" />
+                        <MudTextField T="string" @bind-Value="_password" Label="Passphrase" InputType="InputType.Password" Required="true" FullWidth="true" HelperText="Use a memorable passphrase of at least 15 characters." />
+                        <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm passphrase" InputType="InputType.Password" Required="true" FullWidth="true" />
+                    </MudStep>
+                    <MudStep Title="Branding">
+                        <MudText Typo="Typo.body2">Keep the RatelDesk defaults or set supported instance branding now. All fields remain editable after sign-in.</MudText>
+                        <MudCheckBox T="bool" @bind-Value="_keepDefaults" Label="Keep RatelDesk defaults" />
+                        @if (!_keepDefaults)
+                        {
+                            <MudTextField T="string" @bind-Value="_logoUrl" Label="Main logo URL" InputType="InputType.Url" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_compactLogoUrl" Label="Compact logo URL" InputType="InputType.Url" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_supportUrl" Label="Support URL" InputType="InputType.Url" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_supportEmail" Label="Support email" InputType="InputType.Email" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_emailFromDisplayName" Label="Email display name" FullWidth="true" />
+                            <MudTextField T="string" @bind-Value="_tagline" Label="Tagline" FullWidth="true" />
+                            <MudPaper Outlined="true" Class="pa-3">
+                                <MudText Typo="Typo.subtitle2">Preview</MudText>
+                                @if (!string.IsNullOrWhiteSpace(_logoUrl)) { <MudImage Src="@_logoUrl" Alt="Configured RatelDesk logo preview" Height="48" /> }
+                                else { <MudText Typo="Typo.body2">RatelDesk default wordmark</MudText> }
+                                @if (!string.IsNullOrWhiteSpace(_tagline)) { <MudText Typo="Typo.caption">@_tagline</MudText> }
+                            </MudPaper>
+                        }
+                    </MudStep>
+                    <MudStep Title="Review">
+                        <MudSimpleTable Dense="true"><tbody>
+                            <tr><td>Storage</td><td>@(_provider == "PostgreSql" ? (_storageManaged ? "PostgreSQL (managed by deployment)" : $"PostgreSQL at {_host}:{_port}/{_database}") : "Embedded SQLite")</td></tr>
+                            <tr><td>Organization</td><td>@_organization</td></tr>
+                            <tr><td>Application</td><td>@_applicationName</td></tr>
+                            <tr><td>Public URL</td><td>@_applicationUrl</td></tr>
+                            <tr><td>Time zone</td><td>@_timeZoneId</td></tr>
+                            <tr><td>Branding</td><td>@(_keepDefaults ? "RatelDesk defaults" : "Custom preview configured")</td></tr>
+                            <tr><td>Administrator</td><td>@_displayName (@_email)</td></tr>
+                        </tbody></MudSimpleTable>
+                    </MudStep>
+                    <MudStep Title="Ready"><MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/login">Sign in</MudButton></MudStep>
+                </ChildContent>
+                <ActionContent>
+                    @if (_step > 0 && _step < 6) { <MudButton Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="Back">Back</MudButton> }
+                    <MudSpacer />
+                    @if (_step == 0) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="UnlockAsync">Continue</MudButton> }
+                    else if (_step == 1) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="PrepareStorageAsync">Prepare storage</MudButton> }
+                    else if (_step is 2 or 3 or 4) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="Advance">Continue</MudButton> }
+                    else if (_step == 5) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="InitializeAsync">Initialize instance</MudButton> }
+                </ActionContent>
+            </MudStepper>
+            }
+        </MudStack>
+    </MudPaper>
+</section>
+
+@code {
+    private MudStepper _stepper = default!;
+    private int _step;
+    private bool _storageManaged, _recoveryRequired;
+    private readonly CancellationTokenSource _lifetime = new();
+    private bool _applicationReady;
+    private bool _busy, _ready, _useTls = true, _keepDefaults = true;
+    private string? _error, _session;
+    private readonly HashSet<string> _managedFields = new(StringComparer.Ordinal);
+    private string _setupCode = string.Empty, _provider = "Sqlite", _host = string.Empty, _database = string.Empty, _username = string.Empty, _databasePassword = string.Empty;
+    private int _port = 5432;
+    private string _organization = string.Empty, _applicationName = "RatelDesk", _applicationUrl = string.Empty, _timeZoneId = "UTC", _displayName = string.Empty, _email = string.Empty, _password = string.Empty, _confirmPassword = string.Empty;
+    private string _logoUrl = string.Empty, _compactLogoUrl = string.Empty, _supportUrl = string.Empty, _supportEmail = string.Empty, _emailFromDisplayName = string.Empty, _tagline = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _applicationUrl = Navigation.BaseUri.TrimEnd('/');
+        try
+        {
+            var status = await HttpClientFactory.CreateClient("SystemApiNoAuth").GetFromJsonAsync<SetupStatus>("/api/v1/setup/status");
+            if (status?.State == "Ready") { Navigation.NavigateTo("/login", forceLoad: true); return; }
+            if (status?.State == "Restarting") { _ready = true; await WaitForApplicationAsync(); return; }
+            _recoveryRequired = status?.State == "RecoveryRequired";
+            _storageManaged = status?.StorageManaged == true;
+            if (!string.IsNullOrWhiteSpace(status?.Provider)) _provider = status.Provider;
+            ApplyDeploymentDefaults(status?.Defaults);
+        }
+        catch (HttpRequestException exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"Setup status endpoint unavailable while rendering setup: {exception.Message}");
+        }
+    }
+
+    private async Task UnlockAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_setupCode)) { _error = "Enter the operator setup code."; return; }
+        _busy = true; _error = null;
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync("/api/v1/setup/session", new { setupCode = _setupCode });
+            var session = response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<SetupSession>() : null;
+            if (string.IsNullOrWhiteSpace(session?.Session)) { _error = "The setup code was not accepted."; return; }
+            _session = session.Session; _setupCode = string.Empty; await _stepper.NextStepAsync();
+        }
+        catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        finally { _busy = false; }
+    }
+
+    private async Task PrepareStorageAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_session)) { ExpireSession(); return; }
+        if (!_storageManaged && _provider == "PostgreSql" && (string.IsNullOrWhiteSpace(_host) || string.IsNullOrWhiteSpace(_database) || string.IsNullOrWhiteSpace(_username) || string.IsNullOrWhiteSpace(_databasePassword))) { _error = "Enter all PostgreSQL connection details."; return; }
+        _busy = true; _error = null;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/storage") { Content = JsonContent.Create(new { provider = _provider, postgreSqlHost = _provider == "PostgreSql" ? _host : null, postgreSqlPort = _provider == "PostgreSql" ? _port : (int?)null, postgreSqlDatabase = _provider == "PostgreSql" ? _database : null, postgreSqlUsername = _provider == "PostgreSql" ? _username : null, postgreSqlPassword = _provider == "PostgreSql" ? _databasePassword : null, postgreSqlUseTls = _useTls }) };
+            request.Headers.Add("X-RatelDesk-Setup-Session", _session);
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
+            if (!response.IsSuccessStatusCode) { _error = "Storage could not be prepared. Check the connection and extension requirements."; return; }
+            _databasePassword = string.Empty; await _stepper.NextStepAsync();
+        }
+        catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        finally { _busy = false; }
+    }
+
+    private async Task Advance()
+    {
+        _error = _step switch
+        {
+            2 when string.IsNullOrWhiteSpace(_organization) || string.IsNullOrWhiteSpace(_applicationName) || string.IsNullOrWhiteSpace(_timeZoneId) || !ValidUrl(_applicationUrl) => "Enter an organization, application name, permitted public URL, and time zone.",
+            3 when string.IsNullOrWhiteSpace(_displayName) || string.IsNullOrWhiteSpace(_email) || string.IsNullOrWhiteSpace(_password) || _password != _confirmPassword => "Enter administrator details and matching passphrases.",
+            _ => null
+        };
+        if (_error is null) await _stepper.NextStepAsync();
+    }
+
+    private async Task InitializeAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_session)) { ExpireSession(); return; }
+        _busy = true; _error = null;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize") { Content = JsonContent.Create(new { email = _email, displayName = _displayName, password = _password, organizationName = _organization, applicationName = _applicationName, applicationUrl = _applicationUrl, timeZoneId = _timeZoneId, supportUrl = _keepDefaults ? null : _supportUrl, supportEmail = _keepDefaults ? null : _supportEmail, logoUrl = _keepDefaults ? null : _logoUrl, compactLogoUrl = _keepDefaults ? null : _compactLogoUrl, emailFromDisplayName = _keepDefaults ? null : _emailFromDisplayName, tagline = _keepDefaults ? null : _tagline }) };
+            request.Headers.Add("X-RatelDesk-Setup-Session", _session);
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
+            if (!response.IsSuccessStatusCode) { _error = "Initialization could not be completed. Check the setup details and passphrase."; return; }
+            _password = _confirmPassword = string.Empty; _session = null; _ready = true;
+            await InvokeAsync(StateHasChanged);
+            await WaitForApplicationAsync();
+        }
+        catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        finally { _busy = false; }
+    }
+
+    private async Task WaitForApplicationAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("SystemApiNoAuth");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            timeout.CancelAfter(TimeSpan.FromMinutes(1));
+            while (!timeout.IsCancellationRequested)
+            {
+                try
+                {
+                    using var response = await client.GetAsync("/api/v1/branding", timeout.Token);
+                    if (response.IsSuccessStatusCode) { _applicationReady = true; return; }
+                }
+                catch (HttpRequestException) { }
+                await Task.Delay(TimeSpan.FromSeconds(1), timeout.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
+        {
+            _error = "Initialization is saved. The application has not restarted yet; check the API container, then check again.";
+        }
+        catch (OperationCanceledException) { }
+        finally { _busy = false; }
+    }
+
+    public void Dispose() { _lifetime.Cancel(); _lifetime.Dispose(); }
+
+    private async Task Back() { _error = null; await _stepper.PreviousStepAsync(); }
+    private void ExpireSession() { _step = 0; _error = "Your setup session expired. Enter the setup code again."; }
+    private void ApplyDeploymentDefaults(SetupDefaults? defaults)
+    {
+        if (defaults is null) return;
+        ApplyManagedValue(nameof(SetupDefaults.OrganizationName), defaults.OrganizationName, value => _organization = value);
+        ApplyManagedValue(nameof(SetupDefaults.ApplicationName), defaults.ApplicationName, value => _applicationName = value);
+        ApplyManagedValue(nameof(SetupDefaults.ApplicationUrl), defaults.ApplicationUrl, value => _applicationUrl = value);
+        ApplyManagedValue(nameof(SetupDefaults.TimeZoneId), defaults.TimeZoneId, value => _timeZoneId = value);
+    }
+    private void ApplyManagedValue(string name, string? value, Action<string> apply)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        apply(value); _managedFields.Add(name);
+    }
+    private bool IsManaged(string name) => _managedFields.Contains(name);
+    private static bool ValidUrl(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback));
+    private sealed record SetupSession(string Session);
+    private sealed record SetupStatus(string? State, SetupDefaults? Defaults, bool StorageManaged = false, string? Provider = null);
+    private sealed record SetupDefaults(string? OrganizationName, string? ApplicationName, string? ApplicationUrl, string? TimeZoneId);
+}

@@ -1,6 +1,8 @@
 extern alias NewWeb;
 
 using NewWeb::HelpDesk.NewWeb.Services;
+using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.DTOs.Auth;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
@@ -9,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using System.Net;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using Xunit;
@@ -477,6 +480,88 @@ public class TokenServiceTests
     }
 
     [Fact]
+    public async Task CookieValidation_Reprojects_Oidc_access_from_the_api()
+    {
+        var identity = new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, "operator@example.test"), new Claim(ClaimTypes.Role, HelpdeskPermissions.ChangeManager),
+             new Claim(ClaimTypes.Role, HelpdeskPermissions.ChangeWrite), new Claim("roles", AuthentikRbacGroups.HelpdeskAdmin),
+             new Claim("scoped_permission", "Change.Write|org-old")],
+            "test");
+        var principal = new ClaimsPrincipal(identity);
+        var properties = new AuthenticationProperties();
+        properties.StoreTokens([new AuthenticationToken { Name = "access_token", Value = "access-token" }, new AuthenticationToken { Name = "expires_at", Value = DateTime.UtcNow.AddHours(1).ToString("O") }]);
+        var ticket = new AuthenticationTicket(principal, properties, CookieAuthenticationDefaults.AuthenticationScheme);
+        var context = new DefaultHttpContext { User = principal };
+        var scheme = new AuthenticationScheme(CookieAuthenticationDefaults.AuthenticationScheme, CookieAuthenticationDefaults.AuthenticationScheme, typeof(CookieAuthenticationHandler));
+        var validation = new CookieValidatePrincipalContext(context, scheme, new CookieAuthenticationOptions(), ticket);
+        var factory = Substitute.For<IHttpClientFactory>();
+        factory.CreateClient("SystemApiNoAuth").Returns(new HttpClient(new StubMessageHandler(request =>
+        {
+            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
+            Assert.Equal("access-token", request.Headers.Authorization?.Parameter);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new CurrentUserAccessDto(true, "Operator", "operator@example.test", "org-a", "Organization A", null, false,
+                    [HelpdeskRoleBundles.User], [HelpdeskPermissions.IncidentRead], ["org-a"], [])
+                { UsesScopedPermissions = true, ScopedPermissionGrants = [new Helpdesk.Shared.Services.ScopedPermissionGrant(HelpdeskPermissions.IncidentRead, "org-a")] })
+            };
+        }))
+        { BaseAddress = new Uri("https://api.example.test") });
+        var events = new CookieOidcSessionEvents(
+            new RefreshingTokenService(),
+            NullLogger<CookieOidcSessionEvents>.Instance,
+            factory);
+
+        await events.ValidatePrincipal(validation);
+
+        Assert.True(validation.ShouldRenew);
+        Assert.True(principal.IsInRole(HelpdeskPermissions.IncidentRead));
+        Assert.False(principal.IsInRole(HelpdeskPermissions.ChangeManager));
+        Assert.False(principal.IsInRole(HelpdeskPermissions.ChangeWrite));
+        Assert.False(Helpdesk.Shared.Services.CurrentUserAccessProfile.FromClaims(principal).IsHelpdeskAdmin);
+        Assert.True(principal.HasClaim("permission_scope_mode", "scoped"));
+        Assert.DoesNotContain(principal.Claims, claim => claim.Type == "scoped_permission" && claim.Value.Contains("org-old", StringComparison.Ordinal));
+        Assert.Contains(principal.Claims, claim => claim.Type == "organization_id" && claim.Value == "org-a");
+    }
+
+    [Fact]
+    public async Task Local_cookie_validation_rejects_a_session_rejected_by_the_API()
+    {
+        const string cookieName = "__Host-RatelDesk.Local";
+        const string cookieValue = "protected-local-session";
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "local-user"), new Claim("auth_mode", "local")],
+            "RatelDeskLocal"));
+        var properties = new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8) };
+        var ticket = new AuthenticationTicket(principal, properties, "RatelDeskLocal");
+        var authentication = Substitute.For<IAuthenticationService>();
+        var services = new ServiceCollection();
+        services.AddSingleton(authentication);
+        var context = new DefaultHttpContext { RequestServices = services.BuildServiceProvider(), User = principal };
+        context.Request.Headers.Cookie = $"{cookieName}={cookieValue}";
+        var scheme = new AuthenticationScheme("RatelDeskLocal", "RatelDeskLocal", typeof(CookieAuthenticationHandler));
+        var validation = new CookieValidatePrincipalContext(context, scheme, new CookieAuthenticationOptions(), ticket);
+        var factory = Substitute.For<IHttpClientFactory>();
+        string? forwardedCookie = null;
+        factory.CreateClient("SystemApiNoAuth").Returns(new HttpClient(new StubMessageHandler(request =>
+        {
+            forwardedCookie = request.Headers.GetValues("Cookie").Single();
+            return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+        }))
+        { BaseAddress = new Uri("https://api.example.test") });
+        var events = new CookieLocalSessionEvents(
+            factory,
+            new ConfigurationBuilder().Build(),
+            NullLogger<CookieLocalSessionEvents>.Instance);
+
+        await events.ValidatePrincipal(validation);
+
+        Assert.Equal($"{cookieName}={cookieValue}", forwardedCookie);
+        Assert.True(validation.Principal is null);
+        await authentication.Received().SignOutAsync(context, "RatelDeskLocal", Arg.Any<AuthenticationProperties?>());
+    }
+
+    [Fact]
     public async Task AiAgent_Session_Remains_Valid_Without_Azure_Refresh()
     {
         const string accessToken = "ai-agent-access-token";
@@ -504,6 +589,102 @@ public class TokenServiceTests
             context,
             CookieAuthenticationDefaults.AuthenticationScheme,
             Arg.Any<AuthenticationProperties?>());
+    }
+
+    [Fact]
+    public async Task Local_Session_Does_Not_Require_An_Oidc_Access_Token()
+    {
+        var (context, authService) = CreateContext(
+            accessToken: string.Empty,
+            expiresAtUtc: DateTime.UtcNow.AddHours(1),
+            claims: [new Claim("auth_mode", "local")]);
+        var accessor = new HttpContextAccessor { HttpContext = context };
+        var service = new TokenService(
+            accessor,
+            Substitute.For<IHttpClientFactory>(),
+            new ConfigurationBuilder().Build(),
+            Substitute.For<ISystemTokenService>());
+
+        var token = await service.GetValidAccessTokenAsync();
+
+        Assert.Null(token);
+        await authService.DidNotReceive().SignOutAsync(
+            context,
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            Arg.Any<AuthenticationProperties?>());
+    }
+
+    [Fact]
+    public async Task Local_Session_Cookie_Is_Relayed_To_The_Api()
+    {
+        const string cookieValue = "protected-local-session";
+        var context = new DefaultHttpContext();
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim("auth_mode", "local")],
+            "RatelDeskLocal"));
+        context.Request.Headers.Cookie = $"__Host-RatelDesk.Local={cookieValue}";
+        var accessor = new HttpContextAccessor { HttpContext = context };
+        var tokenService = Substitute.For<ITokenService>();
+        tokenService.GetValidAccessTokenAsync().Returns((string?)null);
+        string? forwardedCookie = null;
+        var handler = new TokenAuthorizationHandler(
+            tokenService,
+            accessor,
+            new ConfigurationBuilder().Build())
+        {
+            InnerHandler = new StubMessageHandler(request =>
+            {
+                forwardedCookie = request.Headers.GetValues("Cookie").Single();
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            })
+        };
+
+        using var client = new HttpClient(handler);
+        await client.GetAsync("https://api.example.test/api/v1/auth/me");
+
+        Assert.Equal($"__Host-RatelDesk.Local={cookieValue}", forwardedCookie);
+    }
+
+    [Fact]
+    public void Local_cookie_forwarding_includes_ticket_chunks_and_excludes_other_browser_cookies()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Headers.Cookie = "RatelDesk.Local=chunks-2; RatelDesk.LocalC1=first; RatelDesk.LocalC2=second; unrelated=private; RatelDesk.LocalExtra=excluded";
+        var header = LocalSessionCookieForwarder.GetHeader(context, "RatelDesk.Local");
+        Assert.Equal("RatelDesk.Local=chunks-2; RatelDesk.LocalC1=first; RatelDesk.LocalC2=second", header);
+    }
+
+    [Fact]
+    public async Task Web_local_validation_relays_only_the_api_renewal_and_does_not_renew_a_stale_ticket()
+    {
+        var principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim("auth_mode", "local"), new Claim(ClaimTypes.Role, HelpdeskPermissions.IncidentWrite)], "RatelDeskLocal"));
+        var context = new DefaultHttpContext { User = principal };
+        context.Request.Headers.Cookie = "__Host-RatelDesk.Local=old-ticket";
+        var scheme = new AuthenticationScheme("RatelDeskLocal", "RatelDeskLocal", typeof(CookieAuthenticationHandler));
+        var ticket = new AuthenticationTicket(principal, new AuthenticationProperties(), "RatelDeskLocal");
+        var validation = new CookieValidatePrincipalContext(context, scheme, new CookieAuthenticationOptions(), ticket) { ShouldRenew = true };
+        using var client = new HttpClient(new StubMessageHandler(request =>
+        {
+            Assert.Equal("__Host-RatelDesk.Local=old-ticket", request.Headers.GetValues("Cookie").Single());
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new CurrentUserAccessDto(true, "Reader", "reader@example.test", "org", "Org", null, false, [], [HelpdeskPermissions.IncidentRead], ["org"], [])
+                { UsesScopedPermissions = true })
+            };
+            response.Headers.TryAddWithoutValidation("Set-Cookie", "__Host-RatelDesk.Local=renewed-ticket; path=/; secure; httponly");
+            return response;
+        })) { BaseAddress = new Uri("https://api.example.test") };
+        var factory = Substitute.For<IHttpClientFactory>();
+        factory.CreateClient("SystemApiNoAuth").Returns(client);
+        var events = new CookieLocalSessionEvents(factory, new ConfigurationBuilder().Build(), NullLogger<CookieLocalSessionEvents>.Instance);
+
+        await events.ValidatePrincipal(validation);
+
+        Assert.False(validation.ShouldRenew);
+        Assert.NotNull(validation.Principal);
+        Assert.False(validation.Principal.IsInRole(HelpdeskPermissions.IncidentWrite));
+        Assert.True(validation.Principal.IsInRole(HelpdeskPermissions.IncidentRead));
+        Assert.Contains("renewed-ticket", context.Response.Headers.SetCookie.ToString(), StringComparison.Ordinal);
     }
 
     private sealed class StubMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler

@@ -81,7 +81,7 @@ internal static partial class HelpdeskCli
         root.AddCommand(BuildOrganizationsCommand(runtime, globals));
         root.AddCommand(BuildCustomersCommand(runtime, globals));
         root.AddCommand(BuildUsersCommand(runtime, globals));
-        root.AddCommand(BuildCrudCommand(runtime, globals, "roles", "Manage roles.", "/api/v1/roles"));
+        root.AddCommand(BuildCrudCommand(runtime, globals, "roles", "Manage permission-aware role definitions.", "/api/v1/admin/role-definitions"));
         root.AddCommand(BuildCategoriesCommand(runtime, globals));
         root.AddCommand(BuildServicesCommand(runtime, globals));
         root.AddCommand(BuildRequestFormsCommand(runtime, globals));

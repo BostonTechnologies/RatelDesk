@@ -26,6 +26,7 @@ public class PresenceEndpointsTests : IClassFixture<WebApplicationFactory<Progra
 
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
 

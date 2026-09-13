@@ -1014,6 +1014,10 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                     b.Property<string>("DisabledByUserId")
                         .HasColumnType("text");
 
+                    b.Property<string>("DomainUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<DateTimeOffset?>("InviteAcceptedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -1038,6 +1042,10 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastLoginAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("LocalAccountId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<string>("OidcIssuer")
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
@@ -1050,7 +1058,12 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("AuthentikUserId");
 
-                    b.HasIndex("CustomerId")
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("DomainUserId")
+                        .IsUnique();
+
+                    b.HasIndex("LocalAccountId")
                         .IsUnique();
 
                     b.HasIndex("InviteStatus", "InviteSentAtUtc");
@@ -1649,6 +1662,43 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                     b.ToTable("InstanceBrandings");
                 });
 
+            modelBuilder.Entity("Helpdesk.Shared.Models.InstanceInitialization", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("InstanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SetupVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasDefaultValue("UTC");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InstanceId")
+                        .IsUnique();
+
+                    b.ToTable("InstanceInitializations", (string)null);
+                });
+
             modelBuilder.Entity("Helpdesk.Shared.Models.KnowledgeBaseArticle", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2125,13 +2175,82 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsBuiltIn")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsProtected")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("OwnerOrganizationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("Scope")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Key")
+                        .IsUnique();
+
+                    b.HasIndex("Scope", "OwnerOrganizationId");
+
                     b.ToTable("Roles");
+                });
+
+            modelBuilder.Entity("Helpdesk.Shared.Models.RolePermission", b =>
+                {
+                    b.Property<string>("RoleId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Permission")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("RoleId", "Permission");
+
+                    b.ToTable("RolePermissions");
+                });
+
+            modelBuilder.Entity("Helpdesk.Shared.Models.ScopedRoleAssignment", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RoleKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "RoleKey");
+
+                    b.HasIndex("UserId", "RoleKey", "OrganizationId")
+                        .IsUnique();
+
+                    b.ToTable("ScopedRoleAssignments");
                 });
 
             modelBuilder.Entity("Helpdesk.Shared.Models.Service", b =>
@@ -3658,8 +3777,8 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Helpdesk.Shared.Models.CustomerAuthLink", b =>
                 {
                     b.HasOne("Helpdesk.Shared.Models.Customer", null)
-                        .WithOne()
-                        .HasForeignKey("Helpdesk.Shared.Models.CustomerAuthLink", "CustomerId")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -3753,6 +3872,17 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                     b.Navigation("Request");
 
                     b.Navigation("RequestTask");
+                });
+
+            modelBuilder.Entity("Helpdesk.Shared.Models.RolePermission", b =>
+                {
+                    b.HasOne("Helpdesk.Shared.Models.Role", "Role")
+                        .WithMany("Permissions")
+                        .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Role");
                 });
 
             modelBuilder.Entity("Helpdesk.Shared.Models.SlaEscalationRule", b =>
@@ -3861,6 +3991,11 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Helpdesk.Shared.Models.KnowledgeBaseArticle", b =>
                 {
                     b.Navigation("Embeddings");
+                });
+
+            modelBuilder.Entity("Helpdesk.Shared.Models.Role", b =>
+                {
+                    b.Navigation("Permissions");
                 });
 
             modelBuilder.Entity("Helpdesk.Shared.Models.SlaPolicy", b =>

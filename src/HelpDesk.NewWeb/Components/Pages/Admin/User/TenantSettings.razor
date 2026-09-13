@@ -1,0 +1,73 @@
+@page "/tenant-settings"
+@attribute [Authorize(Roles = "Tenant.Settings.Manage,HelpdeskAdmin")]
+@using Helpdesk.Shared.Auth
+@using Helpdesk.Shared.Services
+@inject IHttpClientFactory HttpClientFactory
+@inject AuthenticationStateProvider AuthenticationState
+@inject ISnackbar Snackbar
+
+<PageTitle>Tenant settings</PageTitle>
+<div class="helpdesk-page">
+    <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+        <MudText Typo="Typo.h4" HtmlTag="h1">Tenant settings</MudText>
+        @if (error is not null) { <MudAlert Severity="Severity.Error" Class="my-3">@error</MudAlert> }
+        <MudSelect T="string" Label="Tenant" Value="organizationId" ValueChanged="SelectAsync" Disabled="busy" Class="my-3">
+            @foreach (var organization in organizations)
+            {
+                <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+            }
+        </MudSelect>
+        @if (settings is not null)
+        {
+            <MudTextField @bind-Value="settings.Name" Label="Tenant name" Required="true" MaxLength="200" Disabled="busy" />
+            <MudTextField @bind-Value="settings.ContactInfo" Label="Contact information" Lines="4" MaxLength="4000" Disabled="busy" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="busy" OnClick="SaveAsync" Class="mt-3">Save tenant settings</MudButton>
+        }
+    </MudPaper>
+</div>
+
+@code {
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    private List<TenantOrganization> organizations = new();
+    private TenantSettingsModel? settings;
+    private string? organizationId, error;
+    private bool busy;
+    protected override async Task OnInitializedAsync()
+    {
+        var profile = CurrentUserAccessProfile.FromClaims((await AuthenticationState.GetAuthenticationStateAsync()).User);
+        organizations = (await Api.GetFromJsonAsync<List<TenantOrganization>>("api/v1/tenant-admin/organizations?permission=Tenant.Settings.Manage") ?? new())
+            .Where(organization => profile.HasPermission(HelpdeskPermissions.TenantSettingsManage, organization.Id)).ToList();
+        if (organizations.Count > 0) await SelectAsync(organizations[0].Id);
+    }
+    private async Task SelectAsync(string? value)
+    {
+        organizationId = value; settings = null; error = null;
+        if (string.IsNullOrWhiteSpace(value)) return;
+        busy = true;
+        try { settings = await Api.GetFromJsonAsync<TenantSettingsModel>($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(value)}/settings"); }
+        catch (HttpRequestException) { error = "The tenant settings could not be loaded."; }
+        finally { busy = false; }
+    }
+    private async Task SaveAsync()
+    {
+        if (settings is null || string.IsNullOrWhiteSpace(organizationId)) return;
+        if (string.IsNullOrWhiteSpace(settings.Name)) { error = "Enter a tenant name."; return; }
+        busy = true; error = null;
+        try
+        {
+            using var response = await Api.PutAsJsonAsync($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(organizationId)}/settings", settings);
+            if (!response.IsSuccessStatusCode) { error = "The tenant settings could not be saved. Check your access and the entered values."; return; }
+            Snackbar.Add("Tenant settings saved.", Severity.Success);
+            var index = organizations.FindIndex(organization => organization.Id == organizationId);
+            if (index >= 0) organizations[index] = organizations[index] with { Name = settings.Name.Trim() };
+        }
+        catch (HttpRequestException) { error = "The tenant settings service is unavailable. Please retry."; }
+        finally { busy = false; }
+    }
+    private sealed record TenantOrganization(string Id, string Name);
+    private sealed class TenantSettingsModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? ContactInfo { get; set; }
+    }
+}

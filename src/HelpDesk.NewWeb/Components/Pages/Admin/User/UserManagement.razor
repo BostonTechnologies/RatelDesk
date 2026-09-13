@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "HelpdeskAdmin")]
 @inject IHttpClientFactory HttpClientFactory
 @inject IDialogService DialogService
+@inject HelpDesk.NewWeb.Models.WebAuthenticationMode AuthenticationMode
 @using Helpdesk.Shared.DTOs.Organization
 @using Helpdesk.Shared.DTOs.User
 
@@ -51,6 +52,11 @@
                                Size="Size.Small"
                                aria-label="Edit user"
                                OnClick="() => OpenEditDialog(context)" />
+                @if (AuthenticationMode.SupportsLocalAccounts)
+                {
+                    <MudIconButton Icon="@Icons.Material.Filled.Key" Color="Color.Primary" Size="Size.Small"
+                                   aria-label="Manage local account" OnClick="() => OpenResetDialog(context)" />
+                }
                 <MudIconButton Icon="@Icons.Material.Filled.Delete"
                                Color="Color.Error"
                                Size="Size.Small"
@@ -108,10 +114,7 @@
         var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
         var dialog = await DialogService.ShowAsync<CreateUserDialog>("Create User", options);
         var result = await dialog.Result;
-        if (!result.Canceled)
-        {
-            await LoadUsers();
-        }
+        await LoadUsers();
     }
 
     private async Task OpenEditDialog(UserDto user)
@@ -124,6 +127,13 @@
         {
             await LoadUsers();
         }
+    }
+
+    private async Task OpenResetDialog(UserDto user)
+    {
+        var parameters = new DialogParameters { ["User"] = user };
+        await DialogService.ShowAsync<ResetLocalAccountDialog>("Manage local account", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
     }
 
     private async Task OpenDeleteDialog(UserDto user)

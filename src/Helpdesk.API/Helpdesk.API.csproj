@@ -12,6 +12,7 @@
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Dodo.Primitives" Version="5.0.0" />
+    <PackageReference Include="Hangfire.Storage.SQLite" Version="0.4.3" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
@@ -33,6 +34,7 @@
     <ProjectReference Include="..\Helpdesk.ServiceDefaults\Helpdesk.ServiceDefaults.csproj" />
     <ProjectReference Include="..\Helpdesk.Shared\Helpdesk.Shared.csproj" />
     <ProjectReference Include="..\Helpdesk.Infrastructure\Helpdesk.Infrastructure.csproj" />
+    <ProjectReference Include="..\Helpdesk.Infrastructure.SqliteMigrations\Helpdesk.Infrastructure.SqliteMigrations.csproj" />
   </ItemGroup>
 
 </Project>

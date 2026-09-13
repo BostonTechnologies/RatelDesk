@@ -42,6 +42,7 @@ using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql.EntityFrameworkCore.PostgreSQL;
@@ -51,18 +52,27 @@ namespace Helpdesk.Infrastructure;
 
 public static class DependencyInjection
 {
+    private const string SqliteMigrationsAssembly = "Helpdesk.Infrastructure.SqliteMigrations";
+
     public static IServiceCollection AddHelpdeskInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        var helpdeskDbConnectionString = configuration.GetConnectionString("HelpdeskDb");
-        if (string.IsNullOrWhiteSpace(helpdeskDbConnectionString))
+        var legacyPostgreSqlConnectionString = configuration.GetConnectionString("HelpdeskDb");
+        var databaseOptions = configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
+        var databaseProvider = databaseOptions.ResolveProvider(legacyPostgreSqlConnectionString);
+        var connectionString = databaseProvider switch
         {
-            throw new InvalidOperationException(
-                "ConnectionStrings:HelpdeskDb is required. Set ConnectionStrings__HelpdeskDb in the deployment environment.");
-        }
+            DatabaseProvider.PostgreSql when !string.IsNullOrWhiteSpace(legacyPostgreSqlConnectionString) => legacyPostgreSqlConnectionString,
+            DatabaseProvider.PostgreSql => throw new InvalidOperationException(
+                "ConnectionStrings:HelpdeskDb is required when Database:Provider is PostgreSql."),
+            DatabaseProvider.Sqlite when !string.IsNullOrWhiteSpace(databaseOptions.Sqlite.Path) => CreateSqliteConnectionString(databaseOptions.Sqlite),
+            _ => throw new InvalidOperationException("Database:Sqlite:Path is required when Database:Provider is Sqlite.")
+        };
 
         services.AddHttpContextAccessor();
         services.AddOptions<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatOptions>()
             .Bind(configuration.GetSection("AiAssistantChat"))
+            .Validate(x => !x.Enabled || databaseProvider is DatabaseProvider.PostgreSql,
+                "Native AI Assistant chat requires PostgreSQL for durable session ownership. Set AiAssistantChat:Enabled=false to use SQLite with webhook AI assistance.")
             .Validate(x => x.IsValid(), "Enabled chat requires Dev instance, session hub, credential, positive limits, and an activity heartbeat shorter than the turn inactivity timeout; private HTTP requires explicit opt-in.")
             .ValidateOnStart();
         services.AddSingleton(TimeProvider.System);
@@ -79,10 +89,10 @@ public static class DependencyInjection
         services.Configure<M2MClientOptions>(configuration.GetSection("M2M"));
         services.Configure<AuthentikOptions>(configuration.GetSection("Authentication:AuthentikAdmin"));
 
-        services.AddDbContext<HelpdeskDbContext>(options =>
-            options.UseNpgsql(
-                helpdeskDbConnectionString,
-                npg => npg.UseVector()));
+        services.AddSingleton(databaseOptions);
+        services.AddDbContext<HelpdeskDbContext>(options => ConfigureDatabase(options, databaseProvider, connectionString));
+        services.AddDbContext<RatelDeskIdentityDbContext>(options => ConfigureDatabase(options, databaseProvider, connectionString));
+        services.AddRatelDeskLocalIdentity();
 
         AddRepositoryRegistrations(services);
 
@@ -110,7 +120,14 @@ public static class DependencyInjection
         services.AddScoped<IAiOperationAuditService, LoggerAiOperationAuditService>();
         services.AddScoped<IAiProviderService, AiProviderService>();
         services.AddScoped<IEmbeddingService, EmbeddingService>();
-        services.AddScoped<IKnowledgeVectorStore, PgVectorKnowledgeVectorStore>();
+        if (databaseProvider is DatabaseProvider.PostgreSql)
+        {
+            services.AddScoped<IKnowledgeVectorStore, PgVectorKnowledgeVectorStore>();
+        }
+        else
+        {
+            services.AddScoped<IKnowledgeVectorStore, NoOpKnowledgeVectorStore>();
+        }
         services.AddScoped<IKnowledgeRetrievalService, KnowledgeRetrievalService>();
         services.AddScoped<IKnowledgeBuilderService, KnowledgeBuilderService>();
         services.AddScoped<IKnowledgeSuggestionService, KnowledgeSuggestionService>();
@@ -123,6 +140,8 @@ public static class DependencyInjection
         services.AddScoped<ISupportNotificationRecipientResolver, SupportNotificationRecipientResolver>();
         services.AddScoped<ISupportNotificationService, SupportNotificationService>();
         services.AddScoped<ISupportNotificationBootstrapper, SupportNotificationBootstrapper>();
+        services.AddSingleton<TicketAttachmentFileStore>();
+        services.AddHostedService(sp => sp.GetRequiredService<TicketAttachmentFileStore>());
         services.AddScoped<ITicketAttachmentService, TicketAttachmentService>();
         services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();
         services.AddScoped<IInboundInlineImageResolver, InboundInlineImageResolver>();
@@ -221,6 +240,50 @@ public static class DependencyInjection
                 "Enabled ExchangeEmail configuration requires tenant, client, secret, and mailbox values.")
             .ValidateOnStart();
         return services;
+    }
+
+    private static void ConfigureDatabase(
+        DbContextOptionsBuilder options,
+        DatabaseProvider provider,
+        string connectionString)
+    {
+        if (provider is DatabaseProvider.PostgreSql)
+        {
+            options.UseNpgsql(connectionString, npgsql => npgsql.UseVector());
+            // The historical PostgreSQL model contains intentional provider
+            // annotations that EF Core 10 re-detects as pending changes. The
+            // application always applies the explicit migration chain; fresh
+            // PostgreSQL setup is verified by the Compose smoke test.
+            options.ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+            return;
+        }
+
+        options.UseSqlite(connectionString, sqlite =>
+            sqlite.MigrationsAssembly(SqliteMigrationsAssembly));
+    }
+
+    private static string CreateSqliteConnectionString(SqliteDatabaseOptions options)
+    {
+        var path = Path.GetFullPath(options.Path);
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            throw new InvalidOperationException("Database:Sqlite:Path must include a directory.");
+        }
+
+        if (options.CreateIfMissing)
+        {
+            Directory.CreateDirectory(directory);
+        }
+        return new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Cache = Microsoft.Data.Sqlite.SqliteCacheMode.Shared,
+            ForeignKeys = true,
+            Mode = options.CreateIfMissing
+                ? Microsoft.Data.Sqlite.SqliteOpenMode.ReadWriteCreate
+                : Microsoft.Data.Sqlite.SqliteOpenMode.ReadWrite
+        }.ToString();
     }
 
     private static void AddRepositoryRegistrations(IServiceCollection services)

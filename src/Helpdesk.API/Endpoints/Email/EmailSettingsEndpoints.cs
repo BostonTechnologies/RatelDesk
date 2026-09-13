@@ -22,9 +22,8 @@ public static class EmailSettingsEndpoints
 
         group.MapGet("/", async ([FromServices] HelpdeskDbContext db, CancellationToken ct) =>
         {
-            var settings = await CurrentSettingsQuery(db)
-                .AsNoTracking()
-                .ToListAsync(ct);
+            var settings = await AppServices.Email.ImapEmailService.LoadOrderedInboxSettingsAsync(
+                db.EmailInboxSettings.AsNoTracking(), ct);
             var result = settings.Select(ToDto);
             return Results.Ok(result);
         });
@@ -39,7 +38,7 @@ public static class EmailSettingsEndpoints
         group.MapPost("/", async ([FromServices] HelpdeskDbContext db, [FromBody] EmailInboxSettings dto, CancellationToken ct) =>
         {
             var existing = dto.Id == Guid.Empty
-                ? await CurrentSettingsQuery(db).FirstOrDefaultAsync(ct)
+                ? (await AppServices.Email.ImapEmailService.LoadOrderedInboxSettingsAsync(db.EmailInboxSettings, ct)).FirstOrDefault()
                 : await db.EmailInboxSettings.FirstOrDefaultAsync(e => e.Id == dto.Id, ct);
             if (existing is null)
             {
@@ -122,9 +121,6 @@ public static class EmailSettingsEndpoints
                 : Results.Problem("IMAP connection failed", statusCode: 500);
         });
     }
-
-    private static IQueryable<EmailInboxSettings> CurrentSettingsQuery(HelpdeskDbContext db)
-        => AppServices.Email.ImapEmailService.OrderByCurrentInboxSettings(db.EmailInboxSettings);
 
     private static EmailInboxSettingsDto ToDto(EmailInboxSettings s)
         => new(

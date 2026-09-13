@@ -10,6 +10,7 @@ using Helpdesk.Shared.Enums;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -23,19 +24,10 @@ public sealed class InboundEmailActionExecutor(
     IRepository<TicketTimelineEvent> timelineRepo,
     ILogger<InboundEmailActionExecutor> logger,
     IInboundInlineImageResolver inlineImageResolver,
-    ITicketAttachmentService attachmentService)
+    ITicketAttachmentService attachmentService,
+    RatelDeskIdentityDbContext? identityDb = null)
     : IInboundEmailActionExecutor
 {
-    private static readonly string[] SupportRoles =
-    [
-        HelpdeskPermissions.HelpdeskAdmin,
-        HelpdeskRoleBundles.Technical,
-        HelpdeskPermissions.IncidentManager,
-        HelpdeskPermissions.RequestManager,
-        HelpdeskPermissions.ChangeManager,
-        "Technician"
-    ];
-
     public async Task<InboundEmailRuleProcessingResult> ExecuteAsync(
         InboundEmailRule rule,
         InboundEmailRuleActionConfig action,
@@ -53,7 +45,8 @@ public sealed class InboundEmailActionExecutor(
         await TryLogAsync(context, rule, actionKey, true, InboundEmailProcessingStatus.Matched, null, null, ct);
 
         var forwarder = await ResolveForwarderAsync(context.FromEmail, ct);
-        if (forwarder is null || !IsSupportUser(forwarder))
+        var forwarderAccess = forwarder is null ? null : await InboundForwarderAuthorization.ResolveAsync(db, identityDb, forwarder, ct);
+        if (!InboundForwarderAuthorization.CanForward(forwarderAccess))
         {
             await TryLogAsync(context, rule, actionKey, true, InboundEmailProcessingStatus.UnauthorizedSender, null, "Forwarding sender is not an authorized support user.", ct);
             return new InboundEmailRuleProcessingResult(false, false, null);
@@ -65,7 +58,7 @@ public sealed class InboundEmailActionExecutor(
             return new InboundEmailRuleProcessingResult(true, true, null);
         }
 
-        var tenantResult = await ResolveTenantAsync(rule, context, forwarder, forwarded.OriginalFromEmail!, ct);
+        var tenantResult = await ResolveTenantAsync(rule, context, forwarderAccess!, ct);
         if (tenantResult.Ambiguous)
         {
             await TryLogAsync(context, rule, actionKey, true, InboundEmailProcessingStatus.TenantResolutionAmbiguous, null, "Tenant resolution was ambiguous.", ct);
@@ -76,6 +69,12 @@ public sealed class InboundEmailActionExecutor(
         {
             await TryLogAsync(context, rule, actionKey, true, InboundEmailProcessingStatus.Failed, null, "Tenant could not be resolved.", ct);
             return new InboundEmailRuleProcessingResult(true, true, null);
+        }
+
+        if (!forwarderAccess!.CanManageIncident(tenantResult.Organization.Id))
+        {
+            await TryLogAsync(context, rule, actionKey, true, InboundEmailProcessingStatus.UnauthorizedSender, null, "Forwarding sender cannot create incidents in the selected organization.", ct);
+            return new InboundEmailRuleProcessingResult(false, false, null);
         }
 
         try
@@ -154,14 +153,10 @@ public sealed class InboundEmailActionExecutor(
         await db.Users.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Email.ToLower() == email.Trim().ToLowerInvariant(), ct);
 
-    internal static bool IsSupportUser(User user) =>
-        SupportRoles.Any(role => string.Equals(user.Role, role, StringComparison.OrdinalIgnoreCase));
-
     private async Task<TenantResolutionResult> ResolveTenantAsync(
         InboundEmailRule rule,
         InboundEmailContext context,
-        User forwarder,
-        string originalRequesterEmail,
+        CurrentUserAccessProfile access,
         CancellationToken ct)
     {
         var candidates = new List<Organization>();
@@ -175,7 +170,7 @@ public sealed class InboundEmailActionExecutor(
             await AddOrganizationAsync(candidates, rule.TenantId, ct);
         }
 
-        var managed = await ResolveManagedOrganizationsAsync(forwarder, ct);
+        var managed = await ResolveManagedOrganizationsAsync(access, ct);
         if (managed.Count == 1)
         {
             AddDistinct(candidates, managed[0]);
@@ -185,27 +180,17 @@ public sealed class InboundEmailActionExecutor(
             return new TenantResolutionResult(null, true);
         }
 
-        if (candidates.Count == 0)
-        {
-            var domain = originalRequesterEmail.Split('@').Last();
-            var organization = await tenantProvisioningService.GetOrCreateOrganizationByDomainAsync(domain);
-            AddDistinct(candidates, organization);
-        }
 
         return candidates.Select(x => x.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1
             ? new TenantResolutionResult(null, true)
             : new TenantResolutionResult(candidates.FirstOrDefault(), false);
     }
 
-    private async Task<List<Organization>> ResolveManagedOrganizationsAsync(User forwarder, CancellationToken ct)
+    private async Task<List<Organization>> ResolveManagedOrganizationsAsync(CurrentUserAccessProfile access, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(forwarder.OrganizationId))
-        {
-            return [];
-        }
-
+        var organizationIds = access.OrganizationIdsForAny(HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.IncidentManager);
         return await db.Organizations.AsNoTracking()
-            .Where(x => x.ItSupportOrganizationId == forwarder.OrganizationId || x.Id == forwarder.OrganizationId)
+            .Where(organization => organization.IsEnabled && (access.IsHelpdeskAdmin || organizationIds.Contains(organization.Id)))
             .ToListAsync(ct);
     }
 
@@ -216,7 +201,7 @@ public sealed class InboundEmailActionExecutor(
             return;
         }
 
-        var organization = await db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+        var organization = await db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.IsEnabled, ct);
         if (organization is not null)
         {
             AddDistinct(organizations, organization);

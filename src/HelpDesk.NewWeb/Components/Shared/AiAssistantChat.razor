@@ -6,6 +6,13 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
+@if (capabilities is { Enabled: false })
+{
+    <MudAlert Severity="Severity.Info">@capabilities.Reason</MudAlert>
+    <TicketAiAssistant TicketId="@TicketId" TicketType="@TicketType" />
+}
+else
+{
 <MudStack Spacing="2">
     <MudText Typo="Typo.h6">AI Assistant · @state · @connectionStatus</MudText>
     @if (history.Count > 0)
@@ -59,6 +66,8 @@
     <MudButton OnClick="NewAsync" Size="Size.Small" Style="align-self: flex-start" Disabled="@(busy || state != ChatState.Idle || conversation == Guid.Empty)">Archive and start new conversation</MudButton>
 </MudStack>
 
+}
+
 @code {
     [Parameter] public string TicketId { get; set; } = string.Empty;
     [Parameter] public string TicketType { get; set; } = "incidents";
@@ -74,15 +83,14 @@
     private ChatState state;
     private string message = "", draft = "";
     private string? error;
+    private ChatCapabilities? capabilities;
     private long cursor;
     private bool busy;
     private bool acknowledgeAbandon, acknowledgeStopWaiting, hasOlderHistory;
     private Guid resolutionId = Guid.NewGuid();
     private string connectionStatus = "Connecting";
     private string? currentActor;
-    private readonly Dictionary<string, string> actorNames = new(StringComparer.Ordinal);
-    private string ActorLabel(string? actor) => actor == currentActor && currentActor is not null ? "You"
-        : actor is not null && actorNames.TryGetValue(actor, out var name) ? name : "Helpdesk operator";
+    private string ActorLabel(string? actor) => actor == currentActor && currentActor is not null ? "You" : "Helpdesk operator";
     private Guid? UnresolvedMessageId => events.LastOrDefault(x => x.Type == "operator")?.ClientMessageId;
     private string Route => $"api/v1/{TicketType}/{TicketId}/ai-assistant/chat";
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
@@ -97,11 +105,20 @@
         try
         {
             using var api = Api;
-            var users = await api.GetFromJsonAsync<List<Helpdesk.Shared.DTOs.User.UserDto>>("api/v1/users", ct) ?? [];
-            foreach (var entry in users)
-                actorNames[entry.Id] = !string.IsNullOrWhiteSpace(entry.Name) ? entry.Name : entry.Email;
+            capabilities = await api.GetFromJsonAsync<ChatCapabilities>(
+                $"api/v1/{TicketType}/{TicketId}/ai-assistant/chat-capabilities", ct);
+            if (capabilities is { Enabled: false })
+            {
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
         }
-        catch (HttpRequestException) { error = "Operator names are unavailable; the transcript retains its audit identities."; }
+        catch (HttpRequestException)
+        {
+            error = "Unable to check AI Assistant availability. Refresh to try again.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { return; }
         if (disposed) return;
         await SelectConversationAsync(Guid.Empty);

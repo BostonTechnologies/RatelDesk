@@ -59,6 +59,20 @@ public sealed class SelfServiceMyRequestsEndpointsTests
         Assert.Equal("Need laptop access", payload.Title);
     }
 
+    [Fact]
+    public async Task GetMyRequests_DoesNotUseMatchingEmailWithoutAnExplicitCustomerLink()
+    {
+        await using var harness = await SelfServiceMyRequestsTestHarness.CreateAsync("EmailOnly");
+
+        var response = await harness.Client.GetAsync("/api/v1/self-service/requests");
+        var payload = await response.Content.ReadFromJsonAsync<PagedResponse<MyRequestListItemDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(payload);
+        Assert.Equal(0, payload!.TotalCount);
+        Assert.Empty(payload.Items);
+    }
+
     private sealed class SelfServiceMyRequestsTestHarness : IAsyncDisposable
     {
         private readonly SqliteConnection _connection;
@@ -79,7 +93,7 @@ public sealed class SelfServiceMyRequestsEndpointsTests
         public HttpClient Client { get; }
         public string RequestId { get; }
 
-        public static async Task<SelfServiceMyRequestsTestHarness> CreateAsync()
+        public static async Task<SelfServiceMyRequestsTestHarness> CreateAsync(string authHeader = "SelfService")
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -93,6 +107,7 @@ public sealed class SelfServiceMyRequestsEndpointsTests
             builder.Services.AddDbContext<HelpdeskDbContext>(options => options.UseSqlite(connection));
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("tenant-1", "user-1", isHelpdeskAdmin: false));
             builder.Services.AddScoped<ISelfServiceAudienceService, AllowingSelfServiceAudienceService>();
+            builder.Services.AddScoped<ICurrentUserAccessService, ClaimsCurrentUserAccessService>();
             builder.Services.AddSingleton<IDomainEventPublisher, TestDomainEventPublisher>();
             builder.Services.AddScoped<ICorrelationContext>(_ => new TestCorrelationContext("corr-self-service-tests"));
             builder.Services.AddAuthentication(options =>
@@ -184,7 +199,7 @@ public sealed class SelfServiceMyRequestsEndpointsTests
 
             await app.StartAsync();
             var client = app.GetTestClient();
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "SelfService");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", authHeader);
             return new SelfServiceMyRequestsTestHarness(connection, app, client, "request-1");
         }
 
@@ -242,11 +257,20 @@ public sealed class SelfServiceMyRequestsEndpointsTests
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
-            var claims = new[]
+            var claims = Request.Headers.Authorization.ToString().Contains("EmailOnly", StringComparison.OrdinalIgnoreCase)
+                ? new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "user-1"),
+                    new Claim(ClaimTypes.Name, "Requester"),
+                    new Claim("preferred_username", "requester@example.com"),
+                    new Claim(ClaimTypes.Role, "SelfService.User")
+                }
+                : new[]
             {
                 new Claim(ClaimTypes.NameIdentifier, "user-1"),
                 new Claim(ClaimTypes.Name, "Requester"),
                 new Claim("preferred_username", "requester@example.com"),
+                new Claim("customer_id", "customer-1"),
                 new Claim(ClaimTypes.Role, "SelfService.User")
             };
 
@@ -255,6 +279,12 @@ public sealed class SelfServiceMyRequestsEndpointsTests
             var ticket = new AuthenticationTicket(principal, "Test");
             return Task.FromResult(AuthenticateResult.Success(ticket));
         }
+    }
+
+    private sealed class ClaimsCurrentUserAccessService : ICurrentUserAccessService
+    {
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default) =>
+            Task.FromResult(CurrentUserAccessProfile.FromClaims(user));
     }
 }
 

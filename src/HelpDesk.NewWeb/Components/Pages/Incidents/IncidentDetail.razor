@@ -1,5 +1,7 @@
+@using Helpdesk.Shared.Services
+@inject AuthenticationStateProvider AccessAuthenticationState
 @page "/incidents/{Id}"
-@attribute [Authorize(Roles = "Incident.User,Incident.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Incident.User,Incident.Read,Incident.Write,Incident.Manager,HelpdeskAdmin")]
 
 @inject ISnackbar Snackbar
 @inject IHttpClientFactory HttpClientFactory
@@ -43,7 +45,7 @@ else
                 CustomerEmail="@incident.CustomerEmail"
                 CategoryIds="@selectedCategoryIds"
                 AllCategories="@categories"
-                CategoryRemoved="OnCategoryRemoved">
+                CategoryRemoved="OnCategoryRemoved" ReadOnly="@(!CanManage)">
                 <MetadataContent>
                     @if (aiRuntimeStatus is not null)
                     {
@@ -83,7 +85,7 @@ else
                 TicketId="@Id"
                 TicketType="incidents"
                 OrganizationId="@incident.OrganizationId"
-                PublicMode="false"
+                PublicMode="false" CanContribute="@CanContribute" CanManage="@CanManage"
                 OnWorklogAdded="HandleWorklogAdded"
                 ShowAiStatusSummary="false"
                 InitialAiCount="@incident.AiSuggestionCount"
@@ -105,7 +107,7 @@ else
                                            Margin="Margin.Dense"
                                            Label="Status"
                                            Variant="Variant.Outlined"
-                                           Disabled="@(isUpdating)">
+                                           Disabled="@(!CanManage || isUpdating)">
                                     @foreach (TicketState state in Enum.GetValues(typeof(TicketState)))
                                     {
                                         <MudSelectItem T="TicketState" Value="@state">@state.ToString()</MudSelectItem>
@@ -118,7 +120,7 @@ else
                                            Margin="Margin.Dense"
                                            Label="Priority"
                                            Variant="Variant.Outlined"
-                                           Disabled="@(isUpdating)">
+                                           Disabled="@(!CanManage || isUpdating)">
                                     @foreach (TicketPriority priority in Enum.GetValues(typeof(TicketPriority)))
                                     {
                                         <MudSelectItem T="TicketPriority" Value="@priority">@priority.ToString()</MudSelectItem>
@@ -129,7 +131,7 @@ else
                                 <HelpDesk.NewWeb.Components.Shared.ServiceCategoryPicker
                                     RequestedType="TicketCategoryType.Incident"
                                     SelectedCategoryIds="@selectedCategoryIds"
-                                    SelectedCategoryIdsChanged="OnCategorySelectionChanged"
+                                    SelectedCategoryIdsChanged="OnCategorySelectionChanged" ReadOnly="@(!CanManage)"
                                     Dense="true"
                                     Margin="Margin.Dense" />
                             </MudItem>
@@ -164,7 +166,7 @@ else
                                 </MudItem>
                             }
                             <MudItem xs="12">
-                                <MudSelect T="string" Label="Assignee" Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" Value="@GetAssigneeSelectValue(incident.AssignedToId)" ValueChanged="OnAssigneeChanged">
+                                <MudSelect T="string" Label="Assignee" Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" Value="@GetAssigneeSelectValue(incident.AssignedToId)" ValueChanged="OnAssigneeChanged" Disabled="@(!CanManage)">
                                     <MudSelectItem Value="@UnassignedAssigneeValue">Unassigned</MudSelectItem>
                                     @foreach (var u in teamMembers)
                                     {
@@ -194,11 +196,11 @@ else
                                     }
                                     @if (incident.Sla.Status == SlaStatus.InProgress)
                                     {
-                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" OnClick="PauseSlaAsync">Pause SLA</MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" Disabled="@(!CanManage)" OnClick="PauseSlaAsync">Pause SLA</MudButton>
                                     }
                                     else if (incident.Sla.Status == SlaStatus.Paused)
                                     {
-                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success" Class="mt-2" OnClick="ResumeSlaAsync">Resume SLA</MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success" Class="mt-2" Disabled="@(!CanManage)" OnClick="ResumeSlaAsync">Resume SLA</MudButton>
                                     }
                                 </MudItem>
                             }
@@ -210,15 +212,15 @@ else
                                    StartIcon="@Icons.Material.Filled.AccountTree"
                                    Variant="Variant.Outlined"
                                    Color="Color.Primary"
-                                   Disabled="@isUpdating">
+                                   Disabled="@(!CanManage || isUpdating)">
                             Close / Link
                         </MudButton>
                         <MudButton OnClick="RevertChanges"
-                                   Disabled="!hasChanges || isUpdating">Revert</MudButton>
+                                   Disabled="!CanManage || !hasChanges || isUpdating">Revert</MudButton>
                         <MudButton OnClick="SaveChangesAsync"
                                    Variant="Variant.Filled"
                                    Color="Color.Primary"
-                                   Disabled="!hasChanges || isUpdating">
+                                   Disabled="!CanManage || !hasChanges || isUpdating">
                             @if (isUpdating)
                             {
                                 <MudProgressCircular Class="mr-2" Size="Size.Small" Indeterminate="true" />
@@ -232,6 +234,10 @@ else
 }
 
 @code {
+    private CurrentUserAccessProfile? accessProfile;
+    private bool CanManage => accessProfile?.CanManageIncident(incident?.OrganizationId) == true;
+    private bool CanContribute => incident is not null && accessProfile?.CanContributeIncident(incident.OrganizationId, incident.CustomerId, incident.RequesterEmail) == true;
+
     [Parameter] public string Id { get; set; } = string.Empty;
 
     private IncidentDto? incident;
@@ -270,10 +276,10 @@ else
         try
         {
             var incidentTask = HelpdeskApi.GetFromJsonAsync<IncidentDto>($"api/v1/incidents/{Id}");
-            var teamTask = HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users");
+            accessProfile = CurrentUserAccessProfile.FromClaims((await AccessAuthenticationState.GetAuthenticationStateAsync()).User);
             var categoriesTask = HelpdeskApi.GetFromJsonAsync<List<TicketCategoryDto>>($"api/v1/categories?type={(int)TicketCategoryType.Incident}");
 
-            await Task.WhenAll(incidentTask, teamTask, categoriesTask);
+            await Task.WhenAll(incidentTask, categoriesTask);
 
             originalIncident = await incidentTask;
             categories = await categoriesTask ?? new();
@@ -291,7 +297,10 @@ else
                 _ = LoadAiMetadataAsync(incident.OrganizationId);
             }
 
-            teamMembers = await teamTask ?? new List<UserDto>();
+            if (CanManage && incident?.OrganizationId is not null)
+            {
+                teamMembers = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>($"api/v1/ticketing/assignees?module=incident&organizationId={Uri.EscapeDataString(incident.OrganizationId)}") ?? new();
+            }
         }
         catch (Exception ex)
         {
@@ -511,7 +520,7 @@ else
 
     private async Task SaveChangesAsync()
     {
-        if (incident is null || !hasChanges) return;
+        if (!CanManage || incident is null || !hasChanges) return;
 
         isUpdating = true;
 

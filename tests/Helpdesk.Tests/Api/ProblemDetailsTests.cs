@@ -26,6 +26,7 @@ public class ProblemDetailsTests : IClassFixture<WebApplicationFactory<Program>>
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
             builder.ConfigureAppConfiguration((context, cfg) =>

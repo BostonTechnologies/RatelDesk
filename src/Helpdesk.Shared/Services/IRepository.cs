@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq.Expressions;
 using System.Threading.Tasks;
 
 namespace Helpdesk.Shared.Services;
@@ -13,6 +14,13 @@ public interface IRepository<T>
     /// Retrieves all entities of type <typeparamref name="T"/>.
     /// </summary>
     Task<IEnumerable<T>> GetAllAsync();
+
+    /// <summary>
+    /// Counts entities matching a predicate without materializing them.
+    /// </summary>
+    /// <param name="predicate">The database-translatable filter to apply.</param>
+    /// <param name="cancellationToken">The operation cancellation token.</param>
+    Task<int> CountAsync(Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a single entity by identifier.

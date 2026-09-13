@@ -1,10 +1,13 @@
+@using Helpdesk.Shared.Services
+@using Helpdesk.Shared.Auth
+@inject AuthenticationStateProvider AccessAuthenticationState
 @page "/changes"
 
 @using Helpdesk.Shared.DTOs
 @using Helpdesk.Shared.DTOs.Change
 @using Helpdesk.Shared.DTOs.User
 
-@attribute [Authorize(Roles = "Change.User,Change.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Change.User,Change.Read,Change.Write,Change.Manager,HelpdeskAdmin")]
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager NavigationManager
 @inject IDialogService DialogService
@@ -24,7 +27,10 @@
                            aria-label="Show historic changes"
                            OnClick="ToggleHistoric" />
         </MudTooltip>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+        @if (CanCreate)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+        }
     </MudStack>
 
     <div class="helpdesk-list-toolbar">
@@ -47,6 +53,8 @@
     <TicketTable TTicket="ChangeDto"
                  @ref="_table"
                  TicketType="changes"
+                 CanEditItem="@(item => accessProfile?.CanManageChange(item.OrganizationId) == true)"
+                 EnableSelection="@(accessProfile?.IsHelpdeskAdmin == true)"
                  ServerData="LoadServerData"
                  SelectedItems="_selected"
                  SelectedItemsChanged="@(x => _selected = x)"
@@ -94,6 +102,11 @@
 </div>
 
 @code {
+    private CurrentUserAccessProfile? accessProfile;
+    private bool CanWriteAny => accessProfile?.HasPermission(HelpdeskPermissions.ChangeWrite) == true || accessProfile?.HasPermission(HelpdeskPermissions.ChangeManager) == true;
+    private bool CanCreate => CanWriteAny || accessProfile?.HasPermission(HelpdeskPermissions.ChangeUser) == true;
+    protected override async Task OnInitializedAsync() => accessProfile = CurrentUserAccessProfile.FromClaims((await AccessAuthenticationState.GetAuthenticationStateAsync()).User);
+
     [SupplyParameterFromQuery(Name = "search")]
     public string? QuerySearch { get; set; }
 
@@ -156,11 +169,6 @@
             url += $"&q={Uri.EscapeDataString(search)}";
         }
 
-        if (teamMembers.Count == 0)
-        {
-            try { teamMembers = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users", cancellationToken) ?? new(); }
-            catch { teamMembers = new(); }
-        }
 
         PagedResponse<ChangeDto> response;
         try
@@ -233,6 +241,8 @@
     {
         builder.OpenComponent<ChangeLifecycleStatePicker>(0);
         builder.AddAttribute(1, nameof(ChangeLifecycleStatePicker.ChangeId), change.Id);
+        builder.AddAttribute(4, nameof(ChangeLifecycleStatePicker.CanWrite), accessProfile?.CanManageChange(change.OrganizationId) == true);
+        builder.AddAttribute(5, nameof(ChangeLifecycleStatePicker.CanApprove), accessProfile?.CanApproveChange(change.OrganizationId) == true);
         builder.AddAttribute(2, nameof(ChangeLifecycleStatePicker.LifecycleState), change.LifecycleState);
         builder.AddAttribute(3, nameof(ChangeLifecycleStatePicker.ChangeUpdated), EventCallback.Factory.Create<ChangeDto>(this, async updated =>
         {
@@ -370,7 +380,7 @@
 
     private async Task ApplyBulkState()
     {
-        if (_selected.Count == 0 || _table is null) return;
+        if (_selected.Count == 0 || _table is null || _selected.Any(item => accessProfile?.CanManageChange(item.OrganizationId) != true)) return;
 
         var ids = _selected.Select(x => x.Id).ToList();
         var selectedState = _table.SelectedBulkState;
@@ -388,7 +398,7 @@
 
     private async Task ApplyBulkAssign()
     {
-        if (_selected.Count == 0 || _table is null) return;
+        if (_selected.Count == 0 || _table is null || _selected.Any(item => accessProfile?.CanManageChange(item.OrganizationId) != true)) return;
 
         var ids = _selected.Select(x => x.Id).ToList();
         var assigneeId = _table.SelectedBulkAssigneeId;

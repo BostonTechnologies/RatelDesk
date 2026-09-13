@@ -16,26 +16,106 @@ public sealed record CurrentUserAccessProfile(
     IReadOnlySet<string> AllowedOrganizationIds,
     IReadOnlySet<string> ManagedOrganizationIds)
 {
+    public bool UsesScopedPermissions { get; init; }
+
+    public IReadOnlySet<ScopedPermissionGrant> ScopedPermissionGrants { get; init; } =
+        new HashSet<ScopedPermissionGrant>();
+
     public bool HasPermission(string permission) =>
         IsHelpdeskAdmin || Permissions.Contains(permission);
 
+    public bool HasPermission(string permission, string? organizationId)
+    {
+        if (IsHelpdeskAdmin)
+        {
+            return true;
+        }
+
+        if (UsesScopedPermissions || ScopedPermissionGrants.Count > 0)
+        {
+            return !string.IsNullOrWhiteSpace(organizationId) &&
+                   ScopedPermissionGrants.Any(grant =>
+                       string.Equals(grant.Permission, permission, StringComparison.OrdinalIgnoreCase) &&
+                       string.Equals(grant.OrganizationId, organizationId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return InAllowedOrg(organizationId) && Permissions.Contains(permission);
+    }
+
+    public IReadOnlySet<string> OrganizationIdsFor(string permission) =>
+        UsesScopedPermissions || ScopedPermissionGrants.Count > 0
+            ? ScopedPermissionGrants
+                .Where(grant => string.Equals(grant.Permission, permission, StringComparison.OrdinalIgnoreCase))
+                .Select(grant => grant.OrganizationId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : HasPermission(permission)
+                ? AllowedOrganizationIds
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlySet<string> OrganizationIdsForAny(params string[] permissions) =>
+        permissions.SelectMany(OrganizationIdsFor).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     public bool CanViewIncident(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageIncident(organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
+        HasPermission(HelpdeskPermissions.IncidentRead, organizationId) || CanManageIncident(organizationId) ||
+        CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageIncident(string? organizationId) =>
-        IsHelpdeskAdmin || InAllowedOrg(organizationId) && HasPermission(HelpdeskPermissions.IncidentManager);
+        HasPermission(HelpdeskPermissions.IncidentWrite, organizationId) ||
+        HasPermission(HelpdeskPermissions.IncidentManager, organizationId);
+
+    public bool CanDeleteIncident(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.IncidentDelete, organizationId) ||
+        HasPermission(HelpdeskPermissions.IncidentManager, organizationId);
+
+    public bool CanContributeIncident(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageIncident(organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
+
+    public bool CanCreateIncident(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageIncident(organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
 
     public bool CanViewRequest(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageRequest(organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
+        HasPermission(HelpdeskPermissions.RequestRead, organizationId) || CanManageRequest(organizationId) ||
+        CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageRequest(string? organizationId) =>
-        IsHelpdeskAdmin || InAllowedOrg(organizationId) && HasPermission(HelpdeskPermissions.RequestManager);
+        HasPermission(HelpdeskPermissions.RequestWrite, organizationId) ||
+        HasPermission(HelpdeskPermissions.RequestManager, organizationId);
+
+    public bool CanDeleteRequest(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.RequestDelete, organizationId) ||
+        HasPermission(HelpdeskPermissions.RequestManager, organizationId);
+
+    public bool CanContributeRequest(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageRequest(organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
+
+    public bool CanCreateRequest(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageRequest(organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
+
+    public bool CanExecuteRequest(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.RequestExecute, organizationId) ||
+        HasPermission(HelpdeskPermissions.RequestManager, organizationId);
 
     public bool CanViewChange(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageChange(organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
+        HasPermission(HelpdeskPermissions.ChangeRead, organizationId) || CanManageChange(organizationId) ||
+        CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageChange(string? organizationId) =>
-        IsHelpdeskAdmin || InAllowedOrg(organizationId) && HasPermission(HelpdeskPermissions.ChangeManager);
+        HasPermission(HelpdeskPermissions.ChangeWrite, organizationId) ||
+        HasPermission(HelpdeskPermissions.ChangeManager, organizationId);
+
+    public bool CanDeleteChange(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.ChangeDelete, organizationId) ||
+        HasPermission(HelpdeskPermissions.ChangeManager, organizationId);
+
+    public bool CanContributeChange(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageChange(organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
+
+    public bool CanCreateChange(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageChange(organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
+
+    public bool CanApproveChange(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.ChangeApprove, organizationId) ||
+        HasPermission(HelpdeskPermissions.ChangeManager, organizationId);
 
     public static CurrentUserAccessProfile FromClaims(ClaimsPrincipal user)
     {
@@ -53,26 +133,38 @@ public sealed record CurrentUserAccessProfile(
             roleValues.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
             roleValues.Contains(AuthentikRbacGroups.HelpdeskAdmin);
 
+        var scopedPermissionGrants = user.FindAll("scoped_permission")
+            .Select(claim => ScopedPermissionGrant.TryParse(claim.Value))
+            .OfType<ScopedPermissionGrant>()
+            .ToHashSet();
+
+        var allowedOrganizationIds = user.FindAll("allowed_organization_id")
+            .Select(claim => claim.Value)
+            .Append(FirstClaim(user, "organization_id"))
+            .OfType<string>()
+            .Concat(scopedPermissionGrants.Select(grant => grant.OrganizationId))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         return new CurrentUserAccessProfile(
             true,
             user.Identity?.Name ?? FirstClaim(user, "name", "preferred_username", ClaimTypes.Email, "email"),
             FirstClaim(user, ClaimTypes.Email, "email", "preferred_username"),
-            FirstClaim(user, "organization_id", "tenant_id"),
+            FirstClaim(user, "organization_id"),
             null,
             FirstClaim(user, "customer_id"),
             isAdmin,
             roleValues,
             roleValues,
-            user.FindAll("allowed_organization_id")
-                .Select(claim => claim.Value)
-                .Append(FirstClaim(user, "organization_id", "tenant_id"))
-                .OfType<string>()
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            allowedOrganizationIds,
             user.FindAll("managed_organization_id")
                 .Select(claim => claim.Value)
                 .Where(value => !string.IsNullOrWhiteSpace(value))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase));
+                .ToHashSet(StringComparer.OrdinalIgnoreCase))
+        {
+            UsesScopedPermissions = user.HasClaim("permission_scope_mode", "scoped"),
+            ScopedPermissionGrants = scopedPermissionGrants
+        };
     }
 
     private static string? FirstClaim(ClaimsPrincipal user, params string[] claimTypes)
@@ -103,11 +195,30 @@ public sealed record CurrentUserAccessProfile(
         new HashSet<string>(StringComparer.OrdinalIgnoreCase));
 
     private bool CanOwn(string permission, string? organizationId, string? customerId, string? requesterEmail) =>
-        InAllowedOrg(organizationId) &&
-        HasPermission(permission) &&
-        ((!string.IsNullOrWhiteSpace(customerId) && string.Equals(customerId, CustomerId, StringComparison.OrdinalIgnoreCase)) ||
-         (!string.IsNullOrWhiteSpace(requesterEmail) && string.Equals(requesterEmail, Email, StringComparison.OrdinalIgnoreCase)));
+        HasPermission(permission, organizationId) &&
+        !string.IsNullOrWhiteSpace(customerId) &&
+        string.Equals(customerId, CustomerId, StringComparison.OrdinalIgnoreCase);
 
     private bool InAllowedOrg(string? organizationId) =>
         !string.IsNullOrWhiteSpace(organizationId) && AllowedOrganizationIds.Contains(organizationId);
+}
+
+public sealed record ScopedPermissionGrant(string Permission, string OrganizationId)
+{
+    public override string ToString() => $"{Permission}|{OrganizationId}";
+
+    public static ScopedPermissionGrant? TryParse(string value)
+    {
+        var separator = value.IndexOf('|', StringComparison.Ordinal);
+        if (separator <= 0 || separator == value.Length - 1)
+        {
+            return null;
+        }
+
+        var permission = value[..separator].Trim();
+        var organizationId = value[(separator + 1)..].Trim();
+        return string.IsNullOrWhiteSpace(permission) || string.IsNullOrWhiteSpace(organizationId)
+            ? null
+            : new ScopedPermissionGrant(permission, organizationId);
+    }
 }

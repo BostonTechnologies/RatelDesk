@@ -8,6 +8,7 @@ using Helpdesk.Application.Events;
 using Helpdesk.Application.AiAssistant.Chat;
 using Helpdesk.Infrastructure.AiAssistant.Chat;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.AiAssistant.Chat;
 using Helpdesk.Shared.Services;
 using Helpdesk.Tests.Infrastructure.AiAssistant;
@@ -63,11 +64,23 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
         using var staff = host.Client();
         Assert.Equal(HttpStatusCode.OK, (await staff.GetAsync(Route(ticket))).StatusCode);
         using var otherTenant = host.Client(tenant: "other");
-        Assert.Equal(HttpStatusCode.NotFound, (await otherTenant.GetAsync(Route(ticket))).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await otherTenant.GetAsync($"{Route(ticket)}/history")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await otherTenant.GetAsync(Route(ticket))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await otherTenant.GetAsync($"{Route(ticket)}/history")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await staff.GetAsync($"/api/v1/requests/{ticket}/ai-assistant/chat")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await staff.GetAsync($"{Route(otherTicket)}?conversationId={conversation}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await staff.PostAsJsonAsync($"{Route(otherTicket)}/messages", new ChatMessageRequest(conversation, Guid.NewGuid(), "No"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task ScopedTechnicianCanUseChatInAssignedNonPrimaryOrganization()
+    {
+        var (ticket, _) = await database.CreateAsync("scoped-org");
+        await using var host = new ChatApi(database);
+        using var scopedTechnician = host.Client(tenant: "org", scopedTenant: "scoped-org");
+        using var ungrantedTechnician = host.Client(tenant: "org");
+
+        Assert.Equal(HttpStatusCode.OK, (await scopedTechnician.GetAsync(Route(ticket))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ungrantedTechnician.GetAsync(Route(ticket))).StatusCode);
     }
 
     [Fact]
@@ -179,11 +192,11 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
         var request = new ChatAbandonRequest(conversation, Guid.NewGuid(), messageId, true);
         var endpoint = $"{Route(ticket)}/abandon";
         Assert.Equal(HttpStatusCode.Forbidden, (await customer.PostAsJsonAsync(endpoint, request)).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await foreign.PostAsJsonAsync(endpoint, request)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await foreign.PostAsJsonAsync(endpoint, request)).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await staff.PostAsJsonAsync(endpoint, request with { AcknowledgePossibleDelivery = false })).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await staff.PostAsJsonAsync(endpoint, request with { ExpectedMessageId = Guid.NewGuid() })).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await customer.PostAsJsonAsync($"{Route(ticket)}/reconcile", new ChatNewRequest(conversation))).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await foreign.PostAsJsonAsync($"{Route(ticket)}/reconcile", new ChatNewRequest(conversation))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await foreign.PostAsJsonAsync($"{Route(ticket)}/reconcile", new ChatNewRequest(conversation))).StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, (await staff.PostAsJsonAsync($"{Route(ticket)}/reconcile", new ChatNewRequest(conversation))).StatusCode);
         await host.Transport.Received(1).ReconcileAsync(conversation, Arg.Any<CancellationToken>());
         var rival = request with { ResolutionId = Guid.NewGuid() };
@@ -219,6 +232,7 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
         public IDomainEventPublisher Publisher { get; } = Substitute.For<IDomainEventPublisher>();
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            builder.UseIsolatedTestStorage();
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IHostedService>();
@@ -226,6 +240,8 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
                 services.AddScoped(sp => database.Context(sp.GetRequiredService<ITenantContext>()));
                 services.AddSingleton(Transport);
                 services.AddSingleton(Publisher);
+                services.RemoveAll<ICurrentUserAccessService>();
+                services.AddSingleton<ICurrentUserAccessService, ChatTestAccessService>();
                 services.PostConfigure<AiAssistantChatOptions>(x => { x.Enabled = enabled; x.Endpoint = "https://chat.invalid/hub/session"; x.DeviceToken = "test-only-device-token"; });
                 services.AddAuthentication(options =>
                 {
@@ -235,11 +251,13 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
                 }).AddScheme<AuthenticationSchemeOptions, ChatAuthHandler>("ChatTest", _ => { });
             });
         }
-        public HttpClient Client(string role = "Technician", string tenant = "org")
+        public HttpClient Client(string role = "Technician", string tenant = "org", string? scopedTenant = null)
         {
             var client = CreateClient();
             client.DefaultRequestHeaders.Add("X-Chat-Test-Role", role);
             client.DefaultRequestHeaders.Add("X-Chat-Test-Tenant", tenant);
+            if (!string.IsNullOrWhiteSpace(scopedTenant))
+                client.DefaultRequestHeaders.Add("X-Chat-Test-Scoped-Tenant", scopedTenant);
             return client;
         }
     }
@@ -250,8 +268,58 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
             if (!Request.Headers.TryGetValue("X-Chat-Test-Role", out var role)) return Task.FromResult(AuthenticateResult.NoResult());
-            var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "operator"), new Claim(ClaimTypes.Role, role.ToString()), new Claim("tid", Request.Headers["X-Chat-Test-Tenant"].ToString()) }, Scheme.Name);
+            var claims = new List<Claim>
+            {
+                new(ClaimTypes.NameIdentifier, "operator"),
+                new(ClaimTypes.Role, role.ToString()),
+                new("chat_test_tenant", Request.Headers["X-Chat-Test-Tenant"].ToString())
+            };
+            if (Request.Headers.TryGetValue("X-Chat-Test-Scoped-Tenant", out var scopedTenant))
+                claims.Add(new("chat_test_scoped_tenant", scopedTenant.ToString()));
+            var identity = new ClaimsIdentity(claims, Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name)));
+        }
+    }
+
+    private sealed class ChatTestAccessService : ICurrentUserAccessService
+    {
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
+        {
+            var roles = user.FindAll(ClaimTypes.Role)
+                .Select(claim => claim.Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var organizationId = user.FindFirst("chat_test_tenant")?.Value;
+            var scopedOrganizationId = user.FindFirst("chat_test_scoped_tenant")?.Value;
+            var isAdmin = roles.Contains(HelpdeskPermissions.HelpdeskAdmin);
+            var permissions = roles.Contains("Technician")
+                ? HelpdeskPermissions.TechnicalBundle.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var allowedOrganizations = string.IsNullOrWhiteSpace(organizationId)
+                ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { organizationId };
+            if (!string.IsNullOrWhiteSpace(scopedOrganizationId))
+                allowedOrganizations.Add(scopedOrganizationId);
+            var profile = new CurrentUserAccessProfile(
+                true,
+                user.Identity?.Name,
+                null,
+                organizationId,
+                null,
+                null,
+                isAdmin,
+                roles,
+                permissions,
+                allowedOrganizations,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(scopedOrganizationId) && roles.Contains("Technician"))
+                profile = profile with
+                {
+                    ScopedPermissionGrants = HelpdeskPermissions.TechnicalBundle
+                        .Select(permission => new ScopedPermissionGrant(permission, scopedOrganizationId))
+                        .ToHashSet()
+                };
+            return Task.FromResult(profile);
         }
     }
 

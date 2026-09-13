@@ -1,3 +1,4 @@
+@inject HelpDesk.NewWeb.Models.WebAuthenticationMode AuthenticationMode
 @page "/login"
 @attribute [AllowAnonymous]
 
@@ -25,15 +26,43 @@
                 Continue to @_branding.ApplicationName using your authorised account.
             </MudText>
 
-            <MudButton Variant="Variant.Filled"
-                       Size="Size.Large"
-                       Color="Color.Primary"
-                       FullWidth="true"
-                       Class="helpdesk-login-primary-action"
-                       StartIcon="@Icons.Material.Filled.Login"
-                       Href="/login-authentik">
-                Sign in to @_branding.ApplicationName
-            </MudButton>
+            @if (SupportsLocalAccounts)
+            {
+                @if (SignInError is not null)
+                {
+                    <MudAlert Severity="Severity.Error" data-testid="local-login-error">@SignInError</MudAlert>
+                }
+                <form method="post" action="/local-login" class="helpdesk-login-local-form" data-testid="local-login-form" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")">
+                    <AntiforgeryToken />
+                    <MudTextField T="string" Name="email" Disabled="@(!RendererInfo.IsInteractive)" Label="Email" InputType="InputType.Email" Required="true" Variant="Variant.Outlined" FullWidth="true" />
+                    <MudTextField T="string" Name="password" Disabled="@(!RendererInfo.IsInteractive)" Label="Password" InputType="InputType.Password" Required="true" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" />
+                    <MudTextField T="string" Name="twoFactorCode" Disabled="@(!RendererInfo.IsInteractive)" Label="Authenticator or recovery code" InputType="InputType.Password" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" HelperText="Required only if two-factor authentication is enabled." />
+                    <MudCheckBox T="bool" Name="rememberMe" Disabled="@(!RendererInfo.IsInteractive)" Label="Keep me signed in" Color="Color.Primary" Class="mt-2" />
+                    <MudButton Variant="Variant.Filled" ButtonType="ButtonType.Submit" Disabled="@(!RendererInfo.IsInteractive)" Size="Size.Large" Color="Color.Primary" FullWidth="true" Class="mt-3" StartIcon="@Icons.Material.Filled.Login">
+                        Sign in to @_branding.ApplicationName
+                    </MudButton>
+                </form>
+                <MudLink Href="/activate" Class="align-self-center">Activate or reset your local account</MudLink>
+            }
+
+            @if (SupportsLocalAccounts && SupportsOidc)
+            {
+                <MudDivider Class="my-4" />
+                <MudText Typo="Typo.body2" Align="Align.Center">or use your organization sign-in</MudText>
+            }
+
+            @if (SupportsOidc)
+            {
+                <MudButton Variant="Variant.Filled"
+                           Size="Size.Large"
+                           Color="Color.Primary"
+                           FullWidth="true"
+                           Class="helpdesk-login-primary-action"
+                           StartIcon="@Icons.Material.Filled.Login"
+                           Href="/login-authentik">
+                    Sign in to @_branding.ApplicationName
+                </MudButton>
+            }
 
             @if (Env.IsDevelopment())
             {
@@ -54,6 +83,17 @@
 </section>
 
 @code {
+    [SupplyParameterFromQuery(Name = "status")]
+    public string? SignInStatus { get; set; }
+
+    private string? SignInError => SignInStatus switch
+    {
+        "Email and password are required" => "Enter your email and passphrase to sign in.",
+        "Too many sign-in attempts. Please retry shortly." => "Too many sign-in attempts. Please retry shortly.",
+        "Sign-in failed" => "Sign-in failed. Check your email, passphrase and authenticator or recovery code.",
+        _ => null
+    };
+
     private BrandingSnapshot _branding = new();
     protected override async Task OnInitializedAsync()
     {
@@ -78,6 +118,9 @@
         Config["LoginUi:EnvironmentLabel"]?.Trim() is { Length: > 0 } label
             ? label
             : "Production system";
+
+    private bool SupportsLocalAccounts => AuthenticationMode.SupportsLocalAccounts;
+    private bool SupportsOidc => AuthenticationMode.UsesOidc;
 
     private sealed class BrandingSnapshot
     {

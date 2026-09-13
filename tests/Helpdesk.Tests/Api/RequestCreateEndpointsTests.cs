@@ -147,7 +147,7 @@ public sealed class RequestCreateEndpointsTests
     }
 
     [Fact]
-    public async Task SelfServicePost_Rejects_WhenAuthenticatedUserHasNoEmail()
+    public async Task SelfServicePost_Rejects_WhenAuthenticatedUserHasNoExplicitCustomerLink()
     {
         await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "NoEmail");
         await harness.SeedRequestFormAsync();
@@ -161,13 +161,13 @@ public sealed class RequestCreateEndpointsTests
 
         var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
         Assert.Equal(0, harness.Notification.SendCount);
     }
 
     [Fact]
-    public async Task SelfServicePost_Uses_SubmittedWebIdentity_WhenTokenHasNoEmail()
+    public async Task SelfServicePost_DoesNotUseBodyEmailToEstablishCustomerAccess()
     {
         await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "NoEmail");
         await harness.SeedRequestFormAsync();
@@ -183,12 +183,46 @@ public sealed class RequestCreateEndpointsTests
 
         var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var created = Assert.Single((await harness.Requests.GetAllAsync()).ToList());
-        Assert.Equal("requester@example.com", created.RequesterEmail);
-        Assert.Equal("customer-1", created.CustomerId);
-        Assert.Equal("requester@example.com", harness.Notification.LastRecipientEmail);
-        Assert.Equal("Example User", harness.Notification.LastRecipientName);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
+        Assert.Equal(0, harness.Notification.SendCount);
+    }
+
+    [Fact]
+    public async Task SelfServicePost_DoesNotProvisionACustomerFromAuthenticatedEmail()
+    {
+        await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "DifferentDomain");
+        await harness.SeedRequestFormAsync();
+        var dto = new SubmitSelfServiceRequestDto
+        {
+            RequestFormId = "form-1",
+            PayloadJson = "{}"
+        };
+
+        var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
+        await using var scope = harness.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        Assert.DoesNotContain(await db.Customers.ToListAsync(), customer => customer.Email == "local.user@unrelated.example");
+    }
+
+    [Fact]
+    public async Task SelfServicePost_Does_Not_Claim_A_Customer_From_Another_Organization()
+    {
+        await using var harness = await SelfServiceRequestTestHarness.CreateAsync(authHeader: "DifferentDomain");
+        await harness.SeedRequestFormAsync();
+        await harness.SeedCustomerAsync("other-customer", "Other Tenant Customer", "local.user@unrelated.example", "org-2");
+
+        var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", new SubmitSelfServiceRequestDto
+        {
+            RequestFormId = "form-1",
+            PayloadJson = "{}"
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
     }
 
     [Fact]
@@ -308,7 +342,7 @@ public sealed class RequestCreateEndpointsTests
 
         var response = await harness.Client.PostAsJsonAsync("/api/v1/self-service/requests", dto);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Empty((await harness.Requests.GetAllAsync()).ToList());
     }
 
@@ -404,6 +438,7 @@ public sealed class RequestCreateEndpointsTests
             builder.Services.AddSingleton<ITicketNotificationService>(notification);
             builder.Services.AddSingleton<IHtmlSanitizerService, HtmlSanitizerService>();
             builder.Services.AddSingleton<IHtmlToPlainTextConverter, HtmlToPlainTextConverter>();
+            builder.Services.AddScoped<ICurrentUserAccessService, ClaimsCurrentUserAccessService>();
             builder.Services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = "Test";
@@ -493,6 +528,7 @@ public sealed class RequestCreateEndpointsTests
         public HttpClient Client { get; }
         public InMemoryRepository<Request> Requests { get; }
         public CapturingTicketNotificationService Notification { get; }
+        public IServiceProvider Services => app.Services;
 
         public static async Task<SelfServiceRequestTestHarness> CreateAsync(string authHeader = "SelfService")
         {
@@ -550,6 +586,15 @@ public sealed class RequestCreateEndpointsTests
             {
                 var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
                 await db.Database.EnsureCreatedAsync();
+                db.Customers.Add(new Customer
+                {
+                    Id = "customer-1",
+                    Name = "Example User",
+                    Email = "customer@example.com",
+                    OrganizationId = "org-1",
+                    State = Helpdesk.Shared.Models.EntityState.Enabled
+                });
+                await db.SaveChangesAsync();
             }
 
             await app.StartAsync();
@@ -927,6 +972,19 @@ public sealed class RequestCreateEndpointsTests
                     new Claim(ClaimTypes.Role, "HelpdeskAdmin")
                 ];
             }
+            else if (auth.Contains("DifferentDomain", StringComparison.OrdinalIgnoreCase))
+            {
+                claims =
+                [
+                    new Claim(ClaimTypes.Name, "Local User"),
+                    new Claim("name", "Local User"),
+                    new Claim("preferred_username", "local.user@unrelated.example"),
+                    new Claim(ClaimTypes.Role, "SelfService.User"),
+                    new Claim("organization_id", "org-1"),
+                    new Claim("allowed_organization_id", "org-1"),
+                    new Claim("scoped_permission", "SelfService.User|org-1")
+                ];
+            }
             else if (auth.Contains("Msp", StringComparison.OrdinalIgnoreCase))
             {
                 claims =
@@ -960,6 +1018,7 @@ public sealed class RequestCreateEndpointsTests
                     new Claim(ClaimTypes.Name, "Test"),
                     new Claim("name", "Example User"),
                     new Claim("preferred_username", "customer@example.com"),
+                    new Claim("customer_id", "customer-1"),
                     new Claim(ClaimTypes.Role, "SelfService.User"),
                     new Claim("organization_id", "org-1"),
                     new Claim("allowed_organization_id", "org-1")

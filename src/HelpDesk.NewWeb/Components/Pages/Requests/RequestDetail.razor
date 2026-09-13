@@ -1,5 +1,7 @@
+@using Helpdesk.Shared.Services
+@inject AuthenticationStateProvider AccessAuthenticationState
 @page "/requests/{Id}"
-@attribute [Authorize(Roles = "Request.User,Request.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Request.User,Request.Read,Request.Write,Request.Manager,HelpdeskAdmin")]
 
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
@@ -46,7 +48,7 @@ else
                 CustomerEmail="@request.CustomerEmail"
                 CategoryIds="@selectedCategoryIds"
                 AllCategories="@categories"
-                CategoryRemoved="OnCategoryRemoved">
+                CategoryRemoved="OnCategoryRemoved" ReadOnly="@(!CanManage)">
                 <MetadataContent>
                     @if (aiRuntimeStatus is not null)
                     {
@@ -105,7 +107,7 @@ else
                         TicketId="@Id"
                         TicketType="requests"
                         OrganizationId="@request.OrganizationId"
-                        PublicMode="false"
+                        PublicMode="false" CanContribute="@CanContribute" CanManage="@CanManage"
                         OnWorklogAdded="HandleWorklogAdded"
                         ShowAiStatusSummary="false"
                         InitialAiCount="0"
@@ -177,14 +179,14 @@ else
                                             @if (context.Status == RequestTaskStatus.Pending)
                                             {
                                                 <MudButton Size="Size.Small" Variant="Variant.Outlined"
-                                                           Disabled="@(taskActionInProgress || (context.Type == RequestTaskType.Automation && !context.AutomationReadyToStart))"
+                                                           Disabled="@(!CanOperateTask(context) || taskActionInProgress || (context.Type == RequestTaskType.Automation && !context.AutomationReadyToStart))"
                                                            OnClick="@(async () => await StartTaskAsync(context))">Start</MudButton>
                                             }
                                             @if (context.Type == RequestTaskType.Manual && context.Status == RequestTaskStatus.InProgress)
                                             {
-                                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="@taskActionInProgress"
+                                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="@(!CanOperateTask(context) || taskActionInProgress)"
                                                            OnClick="@(async () => await CompleteTaskAsync(context))">Complete</MudButton>
-                                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="@taskActionInProgress"
+                                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Disabled="@(!CanOperateTask(context) || taskActionInProgress)"
                                                            OnClick="@(async () => await FailTaskAsync(context))">Fail</MudButton>
                                             }
                                             @if (context.Type == RequestTaskType.Automation && context.Status == RequestTaskStatus.InProgress)
@@ -193,7 +195,7 @@ else
                                             }
                                             @if (context.Type == RequestTaskType.Automation && context.Status == RequestTaskStatus.Failed && canRetryAutomationTasks)
                                             {
-                                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning" Disabled="@taskActionInProgress"
+                                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning" Disabled="@(!CanOperateTask(context) || taskActionInProgress)"
                                                            OnClick="@(async () => await RetryTaskAsync(context))">Retry</MudButton>
                                             }
                                             @if (context.Type == RequestTaskType.Automation && HasAutomationRecoveryContext(context))
@@ -297,7 +299,7 @@ else
                                            Margin="Margin.Dense"
                                            Label="Status"
                                            Variant="Variant.Outlined"
-                                           Disabled="@(isUpdating)">
+                                           Disabled="@(!CanManage || isUpdating)">
                                     @foreach (TicketState state in Enum.GetValues(typeof(TicketState)))
                                     {
                                         <MudSelectItem T="TicketState" Value="@state">@state.ToString()</MudSelectItem>
@@ -310,7 +312,7 @@ else
                                            Margin="Margin.Dense"
                                            Label="Priority"
                                            Variant="Variant.Outlined"
-                                           Disabled="@(isUpdating)">
+                                           Disabled="@(!CanManage || isUpdating)">
                                     @foreach (TicketPriority priority in Enum.GetValues(typeof(TicketPriority)))
                                     {
                                         <MudSelectItem T="TicketPriority" Value="@priority">@priority.ToString()</MudSelectItem>
@@ -321,7 +323,7 @@ else
                                 <HelpDesk.NewWeb.Components.Shared.ServiceCategoryPicker
                                     RequestedType="TicketCategoryType.Request"
                                     SelectedCategoryIds="@selectedCategoryIds"
-                                    SelectedCategoryIdsChanged="OnCategorySelectionChanged"
+                                    SelectedCategoryIdsChanged="OnCategorySelectionChanged" ReadOnly="@(!CanManage)"
                                     Dense="true"
                                     Margin="Margin.Dense" />
                             </MudItem>
@@ -401,11 +403,11 @@ else
                                     }
                                     @if (request.Sla.Status == SlaStatus.InProgress)
                                     {
-                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" OnClick="PauseSlaAsync">Pause SLA</MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" Disabled="@(!CanManage)" OnClick="PauseSlaAsync">Pause SLA</MudButton>
                                     }
                                     else if (request.Sla.Status == SlaStatus.Paused)
                                     {
-                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success" Class="mt-2" OnClick="ResumeSlaAsync">Resume SLA</MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success" Class="mt-2" Disabled="@(!CanManage)" OnClick="ResumeSlaAsync">Resume SLA</MudButton>
                                     }
                                 </MudItem>
                             }
@@ -414,11 +416,11 @@ else
 
                     <MudCardActions Class="px-4 pb-4">
                         <MudButton OnClick="RevertChanges"
-                                   Disabled="!hasChanges || isUpdating">Revert</MudButton>
+                                   Disabled="!CanManage || !hasChanges || isUpdating">Revert</MudButton>
                         <MudButton OnClick="SaveChangesAsync"
                                    Variant="Variant.Filled"
                                    Color="Color.Primary"
-                                   Disabled="!hasChanges || isUpdating">
+                                   Disabled="!CanManage || !hasChanges || isUpdating">
                             @if (isUpdating)
                             {
                                 <MudProgressCircular Class="mr-2" Size="Size.Small" Indeterminate="true" />
@@ -432,6 +434,10 @@ else
 }
 
 @code {
+    private CurrentUserAccessProfile? accessProfile;
+    private bool CanManage => accessProfile?.CanManageRequest(request?.OrganizationId) == true;
+    private bool CanContribute => request is not null && accessProfile?.CanContributeRequest(request.OrganizationId, request.CustomerId, request.CustomerEmail) == true;
+
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     [Parameter] public string Id { get; set; } = string.Empty;
     [CascadingParameter] private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
@@ -449,7 +455,8 @@ else
     private bool loading = true;
     private bool tasksLoading;
     private bool taskActionInProgress;
-    private bool canRetryAutomationTasks;
+    private bool canRetryAutomationTasks => accessProfile?.CanExecuteRequest(request?.OrganizationId) == true;
+    private bool CanOperateTask(RequestTaskDto task) => task.Type == RequestTaskType.Automation ? canRetryAutomationTasks : task.Type == RequestTaskType.Manual && CanManage;
     private bool canViewWorkflowPayload;
     private bool isUpdating;
     private bool hasChanges;
@@ -484,9 +491,9 @@ else
             var requestAuditTask = LoadAiAuditAsync();
             var workflowTimelineTask = LoadWorkflowTimelineAsync(reset: true);
             var rolesTask = ResolveRolesAsync();
-            var usersTask = LoadTeamMembersAsync();
+            accessProfile = CurrentUserAccessProfile.FromClaims((await AccessAuthenticationState.GetAuthenticationStateAsync()).User);
 
-            await Task.WhenAll(requestTask, categoriesTask, requestTasksTask, requestAuditTask, workflowTimelineTask, rolesTask, usersTask);
+            await Task.WhenAll(requestTask, categoriesTask, requestTasksTask, requestAuditTask, workflowTimelineTask, rolesTask);
 
             originalRequest = await requestTask;
             categories = await categoriesTask ?? new();
@@ -501,6 +508,7 @@ else
             {
                 request = CloneRequest(originalRequest);
                 selectedCategoryIds = request.CategoryIds.ToHashSet();
+                if (CanManage) await LoadTeamMembersAsync();
                 _ = LoadAiMetadataAsync(request.OrganizationId);
             }
 
@@ -723,7 +731,7 @@ else
 
     private async Task SaveChangesAsync()
     {
-        if (request is null || !hasChanges) return;
+        if (!CanManage || request is null || !hasChanges) return;
 
         isUpdating = true;
 
@@ -930,7 +938,7 @@ else
     {
         try
         {
-            var users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users") ?? new();
+            var users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>($"api/v1/ticketing/assignees?module=request&organizationId={Uri.EscapeDataString(request?.OrganizationId ?? string.Empty)}") ?? new();
             userDisplayNames = users
                 .Where(u => !string.IsNullOrWhiteSpace(u.Id))
                 .GroupBy(u => u.Id)
@@ -953,11 +961,10 @@ else
         }
 
         var user = (await AuthenticationStateTask).User;
-        canRetryAutomationTasks = user.IsInRole("HelpdeskAdmin")
+        canViewWorkflowPayload = user.IsInRole("HelpdeskAdmin")
             || user.Claims.Any(c =>
                 (c.Type == ClaimTypes.Role || c.Type == "roles")
                 && string.Equals(c.Value, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase));
-        canViewWorkflowPayload = canRetryAutomationTasks;
     }
 
     private string GetAssigneeDisplay(string? assignedToId)

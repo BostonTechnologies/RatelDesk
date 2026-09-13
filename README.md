@@ -4,41 +4,64 @@
 
 RatelDesk is a self-hosted, multi-tenant service-desk application built with ASP.NET Core and Blazor. It manages incidents, requests, changes, work logs, knowledge, email workflows, and optional AI-assisted operations.
 
-It is designed to run with PostgreSQL and can integrate with OIDC providers (including Authentik and Microsoft Entra ID), Microsoft Graph, SMTP/IMAP, OpenTelemetry, MCP clients, AI providers, and external orchestration providers.
+It starts with embedded SQLite and local accounts, with PostgreSQL, OIDC providers (including Authentik and Microsoft Entra ID), email, AI, MCP, telemetry, and orchestration available as optional deployment integrations.
 
 ## Quick start
 
-Prerequisites: Docker with Compose, or the .NET SDK specified by [global.json](global.json). PostgreSQL must have the `vector` extension available.
+Prerequisites: Docker with Compose, or the .NET SDK specified by [global.json](global.json). No database or identity-provider service is required for a new installation.
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-For local .NET development, start PostgreSQL and then run:
+Open `http://localhost:8111/setup`. Retrieve the one-time, per-installation setup code only from the API container:
 
 ```bash
-dotnet restore Helpdesk.sln
-dotnet run --project src/Helpdesk.API
-dotnet run --project src/HelpDesk.NewWeb
+docker compose -f docker/docker-compose.yml exec api cat /var/lib/rateldesk/bootstrap/setup-code
 ```
 
-The Compose stack provides local PostgreSQL, API, and web services at `http://localhost:8111`. It enables the local development operator only; do not use it as a production identity configuration. Its OIDC and signed-link defaults are intentionally non-secret placeholders so the containers can start; replace `RATELDESK_OIDC_CLIENT_ID`, `RATELDESK_OIDC_CLIENT_SECRET`, and `RATELDESK_IMAGE_SIGNING_SECRET` before exposing the application. The application configuration files contain only example values. Put real credentials in environment variables, a secret manager, or .NET user secrets; do not commit them.
+The default Compose stack runs Web and API in Production mode with persistent SQLite, bootstrap, data-protection, and attachment volumes. It is explicitly configured for localhost HTTP so local-account cookies use the valid `RatelDesk.Local` name. Deploy HTTPS and remove `Authentication__AllowInsecureLocalhost` for public hosting.
+
+For local .NET development, run the API and Web projects with their configuration pointed at durable local paths. The same `/setup` flow initializes a fresh local database.
 
 ## Released containers
 
-The first public release is `0.1.0`. To run published images rather than build from source, configure your OIDC provider and a unique signing secret, then use the release Compose file:
+To run published images rather than build from source, select an exact published version and use the release Compose file:
 
 ```bash
-RATELDESK_VERSION=0.1.0 docker compose -f docker/docker-compose.release.yml up -d
+RATELDESK_VERSION=0.1.0-rc.4 docker compose -f docker/docker-compose.release.yml up -d
 ```
 
 Use an exact SemVer tag in production, or preferably replace tags with the published image digests. `latest` advances only for stable releases; prereleases never move it. See [release engineering](docs/releases.md) for versioning, build metadata, and release instructions.
+
+## Bundled PostgreSQL
+
+For a fresh installation with PostgreSQL and the required `vector` and `pg_trgm` extensions, add the bundled sidecar overlay. Choose a unique password outside source control:
+
+```bash
+RATELDESK_POSTGRES_PASSWORD='replace-with-a-secret' \
+  docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml up --build
+```
+
+At `/setup`, select PostgreSQL and enter host `postgres`, port `5432`, database `rateldesk`, user `rateldesk`, and the password supplied above. For published images, replace the first Compose file with `docker/docker-compose.release.yml` and set `RATELDESK_VERSION` to an exact release tag.
+
+## External PostgreSQL
+
+For an externally managed PostgreSQL database, start the normal source or release stack and enter its connection details at `/setup`; the API must be able to reach the database network. The target must be empty for a new setup and have the required `vector` and `pg_trgm` extensions installed by the database operator.
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+Complete `/setup` with the external host, port, database, user, password, and TLS preference. For published images, replace the first Compose file with `docker/docker-compose.release.yml` and use an exact `RATELDESK_VERSION`. The included external overlay is for explicit unattended initialization and requires operator-supplied secrets; it never maps a fresh-install connection string directly into the normal runtime. See [self-hosting guidance](docs/SELF_HOSTING.md#external-postgresql) for preflight, unattended setup, upgrade, backup, and recovery requirements.
 
 ## Configuration
 
 The main public configuration surfaces are:
 
-- `ConnectionStrings__HelpdeskDb` for PostgreSQL.
+- `Database__Provider=Sqlite|PostgreSql`; an explicit PostgreSQL provider uses `ConnectionStrings__HelpdeskDb`, while a fresh SQLite installation is initialized through `/setup`.
+- `Database__Sqlite__Path` for the SQLite file location when it is deployment-managed.
+- `Authentication__Mode=Local|Oidc|Hybrid`; Local is the first-run default.
 - `DataProtection__KeyRingPath` for a persistent, shared key-ring directory in production.
 - `Authentication__Authentik__*` or `Authentication__Azure__*` for OIDC.
 - `ExchangeEmail__*` for Microsoft Graph email delivery; set `ExchangeEmail__Enabled=true` only after supplying credentials.
@@ -48,7 +71,7 @@ The main public configuration surfaces are:
 - `Branding__*` for deployment-owned instance identity. See [branding](docs/branding.md).
 - AI-provider and orchestration configuration through the administration UI or documented environment configuration.
 
-`/tmp/rateldesk/keys` is a safe local fallback for data-protection keys. Production deployments must override it with a durable mounted volume or managed key store.
+`/tmp/rateldesk/keys` is a safe local fallback for data-protection keys. Production deployments must override it with a durable mounted volume or managed key store. Back up the SQLite data directory, bootstrap state, data-protection key ring, and attachments together.
 
 ## Documentation
 

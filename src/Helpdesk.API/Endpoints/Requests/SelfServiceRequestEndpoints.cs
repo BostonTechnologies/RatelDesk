@@ -5,11 +5,11 @@ using Helpdesk.Application.RequestTasks;
 using Helpdesk.API.Services;
 using AppTicketServices = Helpdesk.Application.Services.Tickets;
 using Helpdesk.Application.Services.Notifications;
-using Helpdesk.Application.Services.Tenants;
 using Helpdesk.Application.Sla;
 using Helpdesk.Application.Workflow;
 using Helpdesk.Application.Resources;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Request;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
@@ -58,7 +58,6 @@ public static class SelfServiceRequestEndpoints
         [FromServices] ITicketSlaInitializer ticketSlaInitializer,
         [FromServices] AppTicketServices.ITicketRefGeneratorService refs,
         [FromServices] ITicketNotificationService ticketNotificationService,
-        [FromServices] ITenantProvisioningService tenantProvisioningService,
         [FromServices] ITenantContext tenant,
         [FromServices] ICurrentUserAccessService accessService,
         [FromServices] IDomainEventPublisher domainEvents,
@@ -68,19 +67,6 @@ public static class SelfServiceRequestEndpoints
         CancellationToken token)
     {
         var logger = loggerFactory.CreateLogger("SelfServiceRequestEndpoints");
-        var requesterEmail = FirstNonEmpty(ResolveUserEmail(user, tenant), LooksLikeEmail(dto.RequesterEmail) ? dto.RequesterEmail : null);
-        if (string.IsNullOrWhiteSpace(requesterEmail))
-        {
-            return Results.BadRequest("Authenticated self-service requests require an email address.");
-        }
-
-        var requesterName = FirstNonEmpty(dto.RequesterName, ResolveUserName(user), requesterEmail) ?? requesterEmail;
-        var requesterDomain = requesterEmail.Split('@', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
-        if (string.IsNullOrWhiteSpace(requesterDomain))
-        {
-            return Results.BadRequest("Authenticated self-service requests require a valid email address.");
-        }
-
         if (string.IsNullOrWhiteSpace(dto.RequestFormId))
         {
             return Results.BadRequest("RequestFormId is required.");
@@ -117,21 +103,16 @@ public static class SelfServiceRequestEndpoints
         }
 
         var access = await accessService.ResolveAsync(user, token);
-        var submitterEmail = requesterEmail;
+        var submitterEmail = access.Email;
 
         var (customer, requestedForNameResult) = await ResolveRequestedForCustomerAsync(
             dto,
             db,
             access,
-            tenant,
-            tenantProvisioningService,
-            requesterEmail,
-            requesterName,
-            requesterDomain,
             token);
         if (customer is null)
         {
-            return Results.BadRequest("Requested-for user was not found or is outside your organization scope.");
+            return Results.Forbid();
         }
 
         var requestedForName = requestedForNameResult ?? customer.Name;
@@ -232,7 +213,7 @@ public static class SelfServiceRequestEndpoints
         CancellationToken token)
     {
         var access = await accessService.ResolveAsync(user, token);
-        var visibleOrganizationIds = await ResolveVisibleOrganizationIdsAsync(db, tenant, access, token);
+        var visibleOrganizationIds = await ResolveVisibleOrganizationIdsAsync(db, access, token);
         var isAdmin = access.IsHelpdeskAdmin || tenant.IsHelpdeskAdmin;
         var take = Math.Clamp(pageSize ?? 25, 1, 100);
         var search = query?.Trim();
@@ -324,20 +305,18 @@ public static class SelfServiceRequestEndpoints
         SubmitSelfServiceRequestDto dto,
         HelpdeskDbContext db,
         CurrentUserAccessProfile access,
-        ITenantContext tenant,
-        ITenantProvisioningService tenantProvisioningService,
-        string requesterEmail,
-        string requesterName,
-        string requesterDomain,
         CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(dto.RequestedForPersonId))
         {
-            var (customer, _) = await tenantProvisioningService.GetOrCreateCustomerAsync(
-                requesterEmail,
-                requesterName,
-                requesterDomain);
-            return (customer, customer.Name);
+            var customer = string.IsNullOrWhiteSpace(access.CustomerId)
+                ? null
+                : await db.Customers.FirstOrDefaultAsync(
+                    candidate => candidate.Id == access.CustomerId && candidate.State == Helpdesk.Shared.Models.EntityState.Enabled,
+                    token);
+            return customer is not null && access.HasPermission(HelpdeskPermissions.SelfServiceUser, customer.OrganizationId)
+                ? (customer, customer.Name)
+                : (null, null);
         }
 
         if (dto.RequestedForPersonSource is null)
@@ -345,8 +324,8 @@ public static class SelfServiceRequestEndpoints
             return (null, null);
         }
 
-        var visibleOrganizationIds = await ResolveVisibleOrganizationIdsAsync(db, tenant, access, token);
-        var isAdmin = access.IsHelpdeskAdmin || tenant.IsHelpdeskAdmin;
+        var visibleOrganizationIds = await ResolveVisibleOrganizationIdsAsync(db, access, token);
+        var isAdmin = access.IsHelpdeskAdmin;
         return dto.RequestedForPersonSource.Value switch
         {
             SelfServiceRequestPersonSource.Customer => await ResolveRequestedCustomerAsync(
@@ -423,7 +402,6 @@ public static class SelfServiceRequestEndpoints
 
     private static async Task<HashSet<string>> ResolveVisibleOrganizationIdsAsync(
         HelpdeskDbContext db,
-        ITenantContext? tenant,
         CurrentUserAccessProfile access,
         CancellationToken token)
     {
@@ -436,12 +414,7 @@ public static class SelfServiceRequestEndpoints
             organizationIds.Add(access.PrimaryOrganizationId);
         }
 
-        if (!string.IsNullOrWhiteSpace(tenant?.TenantId))
-        {
-            organizationIds.Add(tenant.TenantId);
-        }
-
-        if (access.IsHelpdeskAdmin || tenant?.IsHelpdeskAdmin == true)
+        if (access.IsHelpdeskAdmin)
         {
             var allEnabled = await db.Organizations
                 .AsNoTracking()
@@ -497,25 +470,6 @@ public static class SelfServiceRequestEndpoints
     {
         return correlation.GetCorrelationId() ?? $"corr-{Guid.NewGuid():N}";
     }
-
-    private static string? ResolveUserEmail(ClaimsPrincipal user, ITenantContext tenant)
-    {
-        var identityName = user.Identity?.Name;
-        return FirstNonEmpty(
-            user.FindFirstValue(ClaimTypes.Email),
-            user.FindFirstValue("email"),
-            user.FindFirstValue("preferred_username"),
-            user.FindFirstValue("upn"),
-            user.FindFirstValue("unique_name"),
-            LooksLikeEmail(identityName) ? identityName : null,
-            LooksLikeEmail(tenant.UserId) ? tenant.UserId : null);
-    }
-
-    private static string? ResolveUserName(ClaimsPrincipal user) =>
-        FirstNonEmpty(
-            user.FindFirstValue("name"),
-            user.FindFirstValue(ClaimTypes.Name),
-            LooksLikeEmail(user.Identity?.Name) ? null : user.Identity?.Name);
 
     private static bool LooksLikeEmail(string? value)
     {

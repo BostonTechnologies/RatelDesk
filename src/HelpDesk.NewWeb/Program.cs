@@ -9,6 +9,9 @@ using HelpDesk.NewWeb.Services;
 using HelpDesk.NewWeb.Services.Search;
 using Helpdesk.Shared.Auth;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -27,6 +30,21 @@ using System.Security.Claims;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
+var resolvedAuthenticationMode = WebAuthenticationMode.Resolve(builder.Configuration);
+builder.Services.AddSingleton(resolvedAuthenticationMode);
+var webAuthenticationMode = resolvedAuthenticationMode.Value;
+const string localAuthenticationScheme = "RatelDeskLocal";
+var webSupportsLocalAccounts = resolvedAuthenticationMode.SupportsLocalAccounts;
+var webUsesOidc = resolvedAuthenticationMode.UsesOidc;
+var webIsHybrid = resolvedAuthenticationMode.IsHybrid;
+var localCookieName = builder.Configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost")
+    ? "RatelDesk.Local"
+    : "__Host-RatelDesk.Local";
+var webDefaultScheme = webIsHybrid
+    ? "RatelDeskWeb"
+    : webSupportsLocalAccounts
+        ? localAuthenticationScheme
+        : CookieAuthenticationDefaults.AuthenticationScheme;
 
 builder.AddServiceDefaults();
 
@@ -54,6 +72,19 @@ builder.Services.AddRazorComponents()
 builder.Services.AddControllers();
 
 builder.Services.AddAntiforgery();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("LocalBrowserLogin", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 30,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+});
 builder.Services.AddAuthorizationCore(options =>
 {
     options.AddPolicy("DataManagementAccess", policy =>
@@ -68,6 +99,7 @@ builder.Services.AddTransient<TokenAuthorizationHandler>();
 builder.Services.AddTransient<SystemTokenAuthorizationHandler>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<CookieOidcSessionEvents>();
+builder.Services.AddScoped<CookieLocalSessionEvents>();
 builder.Services.AddSingleton<ISystemTokenService, SystemTokenService>();
 builder.Services.AddScoped<IErrorLoggingService, ErrorLoggingService>();
 builder.Services.AddScoped<IRequestService, RequestService>();
@@ -84,10 +116,13 @@ builder.Services.AddSingleton<NotificationEventBus>();
 builder.Services.AddScoped<IUserProvisioningService, UserProvisioningService>();
 builder.Services.AddScoped<IGlobalSearchService, GlobalSearchService>();
 builder.Services.AddScoped<IAppBarVersionApiClient, AppBarVersionApiClient>();
-builder.Services.AddSingleton<IValidateOptions<AuthentikOidcOptions>, AuthentikOidcOptionsValidator>();
-builder.Services.AddOptions<AuthentikOidcOptions>()
-    .Bind(builder.Configuration.GetSection("Authentication:Authentik"))
-    .ValidateOnStart();
+if (!string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<IValidateOptions<AuthentikOidcOptions>, AuthentikOidcOptionsValidator>();
+    builder.Services.AddOptions<AuthentikOidcOptions>()
+        .Bind(builder.Configuration.GetSection("Authentication:Authentik"))
+        .ValidateOnStart();
+}
 builder.Services.AddSingleton<IValidateOptions<AuthentikAiAgentOptions>, AuthentikAiAgentOptionsValidator>();
 builder.Services.AddOptions<AuthentikAiAgentOptions>()
     .Bind(builder.Configuration.GetSection("Authentication:AuthentikAiAgent"))
@@ -102,26 +137,63 @@ if (string.IsNullOrWhiteSpace(apiBaseUrl))
     throw new InvalidOperationException("ApiBaseUrl is required. Set it through configuration or an environment variable.");
 }
 
-builder.Services.AddAuthentication(options =>
+var authentication = builder.Services.AddAuthentication(options =>
 {
-    options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = "Authentik";
-})
-.AddCookie(options =>
+    options.DefaultScheme = webDefaultScheme;
+    options.DefaultChallengeScheme = webUsesOidc ? "Authentik" : localAuthenticationScheme;
+});
+
+if (webUsesOidc)
 {
-    options.Cookie.Name = "__Host-Helpdesk.Auth";
-    options.Cookie.HttpOnly = true;
-    options.Cookie.SameSite = SameSiteMode.Lax;
-    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
-        ? CookieSecurePolicy.SameAsRequest
-        : CookieSecurePolicy.Always;
-    options.LoginPath = "/login";
-    options.AccessDeniedPath = "/access-denied";
-    options.SlidingExpiration = true;
-    options.ExpireTimeSpan = TimeSpan.FromHours(8);
-    options.EventsType = typeof(CookieOidcSessionEvents);
-})
-.AddOpenIdConnect("Authentik", options =>
+    authentication.AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
+    {
+        options.Cookie.Name = "__Host-Helpdesk.Auth";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.Path = "/";
+        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
+        options.LoginPath = "/login";
+        options.AccessDeniedPath = "/access-denied";
+        options.SlidingExpiration = true;
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.EventsType = typeof(CookieOidcSessionEvents);
+    });
+}
+
+if (webSupportsLocalAccounts)
+{
+    authentication.AddCookie(localAuthenticationScheme, options =>
+    {
+        options.Cookie.Name = localCookieName;
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.Path = "/";
+        options.Cookie.SecurePolicy = builder.Configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost") || builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
+        options.LoginPath = "/login";
+        options.AccessDeniedPath = "/access-denied";
+        options.SlidingExpiration = false;
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.EventsType = typeof(CookieLocalSessionEvents);
+    });
+}
+
+if (webIsHybrid)
+{
+    authentication.AddPolicyScheme("RatelDeskWeb", "RatelDesk browser session", options =>
+    {
+        options.ForwardDefaultSelector = context => context.Request.Cookies.ContainsKey(localCookieName)
+            ? localAuthenticationScheme
+            : CookieAuthenticationDefaults.AuthenticationScheme;
+    });
+}
+
+if (webUsesOidc)
+{
+    authentication.AddOpenIdConnect("Authentik", options =>
 {
     builder.Configuration.GetSection("Authentication:Authentik").Bind(options);
     var humanOidc = HumanOidcRuntimeOptionsResolver.Resolve(builder.Configuration);
@@ -149,6 +221,7 @@ builder.Services.AddAuthentication(options =>
 
     options.CallbackPath = humanOidc.CallbackPath!;
     options.SignedOutCallbackPath = humanOidc.SignedOutCallbackPath!;
+    options.SignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
 
     // (optional) belt & suspenders: build an HTTPS redirect using forwarded headers if present
     options.Events = new OpenIdConnectEvents
@@ -170,7 +243,8 @@ builder.Services.AddAuthentication(options =>
             return Task.CompletedTask;
         }
     };
-});
+    });
+}
 
 // Web & System API clients
 var helpdeskApiClient = builder.Services.AddHttpClient("HelpdeskApi", client =>
@@ -178,6 +252,7 @@ var helpdeskApiClient = builder.Services.AddHttpClient("HelpdeskApi", client =>
     client.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
     client.Timeout = TimeSpan.FromMinutes(5);
 })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false })
     .AddHttpMessageHandler<TokenAuthorizationHandler>();
 
 var helpdeskApiStreamingClient = builder.Services.AddHttpClient("HelpdeskApiStreaming", client =>
@@ -185,6 +260,7 @@ var helpdeskApiStreamingClient = builder.Services.AddHttpClient("HelpdeskApiStre
     client.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
     client.Timeout = Timeout.InfiniteTimeSpan;
 })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false })
     .AddHttpMessageHandler<TokenAuthorizationHandler>();
 
 #pragma warning disable EXTEXP0001
@@ -210,12 +286,14 @@ builder.Services.AddHttpClient("SystemApi", c =>
 {
     c.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
     c.Timeout = TimeSpan.FromSeconds(100);
-}).AddHttpMessageHandler<SystemTokenAuthorizationHandler>();
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false })
+    .AddHttpMessageHandler<SystemTokenAuthorizationHandler>();
 
 builder.Services.AddHttpClient("SystemApiNoAuth", c =>
 {
     c.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
-});
+    c.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false });
 
 builder.Services.AddReverseProxy()
     .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
@@ -275,6 +353,7 @@ app.UseAuthentication();
 app.UseMiddleware<TenantContextMiddleware>();
 app.UseAuthorization();
 app.UseAntiforgery();
+app.UseRateLimiter();
 
 app.Use(async (ctx, next) =>
 {
@@ -327,7 +406,10 @@ app.MapMethods("/hangfire/{**path}", ["GET", "POST", "PUT", "DELETE", "HEAD"], a
     }
 
     var token = await tokenService.GetValidAccessTokenAsync();
-    if (string.IsNullOrWhiteSpace(token))
+    var localSessionCookie = context.User.HasClaim("auth_mode", "local")
+        ? LocalSessionCookieForwarder.GetHeader(context, localCookieName)
+        : null;
+    if (string.IsNullOrWhiteSpace(token) && string.IsNullOrWhiteSpace(localSessionCookie))
     {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         return;
@@ -341,7 +423,13 @@ app.MapMethods("/hangfire/{**path}", ["GET", "POST", "PUT", "DELETE", "HEAD"], a
     var targetUri = new Uri(new Uri(configuredApiBaseUrl, UriKind.Absolute), $"{targetPath}{context.Request.QueryString}");
 
     using var requestMessage = new HttpRequestMessage(new HttpMethod(context.Request.Method), targetUri);
-    requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    if (!string.IsNullOrWhiteSpace(token))
+        requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    else
+    {
+        requestMessage.Headers.TryAddWithoutValidation("Cookie", localSessionCookie);
+        requestMessage.Headers.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
+    }
 
     foreach (var header in context.Request.Headers)
     {
@@ -414,10 +502,64 @@ app.MapControllers();
 
 app.MapGet("/login-authentik", async (HttpContext ctx) =>
 {
+    if (!webUsesOidc)
+    {
+        return Results.LocalRedirect("/login");
+    }
+
     await ctx.ChallengeAsync("Authentik", new AuthenticationProperties { RedirectUri = "/home" });
+    return Results.Empty;
 });
 
 app.MapGet("/login-azure", () => Results.LocalRedirect("/login-authentik"));
+
+app.MapPost("/local-login", async (HttpContext context, IHttpClientFactory httpClientFactory, IAntiforgery antiforgery) =>
+{
+    if (!webSupportsLocalAccounts)
+    {
+        return Results.NotFound();
+    }
+
+    try
+    {
+        await antiforgery.ValidateRequestAsync(context);
+    }
+    catch (AntiforgeryValidationException)
+    {
+        return Results.BadRequest(new { error = "invalid_login_form" });
+    }
+
+    var form = await context.Request.ReadFormAsync(context.RequestAborted);
+    var email = form["email"].ToString();
+    var password = form["password"].ToString();
+    var twoFactorCode = form["twoFactorCode"].ToString();
+    var rememberMe = string.Equals(form["rememberMe"], "on", StringComparison.OrdinalIgnoreCase);
+    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+    {
+        return Results.LocalRedirect("/login?status=Email%20and%20password%20are%20required");
+    }
+
+    using var response = await httpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync(
+        "/api/v1/local-auth/login",
+        new { email, password, rememberMe, twoFactorCode },
+        context.RequestAborted);
+    if (!response.IsSuccessStatusCode)
+    {
+        return Results.LocalRedirect(response.StatusCode == HttpStatusCode.TooManyRequests
+            ? "/login?status=Too%20many%20sign-in%20attempts.%20Please%20retry%20shortly."
+            : "/login?status=Sign-in%20failed");
+    }
+
+    if (response.Headers.TryGetValues("Set-Cookie", out var setCookies))
+    {
+        foreach (var cookie in setCookies)
+        {
+            context.Response.Headers.Append("Set-Cookie", cookie);
+        }
+    }
+
+    return Results.LocalRedirect("/home");
+}).AllowAnonymous().RequireRateLimiting("LocalBrowserLogin");
 
 app.MapGet("/login-ai-agent", (IOptions<AuthentikAiAgentOptions> options) =>
 {
@@ -536,10 +678,51 @@ app.MapGet("/auth/development", async (
     return Results.LocalRedirect("/home");
 });
 
+// Browser polling uses the Web session for both local and OIDC modes. API tokens
+// remain on the server and anonymous callers receive 401 rather than an OIDC redirect.
+app.MapGet("/session/access", async (HttpContext context, ITokenService tokens, IHttpClientFactory clients) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    if (context.User.Identity?.IsAuthenticated != true) return Results.Unauthorized();
+    using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/me");
+    var token = await tokens.GetValidAccessTokenAsync();
+    if (!string.IsNullOrWhiteSpace(token))
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    else if (context.User.HasClaim("auth_mode", "local") && LocalSessionCookieForwarder.GetHeader(context, localCookieName) is { } cookie)
+        request.Headers.TryAddWithoutValidation("Cookie", cookie);
+    else
+        return Results.Unauthorized();
+
+    try
+    {
+        using var response = await clients.CreateClient("SystemApiNoAuth").SendAsync(request, context.RequestAborted);
+        if (!response.IsSuccessStatusCode) return Results.StatusCode((int)response.StatusCode);
+        return Results.Content(await response.Content.ReadAsStringAsync(context.RequestAborted), "application/json");
+    }
+    catch (HttpRequestException)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (TaskCanceledException) when (!context.RequestAborted.IsCancellationRequested)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+}).AllowAnonymous();
+
 app.MapGet("/logout", async (HttpContext ctx) =>
 {
-    await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    if (string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "ai_agent", StringComparison.OrdinalIgnoreCase))
+    var isLocalSession = string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "local", StringComparison.OrdinalIgnoreCase);
+    if (webSupportsLocalAccounts)
+    {
+        await ctx.SignOutAsync(localAuthenticationScheme);
+    }
+    if (webUsesOidc)
+    {
+        await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    }
+
+    if (isLocalSession || !webUsesOidc ||
+        string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "ai_agent", StringComparison.OrdinalIgnoreCase))
     {
         return Results.LocalRedirect("/login");
     }
@@ -567,23 +750,22 @@ static Task QueueUserProvisioningOnTokenValidatedAsync(TokenValidatedContext con
         try
         {
             var provisioningService = requestServices.GetRequiredService<IUserProvisioningService>();
-            var access = await provisioningService.EnsureUserAccessAsync(principal, context.HttpContext.RequestAborted);
+            var accessToken = context.TokenEndpointResponse?.AccessToken;
+            if (string.IsNullOrWhiteSpace(accessToken))
+            {
+                context.Fail("The identity provider did not issue an API access token.");
+                return;
+            }
+            var access = await provisioningService.EnsureUserAccessAsync(principal, accessToken, context.HttpContext.RequestAborted);
             if (principal.Identity is ClaimsIdentity identity)
             {
-                AddRolesFromAuthentikGroups(identity);
-
                 if (access is null)
                 {
+                    context.Fail("Account access could not be established.");
                     return;
                 }
 
-                AddClaim(identity, "organization_id", access.PrimaryOrganizationId);
-                AddClaim(identity, "customer_id", access.CustomerId);
-                foreach (var organizationId in access.AllowedOrganizationIds)
-                {
-                    AddClaim(identity, "allowed_organization_id", organizationId);
-                }
-                AddRoleClaims(identity, access.RoleBundles.Concat(access.Permissions));
+                WebAccessClaimsProjection.Apply(identity, access);
             }
         }
         catch (Exception ex)
@@ -594,52 +776,9 @@ static Task QueueUserProvisioningOnTokenValidatedAsync(TokenValidatedContext con
             logger.LogError(ex,
                 "User provisioning failed for {Email}",
                 principal.Identity?.Name);
+            context.Fail("Account access could not be established.");
         }
     }
-}
-
-static void AddRolesFromAuthentikGroups(ClaimsIdentity identity)
-{
-    var groups = identity.FindAll("groups")
-        .Concat(identity.FindAll("roles"))
-        .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-    if (groups.Contains(AuthentikRbacGroups.HelpdeskAdmin))
-    {
-        AddRoleClaims(identity, [HelpdeskRoleBundles.HelpdeskAdmin, HelpdeskPermissions.HelpdeskAdmin]);
-    }
-
-    if (groups.Contains(AuthentikRbacGroups.Technical))
-    {
-        AddRoleClaims(identity, [HelpdeskRoleBundles.Technical, .. HelpdeskPermissions.TechnicalBundle]);
-    }
-
-    if (groups.Contains(AuthentikRbacGroups.User) || groups.Contains(AuthentikRbacGroups.LegacyCustomer))
-    {
-        AddRoleClaims(identity, [HelpdeskRoleBundles.User, .. HelpdeskPermissions.UserBundle]);
-    }
-
-    if (groups.Contains(AuthentikRbacGroups.ClientAdmin))
-    {
-        AddRoleClaims(identity, [HelpdeskRoleBundles.DataManagementAdmin, HelpdeskPermissions.DataManagementAdmin]);
-    }
-}
-
-static void AddRoleClaims(ClaimsIdentity identity, IEnumerable<string> roles)
-{
-    foreach (var role in roles)
-    {
-        AddClaim(identity, ClaimTypes.Role, role);
-        AddClaim(identity, "roles", role);
-    }
-}
-
-static void AddClaim(ClaimsIdentity identity, string type, string? value)
-{
-    if (string.IsNullOrWhiteSpace(value)) return;
-    if (identity.HasClaim(type, value)) return;
-    identity.AddClaim(new Claim(type, value));
 }
 
 static string NormalizeLocalRedirect(string? value, string fallback)

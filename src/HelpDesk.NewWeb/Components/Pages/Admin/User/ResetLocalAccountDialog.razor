@@ -1,0 +1,81 @@
+@using Helpdesk.Shared.DTOs.User
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body1">Generate a one-time token for @User.Email to activate their local account or choose a new passphrase.</MudText>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
+        @if (_token is not null)
+        {
+            <MudAlert Severity="Severity.Info" Class="mt-3">Copy this token before closing. Share it directly with the account owner.</MudAlert>
+            <MudTextField Value="@_token" Label="Activation or reset token" ReadOnly="true" Variant="Variant.Outlined" Class="mt-3" />
+            <MudText Typo="Typo.body2">Activation page: @Navigation.ToAbsoluteUri("activate")</MudText>
+            <MudText Typo="Typo.body2">Email: @User.Email</MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Done</MudButton>
+        @if (_enabled.HasValue)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="_busy" OnClick="ToggleEnabledAsync">@(_enabled.Value ? "Disable account" : "Enable account")</MudButton>
+        }
+        @if (_token is null)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="GenerateAsync">Generate token</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public UserDto User { get; set; } = default!;
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    private string? _token, _error;
+    private bool _busy;
+    private bool? _enabled;
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("HelpdeskApi").GetAsync($"api/v1/local-auth/users/{Uri.EscapeDataString(User.Id)}/status");
+            if (response.IsSuccessStatusCode) _enabled = (await response.Content.ReadFromJsonAsync<AccountStatus>())?.IsEnabled;
+        }
+        catch (HttpRequestException) { _error = "The account service is unavailable. Please retry."; }
+    }
+    private async Task ToggleEnabledAsync()
+    {
+        if (!_enabled.HasValue) return;
+        _busy = true; _error = null;
+        try
+        {
+            var operation = _enabled.Value ? "disable" : "enable";
+            using var response = await HttpClientFactory.CreateClient("HelpdeskApi").PostAsJsonAsync($"api/v1/local-auth/users/{Uri.EscapeDataString(User.Id)}/{operation}", new { });
+            if (response.IsSuccessStatusCode) _enabled = !_enabled.Value;
+            else _error = "The account state could not be changed. The last enabled instance administrator must remain active.";
+        }
+        catch (HttpRequestException) { _error = "The account service is unavailable. Please retry."; }
+        finally { _busy = false; }
+    }
+    private sealed record AccountStatus(bool IsEnabled);
+    private async Task GenerateAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("HelpdeskApi")
+                .PostAsJsonAsync($"api/v1/local-auth/users/{Uri.EscapeDataString(User.Id)}/activation-token", new { });
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = response.StatusCode == System.Net.HttpStatusCode.NotFound
+                    ? "This user has no local account. Manage their credentials with their identity provider."
+                    : "The token could not be generated. Please retry.";
+                return;
+            }
+            _token = (await response.Content.ReadFromJsonAsync<ActivationResponse>())?.ActivationToken;
+        }
+        catch (HttpRequestException) { _error = "The account service is unavailable. Please retry."; }
+        finally { _busy = false; }
+    }
+    private void Close() => Dialog.Close(DialogResult.Ok(true));
+    private sealed record ActivationResponse(string UserId, string Email, string ActivationToken);
+}

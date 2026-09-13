@@ -5,7 +5,7 @@
 
 @inject IHttpClientFactory HttpClientFactory
 
-@if (SelectedCount > 0)
+@if (SelectedCount > 0 && CanEditSelection)
 {
     <MudPaper Class="helpdesk-bulk-toolbar mb-2 pa-2" Elevation="0">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
@@ -77,7 +77,7 @@
           Bordered="false"
           Breakpoint="Breakpoint.Md"
           Class="helpdesk-table"
-          MultiSelection="true"
+          MultiSelection="@EnableSelection"
           RowClass="ticket-row"
           SelectedItems="SelectedItems"
           SelectedItemsChanged="HandleSelectedItemsChanged"
@@ -175,6 +175,9 @@
     [Parameter] public EventCallback BulkAssignRequested { get; set; }
     [Parameter] public IReadOnlyList<BulkActionOption> BulkActions { get; set; } = [];
     [Parameter] public EventCallback<string> BulkActionRequested { get; set; }
+    [Parameter] public bool EnableSelection { get; set; }
+    [Parameter] public Func<TTicket, bool>? CanEditItem { get; set; }
+    private bool CanEditSelection => SelectedItems.Count > 0 && SelectedItems.All(item => CanEditItem?.Invoke(item) == true);
     [Parameter] public bool EnableBulkState { get; set; } = true;
 
     public TicketState SelectedBulkState => _bulkState;
@@ -195,11 +198,6 @@
         || ResolveProperty("CustomerName") is not null
         || ResolveProperty("CustomerEmail") is not null;
 
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadTeamMembersAsync();
-    }
-
     public Task ReloadServerData()
     {
         return _table?.ReloadServerData() ?? Task.CompletedTask;
@@ -209,7 +207,11 @@
     {
         try
         {
-            var users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users");
+            var organizationIds = SelectedItems.Select(item => GetStringValue(item, "OrganizationId")).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            _teamMembers.Clear();
+            if (!CanEditSelection || organizationIds.Count != 1 || string.IsNullOrWhiteSpace(organizationIds[0])) return;
+            var module = TicketType.TrimEnd('s');
+            var users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>($"api/v1/ticketing/assignees?module={module}&organizationId={Uri.EscapeDataString(organizationIds[0])}");
             if (users is null)
             {
                 return;
@@ -227,6 +229,7 @@
     private async Task HandleSelectedItemsChanged(HashSet<TTicket> selectedItems)
     {
         SelectedItems = selectedItems;
+        await LoadTeamMembersAsync();
         await SelectedItemsChanged.InvokeAsync(selectedItems);
     }
 
@@ -375,7 +378,7 @@
     private RenderFragment RenderDefaultState(TTicket ticket) => builder =>
     {
         var ticketId = GetStringValue(ticket, "Id");
-        if (string.IsNullOrWhiteSpace(ticketId) || string.IsNullOrWhiteSpace(TicketType))
+        if (CanEditItem?.Invoke(ticket) != true || string.IsNullOrWhiteSpace(ticketId) || string.IsNullOrWhiteSpace(TicketType))
         {
             builder.OpenComponent<MudChip<string>>(0);
             builder.AddAttribute(1, nameof(MudChip<string>.Size), Size.Small);

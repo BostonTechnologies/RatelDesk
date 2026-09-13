@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Helpdesk.Infrastructure.Auth.Rbac;
+using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
@@ -66,7 +67,7 @@ public class CurrentUserAccessServiceTests
     }
 
     [Fact]
-    public async Task Client_admin_group_gets_data_management_permission_for_claim_tenant()
+    public async Task Client_admin_group_does_not_treat_identity_provider_tenant_as_application_scope()
     {
         await using var db = CreateDb();
 
@@ -78,8 +79,74 @@ public class CurrentUserAccessServiceTests
 
         Assert.Contains(HelpdeskRoleBundles.DataManagementAdmin, access.RoleBundles);
         Assert.Contains(HelpdeskPermissions.DataManagementAdmin, access.Permissions);
-        Assert.Contains("org-alpha", access.AllowedOrganizationIds);
+        Assert.Empty(access.AllowedOrganizationIds);
         Assert.False(access.IsHelpdeskAdmin);
+    }
+
+    [Fact]
+    public async Task Email_match_without_a_verified_identity_link_does_not_grant_access()
+    {
+        await using var db = CreateDb();
+        var organization = new Organization { Id = "org-alpha", Name = "Alpha Organization" };
+        var customer = new Customer { Id = "customer-primary", Name = "Primary User", Email = "primary@example.com", OrganizationId = organization.Id };
+        db.Organizations.Add(organization);
+        db.Customers.Add(customer);
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = customer.Id,
+            OidcIssuer = "https://id.example.com/application/o/rateldesk",
+            OidcSubject = "subject-1",
+            AuthentikEmail = customer.Email,
+            InviteStatus = CustomerInviteStatus.Active
+        });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Email, customer.Email), new Claim("email", customer.Email)],
+            "test"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.Null(access.CustomerId);
+        Assert.Empty(access.AllowedOrganizationIds);
+        Assert.Empty(access.Permissions);
+    }
+
+    [Fact]
+    public async Task Local_account_link_grants_customer_access_without_using_email_as_an_identity_key()
+    {
+        await using var db = CreateDb();
+        db.Organizations.Add(new Organization { Id = "org-alpha", Name = "Alpha Organization" });
+        db.Customers.Add(new Customer { Id = "customer-primary", Name = "Primary User", Email = "primary@example.com", OrganizationId = "org-alpha" });
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = "customer-primary",
+            LocalAccountId = "local-account-1",
+            AuthProviderType = "Local",
+            InviteStatus = CustomerInviteStatus.Active
+        });
+        await db.SaveChangesAsync();
+
+        db.Users.Add(new User { Id = "local-account-1", Name = "Local user", Email = "primary@example.com", OrganizationId = "org-alpha" });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "local-account-1", OrganizationId = "org-alpha", RoleKey = ScopedRoleCatalog.SelfServiceUser
+        });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "local-account-1"),
+                new Claim(ClaimTypes.Email, "different-profile-email@example.test"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.Equal("customer-primary", access.CustomerId);
+        Assert.Equal("org-alpha", access.PrimaryOrganizationId);
+        Assert.Contains(HelpdeskPermissions.SelfServiceUser, access.Permissions);
     }
 
     [Fact]
@@ -112,6 +179,218 @@ public class CurrentUserAccessServiceTests
         Assert.Empty(access.AllowedOrganizationIds);
     }
 
+    [Fact]
+    public async Task Local_scoped_role_assignments_keep_permissions_in_their_assigned_organization()
+    {
+        await using var db = CreateDb();
+        db.Organizations.AddRange(
+            new Organization { Id = "org-a", Name = "Organization A" },
+            new Organization { Id = "org-b", Name = "Organization B" });
+        db.Users.Add(new User { Id = "local-user", Name = "Local user", Email = "local@example.test", OrganizationId = "org-a", Role = "User" });
+        db.ScopedRoleAssignments.AddRange(
+            new ScopedRoleAssignment { UserId = "local-user", OrganizationId = "org-a", RoleKey = ScopedRoleCatalog.Technician },
+            new ScopedRoleAssignment { UserId = "local-user", OrganizationId = "org-b", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "local-user"),
+                new Claim(ClaimTypes.Email, "local@example.test"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentWrite, "org-a"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-b"));
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-b"));
+    }
+
+    [Fact]
+    public async Task Local_scoped_role_assignments_for_disabled_organizations_are_ignored()
+    {
+        await using var db = CreateDb();
+        db.Organizations.AddRange(
+            new Organization { Id = "active-org", Name = "Active organization" },
+            new Organization { Id = "disabled-org", Name = "Disabled organization", IsEnabled = false });
+        db.Users.Add(new User { Id = "local-user", Name = "Local user", Email = "local@example.test", OrganizationId = "active-org", Role = "User" });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "local-user",
+            OrganizationId = "disabled-org",
+            RoleKey = ScopedRoleCatalog.Technician
+        });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "local-user"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentManager, "disabled-org"));
+        Assert.DoesNotContain("disabled-org", access.AllowedOrganizationIds);
+    }
+
+    [Fact]
+    public async Task Disabled_local_identity_account_has_no_effective_access()
+    {
+        await using var db = CreateDb();
+        await using var identityDb = CreateIdentityDb();
+        db.Organizations.Add(new Organization { Id = "org-a", Name = "Organization A" });
+        db.Users.Add(new User { Id = "disabled-local-user", Name = "Disabled local user", Email = "disabled@example.test", OrganizationId = "org-a", Role = "Technician" });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "disabled-local-user",
+            OrganizationId = "org-a",
+            RoleKey = ScopedRoleCatalog.Technician
+        });
+        identityDb.Users.Add(new ApplicationUser
+        {
+            Id = "disabled-local-user",
+            UserName = "disabled@example.test",
+            Email = "disabled@example.test",
+            DisplayName = "Disabled local user",
+            IsEnabled = false
+        });
+        await db.SaveChangesAsync();
+        await identityDb.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "disabled-local-user"),
+                new Claim(ClaimTypes.Email, "disabled@example.test"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db, identityDb).ResolveAsync(principal);
+
+        Assert.True(access.IsAuthenticated);
+        Assert.False(access.CanManageIncident("org-a"));
+        Assert.Empty(access.Permissions);
+        Assert.Empty(access.AllowedOrganizationIds);
+    }
+
+    [Fact]
+    public async Task Persisted_custom_role_permissions_are_scoped_to_the_assigned_tenant()
+    {
+        await using var db = CreateDb();
+        db.Organizations.AddRange(
+            new Organization { Id = "org-a", Name = "Organization A" },
+            new Organization { Id = "org-b", Name = "Organization B" });
+        db.Users.Add(new User { Id = "local-user", Name = "Local user", Email = "local@example.test", OrganizationId = "org-a", Role = "User" });
+        db.Roles.Add(new Role
+        {
+            Id = "custom-incident-reader",
+            Key = "custom.incident-reader",
+            Name = "Incident Reader",
+            Scope = RoleScopeKind.Tenant,
+            OwnerOrganizationId = "org-a",
+            Permissions = [new RolePermission { Permission = HelpdeskPermissions.IncidentUser }]
+        });
+        db.ScopedRoleAssignments.AddRange(
+            new ScopedRoleAssignment
+            {
+                UserId = "local-user",
+                OrganizationId = "org-a",
+                RoleKey = "custom.incident-reader"
+            },
+            new ScopedRoleAssignment
+            {
+                UserId = "local-user",
+                OrganizationId = "org-b",
+                RoleKey = "custom.incident-reader"
+            },
+            new ScopedRoleAssignment
+            {
+                UserId = "local-user",
+                OrganizationId = "org-b",
+                RoleKey = ScopedRoleCatalog.TenantAdministrator
+            });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "local-user"),
+                new Claim(ClaimTypes.Email, "local@example.test"),
+                new Claim("auth_mode", "local")
+            ],
+            "RatelDeskLocal"));
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
+
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-a"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-b"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-a"));
+        Assert.True(access.HasPermission(HelpdeskPermissions.TenantUsersManage, "org-b"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.TenantUsersManage, "org-a"));
+    }
+
+    [Fact]
+    public async Task External_identity_uses_its_verified_link_for_scoped_custom_role_grants()
+    {
+        await using var db = CreateDb();
+        db.Organizations.Add(new Organization { Id = "org-a", Name = "Organization A" });
+        db.Customers.Add(new Customer { Id = "customer-a", Name = "External user", Email = "shared@example.test", OrganizationId = "org-a" });
+        db.Users.Add(new User { Id = "external-domain-user", Name = "External user", Email = "shared@example.test", OrganizationId = "org-a", Role = "Customer" });
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = "customer-a",
+            DomainUserId = "external-domain-user",
+            OidcIssuer = "https://id.example.com/application/o/rateldesk",
+            OidcSubject = "external-subject",
+            InviteStatus = CustomerInviteStatus.Active
+        });
+        db.Roles.Add(new Role
+        {
+            Id = "custom-external-reader",
+            Key = "custom.external-reader",
+            Name = "External incident reader",
+            Scope = RoleScopeKind.Tenant,
+            OwnerOrganizationId = "org-a",
+            Permissions = [new RolePermission { Permission = HelpdeskPermissions.IncidentUser }]
+        });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "external-domain-user",
+            OrganizationId = "org-a",
+            RoleKey = "custom.external-reader"
+        });
+        await db.SaveChangesAsync();
+
+        var access = await new CurrentUserAccessService(db).ResolveAsync(User("different-profile-email@example.test", "external-subject"));
+
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-a"));
+        Assert.Equal("customer-a", access.CustomerId);
+    }
+
+    [Fact]
+    public async Task Protected_built_in_role_definitions_seed_idempotently()
+    {
+        await using var db = CreateDb();
+
+        await RoleDefinitionSeeder.EnsureBuiltInsAsync(db);
+        await RoleDefinitionSeeder.EnsureBuiltInsAsync(db);
+
+        var roles = await db.Roles.Include(role => role.Permissions).ToListAsync();
+        Assert.Equal(RoleDefinitionCatalog.BuiltIns.Count, roles.Count);
+        Assert.All(roles, role =>
+        {
+            Assert.True(role.IsBuiltIn);
+            Assert.True(role.IsProtected);
+        });
+        Assert.Contains(roles, role =>
+            role.Key == ScopedRoleCatalog.Technician &&
+            role.Permissions.Select(permission => permission.Permission)
+                .OrderBy(permission => permission)
+                .SequenceEqual(HelpdeskPermissions.OperatorBundle.OrderBy(permission => permission)));
+    }
+
     private static ClaimsPrincipal User(string email, string subject, params string[] groups)
         => User(email, subject, tenantId: null, groups);
 
@@ -138,6 +417,14 @@ public class CurrentUserAccessServiceTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
         return new HelpdeskDbContext(options, new EmptyTenantContext(), new HttpContextAccessor());
+    }
+
+    private static RatelDeskIdentityDbContext CreateIdentityDb()
+    {
+        var options = new DbContextOptionsBuilder<RatelDeskIdentityDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        return new RatelDeskIdentityDbContext(options);
     }
 
     private sealed class EmptyTenantContext : ITenantContext

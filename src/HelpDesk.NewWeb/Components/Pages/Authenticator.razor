@@ -1,0 +1,129 @@
+@page "/account/authenticator"
+@attribute [Authorize]
+
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@using System.Text.Json
+@implements IAsyncDisposable
+
+<PageTitle>Authenticator app</PageTitle>
+
+<section class="helpdesk-login-page">
+    <MudPaper Elevation="2" Class="helpdesk-login-panel">
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.h4" HtmlTag="h1">Authenticator app</MudText>
+            <MudText Typo="Typo.body1">Set up a time-based authenticator and save the recovery codes somewhere secure.</MudText>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <MudAlert Severity="Severity.Error">@_error</MudAlert>
+            }
+            @if (!string.IsNullOrWhiteSpace(_sharedKey) && _recoveryCodes.Count == 0)
+            {
+                <MudAlert Severity="Severity.Warning">Scan or enter this key in your authenticator app, then enter its current six-digit code below.</MudAlert>
+                <MudTextField Value="@_sharedKey" Label="Authenticator key" ReadOnly="true" Variant="Variant.Outlined" FullWidth="true" />
+                <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_code" Label="Authenticator code" InputType="InputType.Password" Required="true" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="EnableAsync">Enable authenticator</MudButton>
+            }
+            else if (_recoveryCodes.Count == 0)
+            {
+                <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_currentPassword" Label="Current passphrase" InputType="InputType.Password" Required="true" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="StartSetupAsync">Set up authenticator</MudButton>
+            }
+            @if (_recoveryCodes.Count > 0)
+            {
+                <MudAlert Severity="Severity.Warning">Copy these recovery codes now. They are shown only once.</MudAlert>
+                <MudTextField Value="@string.Join(Environment.NewLine, _recoveryCodes)" Label="Recovery codes" ReadOnly="true" Lines="10" Variant="Variant.Outlined" FullWidth="true" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="FinishEnrollment">I have saved my recovery codes</MudButton>
+            }
+        </MudStack>
+    </MudPaper>
+</section>
+
+@code {
+    private IJSObjectReference? accountModule;
+    private async Task<BrowserAccountResponse> PostAccountAsync(string endpoint, object body)
+    {
+        accountModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/local-account.js");
+        return await accountModule.InvokeAsync<BrowserAccountResponse>("post", endpoint, body);
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (accountModule is not null)
+        {
+            try { await accountModule.DisposeAsync(); } catch (JSDisconnectedException) { }
+        }
+    }
+    private sealed record BrowserAccountResponse(bool Ok, int Status, string Body);
+
+    private void FinishEnrollment() => Navigation.NavigateTo("/home", forceLoad: true);
+    private string? _sharedKey;
+    private string _currentPassword = string.Empty;
+    private string _code = string.Empty;
+    private List<string> _recoveryCodes = [];
+    private string? _error;
+    private bool _busy;
+
+    private async Task StartSetupAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var response = await PostAccountAsync("/api/v1/local-auth/two-factor/setup", new { currentPassword = _currentPassword });
+            if (!response.Ok)
+            {
+                _error = "Authenticator setup could not be started. Sign in again and retry.";
+                return;
+            }
+
+            var setup = JsonSerializer.Deserialize<AuthenticatorSetupResponse>(response.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            if (string.IsNullOrWhiteSpace(setup?.SharedKey))
+            {
+                _error = "Authenticator setup could not be started. Sign in again and retry.";
+                return;
+            }
+
+            _sharedKey = setup.SharedKey;
+            _currentPassword = string.Empty;
+        }
+        catch (JSException)
+        {
+            _error = "The account service is unavailable. Please retry.";
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task EnableAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var response = await PostAccountAsync("/api/v1/local-auth/two-factor/enable", new { code = _code });
+            if (!response.Ok)
+            {
+                _error = "The authenticator code was not accepted.";
+                return;
+            }
+
+            var result = JsonSerializer.Deserialize<RecoveryCodesResponse>(response.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            if (result is null)
+            {
+                _error = "The authenticator could not be enabled.";
+                return;
+            }
+
+            _recoveryCodes = result.RecoveryCodes;
+            _code = string.Empty;
+        }
+        catch (JSException)
+        {
+            _error = "The account service is unavailable. Please retry.";
+        }
+        finally { _busy = false; }
+    }
+
+    private sealed record AuthenticatorSetupResponse(string SharedKey, string AuthenticatorUri);
+    private sealed record RecoveryCodesResponse(List<string> RecoveryCodes);
+}

@@ -1,3 +1,4 @@
+using Helpdesk.Application.Services.Branding;
 using System.Text.RegularExpressions;
 using Helpdesk.Application.Services.EmailTemplates;
 using Helpdesk.Application.WorkLogs;
@@ -11,11 +12,10 @@ public sealed class TenantBrandAssetStorageService(
     IHostEnvironment env,
     IOptions<StorageOptions> options,
     IImageLinkSigner imageLinkSigner,
-    ILogger<TenantBrandAssetStorageService> logger) : ITenantBrandAssetStorageService
+    ILogger<TenantBrandAssetStorageService> logger,
+    IInstanceBrandingProvider? brandingProvider = null) : ITenantBrandAssetStorageService
 {
-    private readonly string _storageRoot = string.IsNullOrWhiteSpace(options.Value.RootPath)
-        ? Path.Combine(env.ContentRootPath, "storage")
-        : options.Value.RootPath;
+    private readonly string _storageRoot = options.Value.ResolveRootPath(env.ContentRootPath);
     private readonly string _publicApiBaseUrl = options.Value.PublicApiBaseUrl ?? string.Empty;
     private readonly IImageLinkSigner _imageLinkSigner = imageLinkSigner;
     private readonly ILogger<TenantBrandAssetStorageService> _logger = logger;
@@ -39,9 +39,7 @@ public sealed class TenantBrandAssetStorageService(
         var relative =
             $"/api/tenants/{Uri.EscapeDataString(safeTenantId)}/branding/logo/{Uri.EscapeDataString(safeFilename)}?token={Uri.EscapeDataString(token)}";
 
-        return string.IsNullOrWhiteSpace(_publicApiBaseUrl)
-            ? relative
-            : $"{_publicApiBaseUrl.TrimEnd('/')}{relative}";
+        return await PublicResourceUrl.BuildAsync(relative, _publicApiBaseUrl, brandingProvider);
     }
 
     private static string SanitizePathSegment(string value)

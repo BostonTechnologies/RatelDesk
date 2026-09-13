@@ -1,4 +1,5 @@
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Category;
 using Helpdesk.Shared.Enums;
 using Helpdesk.Shared.Models;
@@ -14,7 +15,7 @@ public static class TicketCategoryEndpoints
     {
         var group = app.MapGroup("/api/v1/categories")
             .WithTags("Ticket Categories")
-            .RequireAuthorization();
+            .RequireAuthorization("TicketReadAccess");
 
         group.MapGet("/", GetCategories);
 

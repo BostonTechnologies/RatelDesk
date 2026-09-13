@@ -42,7 +42,7 @@
                     <ChangeFieldHelp Label="Scope of Change"
                                      TooltipText="Summarize what will change and where it will be applied."
                                      ExampleText="Example: 'Apply new GPO to all finance workstations in Johannesburg.'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Scope of Change"
                                   Value="@Model.ScopeOfChange"
                                   ValueChanged="OnScopeChanged"
@@ -57,7 +57,7 @@
                     <ChangeFieldHelp Label="Affected Systems or Services"
                                      TooltipText="List the systems, services, sites, or business capabilities touched by this change."
                                      ExampleText="Example: 'AD Domain Controllers', 'VPN Gateway', 'Finance file share'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Affected Systems or Services"
                                   HelperText="One item per line"
                                   Value="@GetLines(Model.AffectedSystems)"
@@ -73,7 +73,7 @@
                     <ChangeFieldHelp Label="Implementation Steps"
                                      TooltipText="Describe the step-by-step actions the implementer will perform."
                                      ExampleText="Example: '1. Confirm backup. 2. Apply policy. 3. Force gpupdate. 4. Verify result.'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Implementation Steps"
                                   HelperText="One step per line"
                                   Value="@GetLines(Model.ImplementationSteps)"
@@ -89,7 +89,7 @@
                     <ChangeFieldHelp Label="Validation Steps"
                                      TooltipText="Describe how you will confirm the change worked as intended."
                                      ExampleText="Example: 'Check policy version, test login, confirm event logs are clean.'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Validation Steps"
                                   HelperText="One step per line"
                                   Value="@GetLines(Model.ValidationSteps)"
@@ -105,7 +105,7 @@
                     <ChangeFieldHelp Label="Rollback Plan"
                                      TooltipText="Explain exactly how the change will be reversed if it causes issues."
                                      ExampleText="Example: 'Unlink the GPO, force replication, run gpupdate, and confirm previous setting restored.'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Rollback Plan"
                                   Value="@Model.RollbackPlan"
                                   ValueChanged="OnRollbackPlanChanged"
@@ -120,7 +120,7 @@
                     <ChangeFieldHelp Label="Rollback Reference"
                                      TooltipText="Provide the runbook, SOP, KB, backup job, or script reference used during rollback."
                                      ExampleText="Example: 'KB-204', 'Backup job BKP-AD-01', 'Rollback script rollback-gpo.ps1'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Rollback Reference"
                                   Value="@Model.RollbackReference"
                                   ValueChanged="OnRollbackReferenceChanged"
@@ -142,7 +142,7 @@
                         <ChangeFieldHelp Label="Pre-approved Change"
                                          TooltipText="Use this only if the organization already has standing approval for this repeatable standard change."
                                          ExampleText="Example: a monthly approved patch routine with an existing SOP and approval policy." />
-                        <MudCheckBox T="bool?"
+                        <MudCheckBox Disabled="@ReadOnly" T="bool?"
                                      Value="@Model.IsPreApproved"
                                      ValueChanged="OnPreApprovedChanged"
                                      Color="Color.Primary"
@@ -157,7 +157,7 @@
                         <ChangeFieldHelp Label="SOP or Runbook Reference"
                                          TooltipText="Link the approved operating procedure or runbook that makes this standard change repeatable and controlled."
                                          ExampleText="Example: 'SOP-NET-12', 'Runbook: Branch firewall baseline deploy'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="SOP or Runbook Reference"
                                       Value="@Model.ExistingRunbookReference"
                                       ValueChanged="OnRunbookReferenceChanged"
@@ -170,7 +170,7 @@
                     <ChangeFieldHelp Label="Risk Classification"
                                      TooltipText="Classify the standard change risk in simple business language."
                                      ExampleText="Example: 'Low risk, repeatable, no expected service interruption'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Risk Classification"
                                   Value="@Model.RiskClassification"
                                   ValueChanged="OnRiskClassificationChanged"
@@ -192,7 +192,7 @@
                         <ChangeFieldHelp Label="Business Justification"
                                          TooltipText="Explain why this change matters to the organization."
                                          ExampleText="Example: 'Required to close audit finding, improve security posture, and standardize workstation compliance.'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="Business Justification"
                                       Value="@Model.BusinessJustification"
                                       ValueChanged="OnBusinessJustificationChanged"
@@ -207,7 +207,7 @@
                         <ChangeFieldHelp Label="Impact Assessment"
                                          TooltipText="Describe the expected business or technical impact during and after implementation."
                                          ExampleText="Example: 'Users may need to sign out once; no expected outage to core services.'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="Impact Assessment"
                                       Value="@Model.ImpactAssessment"
                                       ValueChanged="OnImpactAssessmentChanged"
@@ -222,7 +222,7 @@
                         <ChangeFieldHelp Label="Risk Assessment"
                                          TooltipText="Describe what could go wrong and how likely/severe it would be."
                                          ExampleText="Example: 'Incorrect policy targeting may restrict admin tools for finance users.'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="Risk Assessment"
                                       Value="@Model.RiskAssessment"
                                       ValueChanged="OnRiskAssessmentChanged"
@@ -237,7 +237,7 @@
                         <ChangeFieldHelp Label="Pre-change Checks"
                                          TooltipText="List the checks that must pass before implementation starts."
                                          ExampleText="Example: 'Backup verified, replication healthy, CAB approval recorded, service owner informed.'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="Pre-change Checks"
                                       HelperText="One check per line"
                                       Value="@GetLines(Model.PreChangeChecks)"
@@ -253,7 +253,7 @@
                         <ChangeFieldHelp Label="Validation or Testing Plan"
                                          TooltipText="Describe the tests that prove the change is safe and successful."
                                          ExampleText="Example: 'Pilot on two users, confirm login restrictions, verify GPO result report, monitor for 30 minutes.'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="Validation or Testing Plan"
                                       Value="@Model.TestingPlan"
                                       ValueChanged="OnTestingPlanChanged"
@@ -267,7 +267,7 @@
                     <ChangeFieldHelp Label="Dependencies"
                                      TooltipText="List systems, approvals, teams, or activities that must be ready before this change can succeed."
                                      ExampleText="Example: 'Backup completed', 'Network team on standby', 'CAB approval recorded'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Dependencies"
                                   HelperText="One dependency per line"
                                   Value="@GetLines(Model.Dependencies)"
@@ -291,7 +291,7 @@
                         <ChangeFieldHelp Label="Reason for Emergency"
                                          TooltipText="Explain why the change cannot wait for the standard planning and approval path."
                                          ExampleText="Example: 'Active outage mitigation required to restore branch connectivity.'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="Reason for Emergency"
                                       Value="@Model.EmergencyReason"
                                       ValueChanged="OnEmergencyReasonChanged"
@@ -306,7 +306,7 @@
                         <ChangeFieldHelp Label="Business Impact if Not Implemented"
                                          TooltipText="Explain the impact of doing nothing."
                                          ExampleText="Example: 'Branch users cannot authenticate and core operations remain offline.'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="Business Impact if Not Implemented"
                                       Value="@Model.BusinessImpactIfNotImplemented"
                                       ValueChanged="OnEmergencyBusinessImpactChanged"
@@ -321,7 +321,7 @@
                         <ChangeFieldHelp Label="Immediate Risk Assessment"
                                          TooltipText="Capture the immediate operational risk of proceeding under emergency conditions."
                                          ExampleText="Example: 'Firewall restart could briefly interrupt VPN sessions; rollback available within 5 minutes.'" />
-                        <MudTextField T="string"
+                        <MudTextField ReadOnly="@ReadOnly" T="string"
                                       Label="Immediate Risk Assessment"
                                       Value="@Model.ImmediateRiskAssessment"
                                       ValueChanged="OnImmediateRiskAssessmentChanged"
@@ -335,7 +335,7 @@
                     <ChangeFieldHelp Label="Incident Reference"
                                      TooltipText="Link the active incident or outage record that this emergency change is addressing."
                                      ExampleText="Example: 'INC-1042'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Incident Reference"
                                   Value="@Model.IncidentReference"
                                   ValueChanged="OnIncidentReferenceChanged"
@@ -347,7 +347,7 @@
                     <ChangeFieldHelp Label="Post-change Validation"
                                      TooltipText="State what checks will confirm the emergency change stabilized the service after implementation."
                                      ExampleText="Example: 'Users can log in, VPN traffic is stable, and no fresh errors appear for 15 minutes'" />
-                    <MudTextField T="string"
+                    <MudTextField ReadOnly="@ReadOnly" T="string"
                                   Label="Post-change Validation"
                                   Value="@Model.PostChangeValidation"
                                   ValueChanged="OnPostChangeValidationChanged"
@@ -362,6 +362,7 @@
 </MudStack>
 
 @code {
+    [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public string ChangeType { get; set; } = string.Empty;
     [Parameter] public ChangeTemplateDto Model { get; set; } = new();
     [Parameter] public EventCallback OnChanged { get; set; }

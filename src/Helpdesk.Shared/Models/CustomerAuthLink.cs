@@ -9,6 +9,11 @@ public class CustomerAuthLink
     public string AuthProviderType { get; set; } = "Authentik";
     public string? OidcIssuer { get; set; }
     public string? OidcSubject { get; set; }
+    public string? LocalAccountId { get; set; }
+    // This application-owned identifier connects a verified external identity
+    // to its domain user record. It is deliberately independent of profile
+    // data such as email, which is not an authorization key.
+    public string? DomainUserId { get; set; }
     public string? AuthentikUserId { get; set; }
     public string? AuthentikUsername { get; set; }
     public string? AuthentikEmail { get; set; }

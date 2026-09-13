@@ -47,6 +47,7 @@
 </MudAutocomplete>
 
 @code {
+    [Parameter] public string Module { get; set; } = "incident";
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
 
     [Parameter]
@@ -129,7 +130,7 @@
 
         try
         {
-            var all = await HelpdeskApi.GetFromJsonAsync<List<CustomerDto>>($"api/v1/ticketing/customers?organizationId={Uri.EscapeDataString(OrganizationId)}") ?? new();
+            var all = await HelpdeskApi.GetFromJsonAsync<List<CustomerDto>>($"api/v1/ticketing/customers?module={Module}&organizationId={Uri.EscapeDataString(OrganizationId)}") ?? new();
             customers = all
                 .Where(x => x.IsEnabled)
                 .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)

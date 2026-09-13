@@ -8,7 +8,9 @@ public class TenantContext(IHttpContextAccessor httpContextAccessor) : ITenantCo
 {
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
 
-    public string? TenantId => GetFirstClaimValue("organization_id", "tid", "tenant_id");
+    // An identity-provider tenant (`tid`) is not an application organization. Application
+    // scope is resolved from an explicit account link by the access service.
+    public string? TenantId => GetFirstClaimValue("organization_id");
 
     public string? UserId => GetFirstClaimValue(
         ClaimTypes.NameIdentifier,

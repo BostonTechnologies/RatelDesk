@@ -29,10 +29,9 @@ public static class GlobalSearchLookupEndpoints
             if (!string.IsNullOrWhiteSpace(term))
             {
                 var like = Like(term);
-                query = query.Where(x =>
-                    EF.Functions.ILike(x.Name, like) ||
-                    EF.Functions.ILike(x.Email, like) ||
-                    EF.Functions.ILike(x.Role, like));
+                query = db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? query.Where(x => EF.Functions.ILike(x.Name, like) || EF.Functions.ILike(x.Email, like) || EF.Functions.ILike(x.Role, like))
+                    : query.Where(x => EF.Functions.Like(x.Name, like) || EF.Functions.Like(x.Email, like) || EF.Functions.Like(x.Role, like));
             }
 
             var rows = await query
@@ -68,10 +67,9 @@ public static class GlobalSearchLookupEndpoints
             if (!string.IsNullOrWhiteSpace(term))
             {
                 var like = Like(term);
-                query = query.Where(x =>
-                    EF.Functions.ILike(x.Customer.Name, like) ||
-                    EF.Functions.ILike(x.Customer.Email, like) ||
-                    (x.OrganizationName != null && EF.Functions.ILike(x.OrganizationName, like)));
+                query = db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? query.Where(x => EF.Functions.ILike(x.Customer.Name, like) || EF.Functions.ILike(x.Customer.Email, like) || (x.OrganizationName != null && EF.Functions.ILike(x.OrganizationName, like)))
+                    : query.Where(x => EF.Functions.Like(x.Customer.Name, like) || EF.Functions.Like(x.Customer.Email, like) || (x.OrganizationName != null && EF.Functions.Like(x.OrganizationName, like)));
             }
 
             var rows = await query
@@ -107,10 +105,9 @@ public static class GlobalSearchLookupEndpoints
             if (!string.IsNullOrWhiteSpace(term))
             {
                 var like = Like(term);
-                query = query.Where(x =>
-                    EF.Functions.ILike(x.Name, like) ||
-                    (x.DnsName != null && EF.Functions.ILike(x.DnsName, like)) ||
-                    (x.ContactInfo != null && EF.Functions.ILike(x.ContactInfo, like)));
+                query = db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? query.Where(x => EF.Functions.ILike(x.Name, like) || (x.DnsName != null && EF.Functions.ILike(x.DnsName, like)) || (x.ContactInfo != null && EF.Functions.ILike(x.ContactInfo, like)))
+                    : query.Where(x => EF.Functions.Like(x.Name, like) || (x.DnsName != null && EF.Functions.Like(x.DnsName, like)) || (x.ContactInfo != null && EF.Functions.Like(x.ContactInfo, like)));
             }
 
             var rows = await query

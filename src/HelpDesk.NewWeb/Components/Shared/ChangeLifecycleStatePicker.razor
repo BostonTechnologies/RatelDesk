@@ -4,7 +4,7 @@
 @inject ISnackbar Snackbar
 
 <div @onclick:stopPropagation="true">
-    <MudMenu Dense="true"
+    <MudMenu Dense="true" Disabled="@(AvailableTransitions.Count == 0)"
              AnchorOrigin="Origin.CenterCenter"
              TransformOrigin="Origin.CenterCenter">
         <ActivatorContent>
@@ -37,16 +37,19 @@
 </div>
 
 @code {
+    [Parameter] public bool CanWrite { get; set; }
+    [Parameter] public bool CanApprove { get; set; }
     [Parameter] public string ChangeId { get; set; } = string.Empty;
     [Parameter] public ChangeLifecycleState LifecycleState { get; set; }
     [Parameter] public EventCallback<ChangeDto> ChangeUpdated { get; set; }
 
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
 
-    private IReadOnlyList<ChangeLifecycleState> AvailableTransitions => LifecycleState switch
+    private IReadOnlyList<ChangeLifecycleState> AvailableTransitions => Transitions.Where(state => state == ChangeLifecycleState.ApprovedForImplementation ? CanApprove : CanWrite).ToList();
+    private IReadOnlyList<ChangeLifecycleState> Transitions => LifecycleState switch
     {
         ChangeLifecycleState.Draft => [ChangeLifecycleState.Submitted],
-        ChangeLifecycleState.PendingApproval => [ChangeLifecycleState.Draft],
+        ChangeLifecycleState.PendingApproval => [ChangeLifecycleState.Draft, ChangeLifecycleState.ApprovedForImplementation],
         ChangeLifecycleState.ApprovedForImplementation =>
         [
             ChangeLifecycleState.ImplementationInProgress,
@@ -63,7 +66,7 @@
 
     private async Task UpdateLifecycle(ChangeLifecycleState newState)
     {
-        if (string.IsNullOrWhiteSpace(ChangeId))
+        if (string.IsNullOrWhiteSpace(ChangeId) || !AvailableTransitions.Contains(newState))
         {
             return;
         }

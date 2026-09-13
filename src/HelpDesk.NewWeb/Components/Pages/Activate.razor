@@ -1,0 +1,74 @@
+@page "/activate"
+@attribute [AllowAnonymous]
+
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Activate local account</PageTitle>
+
+<section class="helpdesk-login-page">
+    <MudPaper Elevation="2" Class="helpdesk-login-panel">
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.h4" HtmlTag="h1">Activate local account</MudText>
+            <MudText Typo="Typo.body1">Paste the one-time activation token shared by your administrator and choose your passphrase.</MudText>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <MudAlert Severity="Severity.Error">@_error</MudAlert>
+            }
+
+            <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" />
+            <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_activationToken" Label="Activation token" InputType="InputType.Password" Required="true" />
+            <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_password" Label="Passphrase" InputType="InputType.Password" Required="true" HelperText="Use a memorable passphrase of at least 15 characters." />
+            <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_confirmPassword" Label="Confirm passphrase" InputType="InputType.Password" Required="true" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="ActivateAsync">
+                @(_busy ? "Activating…" : "Activate account")
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+</section>
+
+@code {
+    private string _email = string.Empty;
+    private string _activationToken = string.Empty;
+    private string _password = string.Empty;
+    private string _confirmPassword = string.Empty;
+    private string? _error;
+    private bool _busy;
+
+    private async Task ActivateAsync()
+    {
+        if (!string.Equals(_password, _confirmPassword, StringComparison.Ordinal))
+        {
+            _error = "The passphrases do not match.";
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync(
+                "/api/v1/local-auth/activate",
+                new { email = _email, activationToken = _activationToken, newPassword = _password });
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = "The activation token or passphrase was not accepted.";
+                return;
+            }
+
+            _password = string.Empty;
+            _confirmPassword = string.Empty;
+            _activationToken = string.Empty;
+            Navigation.NavigateTo("/login", forceLoad: true);
+        }
+        catch (HttpRequestException)
+        {
+            _error = "The activation service is unavailable. Please retry.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
