@@ -618,6 +618,12 @@ builder.Services.AddAuthentication(options =>
     };
     options.Events = new JwtBearerEvents
     {
+        OnMessageReceived = context =>
+        {
+            if (string.Equals(localAuthenticationOptions.Mode, "Local", StringComparison.OrdinalIgnoreCase))
+                context.NoResult();
+            return Task.CompletedTask;
+        },
         OnTokenValidated = context =>
         {
             if (string.Equals(localAuthenticationOptions.Mode, "Local", StringComparison.OrdinalIgnoreCase))
@@ -693,6 +699,11 @@ builder.Services.AddAuthentication(options =>
         },
         OnMessageReceived = ctx =>
         {
+            if (string.Equals(localAuthenticationOptions.Mode, "Local", StringComparison.OrdinalIgnoreCase))
+            {
+                ctx.NoResult();
+                return Task.CompletedTask;
+            }
             if (string.IsNullOrWhiteSpace(ctx.Token) &&
                 ctx.Request.Path.StartsWithSegments("/api/v1/incidents", StringComparison.OrdinalIgnoreCase) &&
                 ctx.Request.Path.Value?.Contains("/timeline/stream", StringComparison.OrdinalIgnoreCase) == true)

@@ -31,11 +31,14 @@
             </AuthorizeView>
         </MudNavGroup>
 
-        <AuthorizeView Roles="Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin" Context="opsGate">
+        <AuthorizeView Roles="Incident.Write,Incident.Manager,Request.Read,Request.Write,Request.Execute,Request.Manager,Change.Write,Change.Manager,HelpdeskAdmin" Context="opsGate">
         <MudNavGroup Title="Operations" Icon="@Icons.Material.Filled.SettingsSuggest" Expanded="false">
-            <MudNavLink Href="/ops/slas" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Schedule">SLA Ops</MudNavLink>
-            <MudNavLink Href="/ops/workflows" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.AccountTree">Workflow Ops</MudNavLink>
-            <MudNavLink Href="notifications" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Notifications">Notifications</MudNavLink>
+            <AuthorizeView Roles="Incident.Write,Incident.Manager,Request.Write,Request.Manager,Change.Write,Change.Manager,HelpdeskAdmin" Context="slaOpsAuth">
+                <MudNavLink Href="/ops/slas" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Schedule">SLA Ops</MudNavLink>
+            </AuthorizeView>
+            <AuthorizeView Roles="Request.Read,Request.Write,Request.Execute,Request.Manager,HelpdeskAdmin" Context="workflowOpsAuth">
+                <MudNavLink Href="/ops/workflows" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.AccountTree">Workflow Ops</MudNavLink>
+            </AuthorizeView>
             <AuthorizeView Roles="HelpdeskAdmin" Context="operationsAuth">
                 <MudNavLink Href="/ops/hangfire" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Timer">Hangfire Ops</MudNavLink>
                 <MudNavLink Href="/settings/connectivity" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.CloudSync">Connectivity</MudNavLink>
@@ -69,6 +72,7 @@
     <AuthorizeView>
         <Authorized>
             <MudNavLink Href="auth" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Person">@context.User.Identity?.Name</MudNavLink>
+            <MudNavLink Href="notifications" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Notifications">Notifications</MudNavLink>
             <TenantAdministrationNavigation />
             <AuthorizeView Roles="HelpdeskAdmin" Context="adminAuth">
                 <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="false">
