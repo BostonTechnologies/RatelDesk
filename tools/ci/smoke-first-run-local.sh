@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 if [[ "$#" -eq 0 ]]; then
   compose_files=(docker/docker-compose.yml)
@@ -23,6 +23,7 @@ cleanup() {
   rm -rf "$work_directory"
 }
 trap cleanup EXIT
+trap 'printf "First-run smoke failed at line %s.\n" "$LINENO" >&2' ERR
 
 curl --retry 6 --retry-all-errors --retry-delay 2 --fail --silent --show-error \
   "$web_base_url/setup" > /dev/null
@@ -65,7 +66,7 @@ curl --fail --silent --show-error \
   --header 'Content-Type: application/json' \
   --header "X-RatelDesk-Setup-Session: $session" \
   --data "$initialize_payload" \
-  "$api_base_url/api/v1/setup/initialize" | jq -e '.state == "Ready"' > /dev/null
+  "$api_base_url/api/v1/setup/initialize" | jq -e '.state == "Restarting"' > /dev/null
 
 login_payload="$(jq -nc --arg password "$password" '{email: "admin@example.test", password: $password, rememberMe: false}')"
 for attempt in $(seq 1 30); do

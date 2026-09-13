@@ -38,7 +38,7 @@
                 <ChildContent>
                     <MudStep Title="Unlock setup">
                         <MudText Typo="Typo.body2">Enter the code retrieved from the API container. It is never returned by this page.</MudText>
-                        <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" Disabled="@(!RendererInfo.IsInteractive)" InputType="InputType.Password" Required="true" Immediate="true" FullWidth="true" />
+                        <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" Disabled="@(!RendererInfo.IsInteractive)" InputType="InputType.Password" Required="true" FullWidth="true" />
                     </MudStep>
                     <MudStep Title="Storage">
                         <MudSelect T="string" @bind-Value="_provider" Disabled="@_storageManaged" Label="Storage provider" FullWidth="true">

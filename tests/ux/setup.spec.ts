@@ -22,7 +22,7 @@ test('first-run setup initializes, survives restart, and supports isolated scope
 
   await expect(page.getByTestId('setup-wizard')).toHaveAttribute('data-interactive', 'true');
   const setupCodeInput = page.getByLabel('Setup code');
-  await setupCodeInput.pressSequentially(setupCode);
+  await setupCodeInput.fill(setupCode);
   await setupCodeInput.press('Tab');
   await expect(setupCodeInput).toHaveValue(setupCode);
   await page.getByRole('button', { name: 'Continue' }).click();
