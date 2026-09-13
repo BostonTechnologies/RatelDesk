@@ -17,11 +17,11 @@
                 <MudAlert Severity="Severity.Error">@_error</MudAlert>
             }
 
-            <MudTextField T="string" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" />
-            <MudTextField T="string" @bind-Value="_activationToken" Label="Activation token" InputType="InputType.Password" Required="true" />
-            <MudTextField T="string" @bind-Value="_password" Label="Passphrase" InputType="InputType.Password" Required="true" HelperText="Use a memorable passphrase of at least 15 characters." />
-            <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm passphrase" InputType="InputType.Password" Required="true" />
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="ActivateAsync">
+            <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" />
+            <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_activationToken" Label="Activation token" InputType="InputType.Password" Required="true" />
+            <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_password" Label="Passphrase" InputType="InputType.Password" Required="true" HelperText="Use a memorable passphrase of at least 15 characters." />
+            <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_confirmPassword" Label="Confirm passphrase" InputType="InputType.Password" Required="true" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="ActivateAsync">
                 @(_busy ? "Activating…" : "Activate account")
             </MudButton>
         </MudStack>

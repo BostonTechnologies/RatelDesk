@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { createHmac } from 'node:crypto';
 
 test.describe.configure({ retries: 0 });
+test.use({ actionTimeout: 15_000, navigationTimeout: 30_000 });
 
 const setupCode = process.env.HELPDESK_E2E_SETUP_CODE;
 
@@ -19,6 +20,7 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   await expect(page.getByRole('heading', { name: 'Set up RatelDesk' })).toBeVisible();
   await expect(page.getByText('operator-only setup code')).toBeVisible();
 
+  await expect(page.getByTestId('setup-wizard')).toHaveAttribute('data-interactive', 'true');
   const setupCodeInput = page.getByLabel('Setup code');
   await setupCodeInput.pressSequentially(setupCode);
   await setupCodeInput.press('Tab');
@@ -49,7 +51,7 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   await expect(page.getByText('Browser Wizard Administrator (browser.wizard.admin@example.test)', { exact: true })).toBeVisible();
   await expect(page.getByText('Browser Wizard RatelDesk', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Initialize instance' }).click();
-  await expect(page.getByText('RatelDesk is restarting into its normal application host.')).toBeVisible();
+  await expect(page.getByText('RatelDesk is restarting into its normal application host.')).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => {
     try {
       const response = await page.request.get('/api/v1/setup/status');
@@ -57,8 +59,21 @@ test('first-run setup initializes, survives restart, and supports isolated scope
     } catch { return 'Restarting'; }
   }, { timeout: 60_000 }).toBe('Ready');
 
+  await expect.poll(async () => {
+    try {
+      const response = await page.request.get('/api/v1/branding');
+      return response.ok() ? (await response.json()).applicationName : 'Restarting';
+    } catch { return 'Restarting'; }
+  }, { timeout: 60_000 }).toBe('Browser Wizard RatelDesk');
+
   // Login starts with an empty browser cookie jar. An earlier API login cannot mask failure.
   await page.context().clearCookies();
+  await page.goto('/login');
+  await expect(page.getByTestId('local-login-form')).toHaveAttribute('data-interactive', 'true');
+  await page.getByLabel('Email', { exact: false }).fill('browser.wizard.admin@example.test');
+  await page.getByLabel('Password', { exact: false }).fill('incorrect-browser-test-passphrase');
+  await page.getByRole('button', { name: 'Sign in to Browser Wizard RatelDesk', exact: true }).click();
+  await expect(page.getByTestId('local-login-error')).toHaveText('Sign-in failed. Check your email, passphrase and authenticator or recovery code.');
   await signIn(page, 'browser.wizard.admin@example.test');
   const admin = await (await page.request.get('/api/v1/auth/me')).json();
   expect(admin.isHelpdeskAdmin).toBe(true);
@@ -111,16 +126,20 @@ test('first-run setup initializes, survives restart, and supports isolated scope
     await reader.goto(`/incidents/${incident.id}`);
     await expect(reader.getByText('Colleague incident for reader acceptance', { exact: true })).toBeVisible();
     await expect(reader.getByRole('button', { name: 'Save Changes', exact: true })).toBeDisabled();
+    await expect(reader.getByLabel('Priority', { exact: true })).toBeDisabled();
     await expect(reader.getByRole('link', { name: 'Changes', exact: true })).toHaveCount(0);
     await writer.goto(`/incidents/${incident.id}`);
     await expect(writer.getByText('Colleague incident for reader acceptance', { exact: true })).toBeVisible();
+    await expect(writer.getByLabel('Priority', { exact: true })).toBeEnabled();
     const denied = await reader.request.put(`/api/v1/incidents/${incident.id}`, { headers, data: { priority: 1 } });
     expect(denied.status()).toBe(403);
     const permitted = await writer.request.put(`/api/v1/incidents/${incident.id}`, { headers, data: { priority: 1 } });
     expect(permitted.ok(), await permitted.text()).toBe(true);
     const revoke = await page.request.put(`/api/v1/local-auth/users/${accounts[0].id}/assignments`, { headers, data: { assignments: [] } });
     expect(revoke.ok(), await revoke.text()).toBe(true);
-    await readerContext.clearCookies();
+    // The open circuit must shed revoked navigation and page access without a logout.
+    await expect(reader).toHaveURL(/\/login(?:[?#].*)?$/, { timeout: 45_000 });
+    expect((await reader.request.get('/api/v1/auth/me')).status()).toBe(401);
     await signIn(reader, accounts[0].email);
     const accessAfterRemoval = await reader.request.get(`/api/v1/incidents/${incident.id}`);
     expect([403, 404]).toContain(accessAfterRemoval.status());
@@ -145,6 +164,7 @@ test('first-run setup initializes, survives restart, and supports isolated scope
 const passphrase = 'browser-wizard-setup-passphrase';
 async function signIn(page: Page, email: string) {
   await page.goto('/login');
+  await expect(page.getByTestId('local-login-form')).toHaveAttribute('data-interactive', 'true');
   await page.getByLabel('Email', { exact: false }).fill(email);
   await page.getByLabel('Password', { exact: false }).fill(passphrase);
   await page.getByRole('button', { name: 'Sign in to Browser Wizard RatelDesk', exact: true }).click();

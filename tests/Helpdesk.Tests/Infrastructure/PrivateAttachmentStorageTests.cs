@@ -10,6 +10,21 @@ public sealed class PrivateAttachmentStorageTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "rateldesk-attachments-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task DefaultStorageBelongsToTheHostContentRoot()
+    {
+        var contentRoot = Path.Combine(_root, "native-host");
+        var environment = Substitute.For<IHostEnvironment>();
+        environment.ContentRootPath.Returns(contentRoot);
+        var store = new TicketAttachmentFileStore(environment, Options.Create(new StorageOptions()));
+
+        await store.StartAsync(CancellationToken.None);
+        var path = store.GetWritePath("private.txt");
+        Assert.Equal(Path.Combine(contentRoot, "storage", "attachments", "private.txt"), path);
+        await File.WriteAllTextAsync(path, "persistent bytes");
+        Assert.Equal(path, store.GetReadPath("private.txt"));
+    }
+
+    [Fact]
     public async Task LegacyFilesMoveIntoPersistentStorageAndSurviveHostRecreation()
     {
         var firstHost = Path.Combine(_root, "first-host");

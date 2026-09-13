@@ -1407,7 +1407,31 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
 
         Assert.Equal(["INC-LIST-OWN"], incidents!.Items.Select(item => item.TrackingId));
         Assert.Equal(["REQ-LIST-OWN"], requests!.Items.Select(item => item.TrackingId));
+        // SelfServiceUser deliberately contains Incident.User and Request.User,
+        // not Change.User. The old assertion depended on a list-query leak that
+        // accepted unrelated organization membership as a change permission.
+        Assert.Empty(changes!.Items);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden,
+            (await harness.Client.GetAsync("/api/v1/changes/chg-list-own")).StatusCode);
+
+        await harness.SeedAsync(db =>
+        {
+            db.Roles.Add(new Role
+            {
+                Key = "custom.own-change-reader", Name = "Own change access", Scope = RoleScopeKind.Tenant,
+                OwnerOrganizationId = "org-1", Permissions = [new RolePermission { Permission = HelpdeskPermissions.ChangeUser }]
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = "self-service-1", OrganizationId = "org-1", RoleKey = "custom.own-change-reader"
+            });
+        });
+        changes = await harness.Client.GetFromJsonAsync<PagedResponse<ChangeDto>>("/api/v1/changes?page=1&pageSize=20");
         Assert.Equal(["CHG-LIST-OWN"], changes!.Items.Select(item => item.TrackingId));
+        Assert.Equal(System.Net.HttpStatusCode.OK,
+            (await harness.Client.GetAsync("/api/v1/changes/chg-list-own")).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden,
+            (await harness.Client.GetAsync("/api/v1/changes/chg-list-foreign")).StatusCode);
     }
 
     [Fact]

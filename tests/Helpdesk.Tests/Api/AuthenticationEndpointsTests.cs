@@ -31,6 +31,7 @@ public class AuthenticationEndpointsTests : IClassFixture<WebApplicationFactory<
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Production");
         var prodFactory = _factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Production");
             builder.ConfigureServices(services =>
             {

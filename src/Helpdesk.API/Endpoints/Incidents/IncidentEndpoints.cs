@@ -956,13 +956,25 @@ public static class IncidentEndpoints
 
         group.MapPost("/bulk/state", async (
             [FromBody] BulkStateChangeRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Incident> repo,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] ITicketNotificationService ticketNotificationService,
             CancellationToken token) =>
         {
-            if (req.Ids is null || req.Ids.Count == 0) return Results.BadRequest("No ids");
-            var incidents = (await repo.GetAllAsync()).Where(i => req.Ids.Contains(i.Id)).ToList();
+            var ids = (req.Ids ?? []).Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (ids.Length is 0 or > 500) return Results.BadRequest("Select between 1 and 500 tickets.");
+            if (!Enum.IsDefined(req.NewState)) return Results.BadRequest("Invalid ticket state.");
+            var incidents = (await repo.GetAllAsync()).Where(ticket => ids.Contains(ticket.Id, StringComparer.OrdinalIgnoreCase)).ToList();
+            var access = await accessService.ResolveAsync(user, token);
+            if (incidents.Any(ticket => !access.CanManageIncident(ticket.OrganizationId))) return Results.Forbid();
+            if (incidents.Count != ids.Length) return Results.NotFound();
+            await using var transaction = db.Database.IsRelational()
+                ? await db.Database.BeginTransactionAsync(token)
+                : null;
             var resolvedTransitions = new List<Incident>();
             foreach (var inc in incidents)
             {
@@ -983,13 +995,14 @@ public static class IncidentEndpoints
                     await ticketSlaCompletionService.HandleTicketClosedAsync(inc.Id, "bulk", DateTimeOffset.UtcNow);
                 }
             }
+            if (transaction is not null) await transaction.CommitAsync(token);
             foreach (var inc in resolvedTransitions)
             {
                 await SendResolvedNotificationAsync(inc, ticketNotificationService, token);
             }
             return Results.Ok(new { updated = incidents.Count });
         })
-        .RequireAuthorization("HelpdeskAdmin")
+        .RequireAuthorization("IncidentManager")
         .WithName("BulkUpdateIncidentState")
         .WithSummary("Bulk update incident state")
         .WithDescription("Updates the state of multiple incidents in one request.")
@@ -997,13 +1010,21 @@ public static class IncidentEndpoints
 
         group.MapPost("/bulk/assign", async (
             [FromBody] BulkAssignRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Incident> repo,
             [FromServices] ISupportNotificationService supportNotificationService,
             [FromServices] ISupportAccessService supportAccessService,
             CancellationToken token) =>
         {
-            if (req.Ids is null || req.Ids.Count == 0) return Results.BadRequest("No ids");
-            var incidents = (await repo.GetAllAsync()).Where(i => req.Ids.Contains(i.Id)).ToList();
+            var ids = (req.Ids ?? []).Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (ids.Length is 0 or > 500) return Results.BadRequest("Select between 1 and 500 tickets.");
+            var incidents = (await repo.GetAllAsync()).Where(ticket => ids.Contains(ticket.Id, StringComparer.OrdinalIgnoreCase)).ToList();
+            var access = await accessService.ResolveAsync(user, token);
+            if (incidents.Any(ticket => !access.CanManageIncident(ticket.OrganizationId))) return Results.Forbid();
+            if (incidents.Count != ids.Length) return Results.NotFound();
             if (!string.IsNullOrWhiteSpace(req.AssignedToId))
             {
                 foreach (var inc in incidents)
@@ -1020,11 +1041,14 @@ public static class IncidentEndpoints
                 }
             }
 
+            await using var transaction = db.Database.IsRelational()
+                ? await db.Database.BeginTransactionAsync(token)
+                : null;
             var changedAssignments = new List<(Incident Incident, string? PreviousAssignedToId)>();
             foreach (var inc in incidents)
             {
                 var previousAssignedToId = inc.AssignedToId;
-                inc.AssignedToId = req.AssignedToId;
+                inc.AssignedToId = string.IsNullOrWhiteSpace(req.AssignedToId) ? null : req.AssignedToId.Trim();
                 inc.UpdatedAt = DateTime.UtcNow;
                 await repo.UpdateAsync(inc);
                 if (!string.Equals(previousAssignedToId, inc.AssignedToId, StringComparison.OrdinalIgnoreCase) &&
@@ -1033,6 +1057,7 @@ public static class IncidentEndpoints
                     changedAssignments.Add((inc, previousAssignedToId));
                 }
             }
+            if (transaction is not null) await transaction.CommitAsync(token);
             foreach (var (incident, previousAssignedToId) in changedAssignments)
             {
                 await SendAssignmentNotificationSafelyAsync(
@@ -1044,7 +1069,7 @@ public static class IncidentEndpoints
             }
             return Results.Ok(new { updated = incidents.Count });
         })
-        .RequireAuthorization("HelpdeskAdmin")
+        .RequireAuthorization("IncidentManager")
         .WithName("BulkAssignIncidents")
         .WithSummary("Bulk assign incidents to a user")
         .WithDescription("Assigns the selected incidents to the specified team member.")

@@ -834,9 +834,16 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("UpdatedAtUtcSortTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"UpdatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("OrganizationId", "OrchestrationRequestDefinitionId");
+
+                    b.HasIndex("SyncState", "UpdatedAtUtcSortTicks");
 
                     b.HasIndex("OrganizationId", "RequestFormId", "TaskTemplateId")
                         .IsUnique();

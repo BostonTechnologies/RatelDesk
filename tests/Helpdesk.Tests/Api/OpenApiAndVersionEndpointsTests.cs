@@ -16,6 +16,7 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
     {
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
             builder.ConfigureAppConfiguration((_, cfg) =>

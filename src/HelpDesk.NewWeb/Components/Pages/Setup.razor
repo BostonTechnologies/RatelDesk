@@ -1,4 +1,5 @@
 @page "/setup"
+@implements IDisposable
 @attribute [AllowAnonymous]
 @rendermode @(new InteractiveServerRenderMode(prerender: false))
 
@@ -7,18 +8,29 @@
 
 <PageTitle>Set up RatelDesk</PageTitle>
 
-<section class="helpdesk-login-page">
+<section class="helpdesk-login-page" data-testid="setup-wizard" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")">
     <MudPaper Elevation="2" Class="helpdesk-login-panel">
         <MudStack Spacing="2">
             <MudText Typo="Typo.h4" HtmlTag="h1">Set up RatelDesk</MudText>
             <MudText Typo="Typo.body1">Complete first-time initialization with the operator-only setup code.</MudText>
             @if (_managedFields.Count > 0) { <MudAlert Severity="Severity.Info">Deployment-managed setup values are shown read-only.</MudAlert> }
             @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
-            @if (_ready) { <MudAlert Severity="Severity.Success">RatelDesk is restarting into its normal application host. You can sign in shortly.</MudAlert> }
+            @if (_ready)
+            {
+                <MudAlert Severity="@(_applicationReady ? Severity.Success : Severity.Info)">@(_applicationReady ? "Your instance is ready. Sign in with your administrator account." : "RatelDesk is restarting into its normal application host. You can sign in shortly.")</MudAlert>
+            }
 
             @if (_recoveryRequired)
             {
                 <MudAlert Severity="Severity.Error">This instance needs storage recovery. Restore its matching application database, bootstrap state and data-protection keys, then restart the API. Initialization is unavailable while the saved instance and database do not match.</MudAlert>
+            }
+            else if (_ready)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_applicationReady)" Href="/login">Sign in</MudButton>
+                @if (!_applicationReady && !_busy)
+                {
+                    <MudButton OnClick="WaitForApplicationAsync">Check again</MudButton>
+                }
             }
             else
             {
@@ -26,7 +38,7 @@
                 <ChildContent>
                     <MudStep Title="Unlock setup">
                         <MudText Typo="Typo.body2">Enter the code retrieved from the API container. It is never returned by this page.</MudText>
-                        <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" InputType="InputType.Password" Required="true" Immediate="true" FullWidth="true" />
+                        <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" Disabled="@(!RendererInfo.IsInteractive)" InputType="InputType.Password" Required="true" Immediate="true" FullWidth="true" />
                     </MudStep>
                     <MudStep Title="Storage">
                         <MudSelect T="string" @bind-Value="_provider" Disabled="@_storageManaged" Label="Storage provider" FullWidth="true">
@@ -77,7 +89,7 @@
                     </MudStep>
                     <MudStep Title="Review">
                         <MudSimpleTable Dense="true"><tbody>
-                            <tr><td>Storage</td><td>@(_provider == "PostgreSql" ? $"PostgreSQL at {_host}:{_port}/{_database}" : "Embedded SQLite")</td></tr>
+                            <tr><td>Storage</td><td>@(_provider == "PostgreSql" ? (_storageManaged ? "PostgreSQL (managed by deployment)" : $"PostgreSQL at {_host}:{_port}/{_database}") : "Embedded SQLite")</td></tr>
                             <tr><td>Organization</td><td>@_organization</td></tr>
                             <tr><td>Application</td><td>@_applicationName</td></tr>
                             <tr><td>Public URL</td><td>@_applicationUrl</td></tr>
@@ -89,12 +101,12 @@
                     <MudStep Title="Ready"><MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/login">Sign in</MudButton></MudStep>
                 </ChildContent>
                 <ActionContent>
-                    @if (_step > 0 && _step < 6) { <MudButton Disabled="_busy" OnClick="Back">Back</MudButton> }
+                    @if (_step > 0 && _step < 6) { <MudButton Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="Back">Back</MudButton> }
                     <MudSpacer />
-                    @if (_step == 0) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="UnlockAsync">Continue</MudButton> }
-                    else if (_step == 1) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="PrepareStorageAsync">Prepare storage</MudButton> }
-                    else if (_step is 2 or 3 or 4) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="Advance">Continue</MudButton> }
-                    else if (_step == 5) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="InitializeAsync">Initialize instance</MudButton> }
+                    @if (_step == 0) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="UnlockAsync">Continue</MudButton> }
+                    else if (_step == 1) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="PrepareStorageAsync">Prepare storage</MudButton> }
+                    else if (_step is 2 or 3 or 4) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="Advance">Continue</MudButton> }
+                    else if (_step == 5) { <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="InitializeAsync">Initialize instance</MudButton> }
                 </ActionContent>
             </MudStepper>
             }
@@ -106,6 +118,8 @@
     private MudStepper _stepper = default!;
     private int _step;
     private bool _storageManaged, _recoveryRequired;
+    private readonly CancellationTokenSource _lifetime = new();
+    private bool _applicationReady;
     private bool _busy, _ready, _useTls = true, _keepDefaults = true;
     private string? _error, _session;
     private readonly HashSet<string> _managedFields = new(StringComparer.Ordinal);
@@ -120,7 +134,8 @@
         try
         {
             var status = await HttpClientFactory.CreateClient("SystemApiNoAuth").GetFromJsonAsync<SetupStatus>("/api/v1/setup/status");
-            if (status?.State == "Ready") Navigation.NavigateTo("/login", forceLoad: true);
+            if (status?.State == "Ready") { Navigation.NavigateTo("/login", forceLoad: true); return; }
+            if (status?.State == "Restarting") { _ready = true; await WaitForApplicationAsync(); return; }
             _recoveryRequired = status?.State == "RecoveryRequired";
             _storageManaged = status?.StorageManaged == true;
             if (!string.IsNullOrWhiteSpace(status?.Provider)) _provider = status.Provider;
@@ -185,11 +200,42 @@
             request.Headers.Add("X-RatelDesk-Setup-Session", _session);
             using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
             if (!response.IsSuccessStatusCode) { _error = "Initialization could not be completed. Check the setup details and passphrase."; return; }
-            _password = _confirmPassword = string.Empty; _session = null; _ready = true; await _stepper.NextStepAsync();
+            _password = _confirmPassword = string.Empty; _session = null; _ready = true;
+            await InvokeAsync(StateHasChanged);
+            await WaitForApplicationAsync();
         }
         catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
         finally { _busy = false; }
     }
+
+    private async Task WaitForApplicationAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("SystemApiNoAuth");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            timeout.CancelAfter(TimeSpan.FromMinutes(1));
+            while (!timeout.IsCancellationRequested)
+            {
+                try
+                {
+                    using var response = await client.GetAsync("/api/v1/branding", timeout.Token);
+                    if (response.IsSuccessStatusCode) { _applicationReady = true; return; }
+                }
+                catch (HttpRequestException) { }
+                await Task.Delay(TimeSpan.FromSeconds(1), timeout.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
+        {
+            _error = "Initialization is saved. The application has not restarted yet; check the API container, then check again.";
+        }
+        catch (OperationCanceledException) { }
+        finally { _busy = false; }
+    }
+
+    public void Dispose() { _lifetime.Cancel(); _lifetime.Dispose(); }
 
     private async Task Back() { _error = null; await _stepper.PreviousStepAsync(); }
     private void ExpireSession() { _step = 0; _error = "Your setup session expired. Enter the setup code again."; }

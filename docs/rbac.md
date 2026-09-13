@@ -115,3 +115,8 @@ instance administration. Updates are recorded with actor and organization.
 
 Request-task approvals use the existing signed, designated-recipient capability.
 A Request Writer or Request Executor cannot approve on behalf of that recipient.
+
+Incident and request bulk state/assignment changes require Write in every target
+organization. Every target and assignee is checked before any record changes;
+a batch containing a missing or unauthorized ticket changes nothing. The same
+endpoints support inline assignment of a single request.

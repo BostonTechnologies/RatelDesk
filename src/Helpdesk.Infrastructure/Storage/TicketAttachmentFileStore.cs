@@ -12,9 +12,7 @@ public sealed class TicketAttachmentFileStore : IHostedService
 
     public TicketAttachmentFileStore(IHostEnvironment environment, IOptions<StorageOptions> options)
     {
-        var storageRoot = string.IsNullOrWhiteSpace(options.Value.RootPath)
-            ? Path.Combine(environment.ContentRootPath, "storage")
-            : options.Value.RootPath;
+        var storageRoot = options.Value.ResolveRootPath(environment.ContentRootPath);
         _root = Path.GetFullPath(Path.Combine(storageRoot, "attachments"));
         var webRoot = Path.GetFullPath(Path.Combine(environment.ContentRootPath, "wwwroot"));
         if (_root.StartsWith(webRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))

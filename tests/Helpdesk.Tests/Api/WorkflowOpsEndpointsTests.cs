@@ -9,6 +9,7 @@ using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.Request;
+using Helpdesk.Shared.DTOs.Orchestration;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Authentication;
@@ -66,6 +67,25 @@ public sealed class WorkflowOpsEndpointsTests
         Assert.Equal("task-retry", Assert.Single(retries!.Items).TaskId);
     }
 
+    [Theory]
+    [InlineData("RequestManager", 2, "binding-later", "binding-earlier")]
+    [InlineData("Admin", 3, "binding-foreign", "binding-later")]
+    public async Task Binding_issues_on_migrated_sqlite_page_by_utc_instant_with_tenant_scope(
+        string actor, int expectedCount, string firstId, string secondId)
+    {
+        await using var harness = await WorkflowOpsHarness.CreateAsync(actor, useSqlite: true);
+
+        var first = await harness.Client.GetFromJsonAsync<PagedResponse<AutomationBindingIssueOpsDto>>(
+            "/api/v1/ops/tasks/orchestration/binding-issues?page=1&pageSize=1");
+        var second = await harness.Client.GetFromJsonAsync<PagedResponse<AutomationBindingIssueOpsDto>>(
+            "/api/v1/ops/tasks/orchestration/binding-issues?page=2&pageSize=1");
+
+        Assert.Equal(expectedCount, first!.TotalCount);
+        Assert.Equal(firstId, Assert.Single(first.Items).BindingId);
+        Assert.Equal(expectedCount, second!.TotalCount);
+        Assert.Equal(secondId, Assert.Single(second.Items).BindingId);
+    }
+
     private sealed class WorkflowOpsHarness : IAsyncDisposable
     {
         private readonly WebApplication _app;
@@ -89,14 +109,15 @@ public sealed class WorkflowOpsEndpointsTests
                 await connection.OpenAsync();
             }
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+            var databaseName = $"workflow-ops-{Guid.NewGuid():N}";
             builder.WebHost.UseTestServer();
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddDbContext<HelpdeskDbContext>(options =>
             {
                 if (connection is not null)
-                    options.UseSqlite(connection);
+                    options.UseSqlite(connection, sqlite => sqlite.MigrationsAssembly("Helpdesk.Infrastructure.SqliteMigrations"));
                 else
-                    options.UseInMemoryDatabase($"workflow-ops-{Guid.NewGuid():N}");
+                    options.UseInMemoryDatabase(databaseName);
             });
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("org-alpha", "user-1", actor == "Admin"));
             builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
@@ -123,7 +144,13 @@ public sealed class WorkflowOpsEndpointsTests
             using (var scope = app.Services.CreateScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
-                await db.Database.EnsureCreatedAsync();
+                if (connection is not null)
+                {
+                    await db.Database.MigrateAsync();
+                    Assert.False(db.Database.HasPendingModelChanges());
+                }
+                else
+                    await db.Database.EnsureCreatedAsync();
                 Seed(db);
                 await db.SaveChangesAsync();
             }
@@ -169,7 +196,26 @@ public sealed class WorkflowOpsEndpointsTests
                 NewTask("task-critical", "req-alpha", "org-alpha", RequestTaskStatus.Failed, isCritical: true),
                 NewTask("task-retry", "req-alpha", "org-alpha", RequestTaskStatus.Failed, nextRetryAt: DateTimeOffset.UtcNow.AddMinutes(30)),
                 NewTask("task-other", "req-other", "org-other", RequestTaskStatus.InProgress, dueAt: DateTimeOffset.UtcNow.AddHours(-3)));
+
+            db.Services.Add(new Service { Id = "workflow-service", Name = "Workflow service" });
+            db.RequestForms.AddRange(
+                new RequestForm { Id = "form-alpha", Title = "Alpha form", OrganizationId = "org-alpha", ServiceId = "workflow-service" },
+                new RequestForm { Id = "form-other", Title = "Other form", OrganizationId = "org-other", ServiceId = "workflow-service" });
+            db.AutomationBindings.AddRange(
+                NewBinding("binding-earlier", "org-alpha", "form-alpha", "2026-09-13T12:00:00+02:00"),
+                NewBinding("binding-later", "org-alpha", "form-alpha", "2026-09-13T06:01:00-04:00"),
+                NewBinding("binding-foreign", "org-other", "form-other", "2026-09-13T11:00:00Z"));
         }
+
+        private static AutomationBinding NewBinding(string id, string organizationId, string formId, string updatedAt) => new()
+        {
+            Id = id,
+            OrganizationId = organizationId,
+            RequestFormId = formId,
+            TaskTemplateId = Guid.NewGuid(),
+            Enabled = false,
+            UpdatedAtUtc = DateTimeOffset.Parse(updatedAt)
+        };
 
         private static RequestTask NewTask(
             string id,

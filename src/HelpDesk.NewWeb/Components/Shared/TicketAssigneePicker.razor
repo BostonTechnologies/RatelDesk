@@ -80,13 +80,9 @@
         if (ReadOnly) return;
         try
         {
-            var resp = await Api.PostAsJsonAsync(
-                $"api/v1/{TicketType}/bulk/assign",
-                new
-                {
-                    Ids = new[] { TicketId },
-                    AssignedToId = newUserId
-                });
+            using var resp = string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase)
+                ? await Api.PutAsJsonAsync($"api/v1/incidents/{TicketId}", new { AssignedToId = newUserId ?? string.Empty })
+                : await Api.PostAsJsonAsync($"api/v1/{TicketType}/bulk/assign", new { Ids = new[] { TicketId }, AssignedToId = newUserId });
 
             if (!resp.IsSuccessStatusCode)
             {

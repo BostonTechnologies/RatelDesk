@@ -35,6 +35,7 @@ public sealed class SqliteProviderRegressionTests
         // Local clock order is reversed; ordering must compare UTC instants.
         await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO AiOperationAuditRecords (Id, OperationName, ProviderName, ModelId, CreatedAt) VALUES ({earlier}, {"a"}, {"provider"}, {"model"}, {"2026-09-13 12:00:00+02:00"})");
         await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO AiOperationAuditRecords (Id, OperationName, ProviderName, ModelId, CreatedAt) VALUES ({later}, {"b"}, {"provider"}, {"model"}, {"2026-09-13 06:01:00-04:00"})");
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO AutomationBindings (Id, OrganizationId, RequestFormId, TaskTemplateId, OrchestrationRequestDefinitionId, SyncState, Enabled, CreatedAtUtc, UpdatedAtUtc) VALUES ({"existing-binding"}, {"org"}, {"form"}, {Guid.NewGuid()}, {"definition"}, {0}, {false}, {"2026-09-13 12:00:00+02:00"}, {"2026-09-13 12:00:00+02:00"})");
 
         await migrator.MigrateAsync();
         await migrator.MigrateAsync();
@@ -46,6 +47,7 @@ public sealed class SqliteProviderRegressionTests
         Assert.Equal(later, (await query.SingleAsync()).Id);
         Assert.Equal(earlier, (await db.AiOperationAuditRecords.OrderByUtc(db, x => x.CreatedAt).Take(1).SingleAsync()).Id);
         Assert.Equal(2, await db.AiOperationAuditRecords.CountAsync());
+        Assert.Equal("existing-binding", (await db.AutomationBindings.OrderByUtc(db, x => x.UpdatedAtUtc).Take(1).SingleAsync()).Id);
 
         // Cover every new sortable mapping through a translated query on the real schema.
         Assert.Empty(await db.InboundEmailProcessingLogs.OrderByUtc(db, x => x.CreatedAtUtc).Take(1).ToListAsync());

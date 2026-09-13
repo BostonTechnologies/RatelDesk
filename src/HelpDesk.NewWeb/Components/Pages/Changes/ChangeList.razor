@@ -54,7 +54,7 @@
                  @ref="_table"
                  TicketType="changes"
                  CanEditItem="@(item => accessProfile?.CanManageChange(item.OrganizationId) == true)"
-                 EnableSelection="@CanWriteAny"
+                 EnableSelection="@(accessProfile?.IsHelpdeskAdmin == true)"
                  ServerData="LoadServerData"
                  SelectedItems="_selected"
                  SelectedItemsChanged="@(x => _selected = x)"

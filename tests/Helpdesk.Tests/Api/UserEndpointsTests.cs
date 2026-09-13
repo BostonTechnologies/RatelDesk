@@ -27,6 +27,7 @@ public class UserEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
 
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
 

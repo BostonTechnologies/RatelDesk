@@ -15,9 +15,7 @@ public sealed class EmailTemplateImageStorageService(
     ILogger<EmailTemplateImageStorageService> logger,
     IInstanceBrandingProvider? brandingProvider = null) : IEmailTemplateImageStorageService
 {
-    private readonly string _storageRoot = string.IsNullOrWhiteSpace(options.Value.RootPath)
-        ? Path.Combine(env.ContentRootPath, "storage")
-        : options.Value.RootPath;
+    private readonly string _storageRoot = options.Value.ResolveRootPath(env.ContentRootPath);
     private readonly string _publicApiBaseUrl = options.Value.PublicApiBaseUrl ?? string.Empty;
     private readonly IImageLinkSigner _imageLinkSigner = imageLinkSigner;
     private readonly ILogger<EmailTemplateImageStorageService> _logger = logger;

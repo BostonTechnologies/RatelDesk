@@ -305,7 +305,7 @@
 
     private async Task ApplyBulkMarketingSpam()
     {
-        if (_selected.Count == 0) return;
+        if (_selected.Count == 0 || _selected.Any(item => accessProfile?.CanManageIncident(item.OrganizationId) != true)) return;
         var count = _selected.Count;
         var confirm = await DialogService.ShowMessageBoxAsync(
             $"Mark {count} selected tickets as Marketing/Spam?",

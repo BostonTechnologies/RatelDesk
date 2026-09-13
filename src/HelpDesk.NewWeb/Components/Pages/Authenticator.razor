@@ -22,13 +22,13 @@
             {
                 <MudAlert Severity="Severity.Warning">Scan or enter this key in your authenticator app, then enter its current six-digit code below.</MudAlert>
                 <MudTextField Value="@_sharedKey" Label="Authenticator key" ReadOnly="true" Variant="Variant.Outlined" FullWidth="true" />
-                <MudTextField T="string" @bind-Value="_code" Label="Authenticator code" InputType="InputType.Password" Required="true" />
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="EnableAsync">Enable authenticator</MudButton>
+                <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_code" Label="Authenticator code" InputType="InputType.Password" Required="true" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="EnableAsync">Enable authenticator</MudButton>
             }
             else if (_recoveryCodes.Count == 0)
             {
-                <MudTextField T="string" @bind-Value="_currentPassword" Label="Current passphrase" InputType="InputType.Password" Required="true" />
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="StartSetupAsync">Set up authenticator</MudButton>
+                <MudTextField T="string" Disabled="@(!RendererInfo.IsInteractive || _busy)" @bind-Value="_currentPassword" Label="Current passphrase" InputType="InputType.Password" Required="true" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || !RendererInfo.IsInteractive)" OnClick="StartSetupAsync">Set up authenticator</MudButton>
             }
             @if (_recoveryCodes.Count > 0)
             {

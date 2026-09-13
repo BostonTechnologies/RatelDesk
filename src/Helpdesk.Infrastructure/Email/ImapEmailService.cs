@@ -67,8 +67,8 @@ public class ImapEmailService : BackgroundService, IImapEmailService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
-            var inboxSettings = await OrderByCurrentInboxSettings(db.EmailInboxSettings.AsNoTracking())
-                .FirstOrDefaultAsync(cancellationToken);
+            var inboxSettings = (await LoadOrderedInboxSettingsAsync(db.EmailInboxSettings.AsNoTracking(), cancellationToken))
+                .FirstOrDefault();
 
             _settings = inboxSettings is not null
                 ? ToImapSettings(inboxSettings, requireBackgroundSync: true)
@@ -83,7 +83,16 @@ public class ImapEmailService : BackgroundService, IImapEmailService
         await base.StartAsync(cancellationToken);
     }
 
-    public static IOrderedQueryable<EmailInboxSettings> OrderByCurrentInboxSettings(IQueryable<EmailInboxSettings> settings)
+    public static async Task<EmailInboxSettings[]> LoadOrderedInboxSettingsAsync(
+        IQueryable<EmailInboxSettings> settings, CancellationToken cancellationToken)
+    {
+        // This is the small, instance-wide mailbox configuration set. Materialize
+        // before ordering so DateTimeOffset chronology also works on SQLite.
+        var configured = await settings.ToListAsync(cancellationToken);
+        return OrderByCurrentInboxSettings(configured).ToArray();
+    }
+
+    public static IOrderedEnumerable<EmailInboxSettings> OrderByCurrentInboxSettings(IEnumerable<EmailInboxSettings> settings)
         => settings
             .OrderByDescending(x => x.Enabled && x.BackgroundSyncEnabled)
             .ThenByDescending(x => x.Enabled)

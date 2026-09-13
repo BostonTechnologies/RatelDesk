@@ -25,6 +25,7 @@ public class IncidentsEndpointsTests : IClassFixture<WebApplicationFactory<Progr
 
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
 

@@ -337,6 +337,12 @@ public class HelpdeskDbContext(
             entity.Property(x => x.LastCorrelationId).HasMaxLength(128);
             entity.HasIndex(x => new { x.OrganizationId, x.RequestFormId, x.TaskTemplateId }).IsUnique();
             entity.HasIndex(x => new { x.OrganizationId, x.OrchestrationRequestDefinitionId });
+            if (isSqlite)
+            {
+                entity.Property<long>("UpdatedAtUtcSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"UpdatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("SyncState", "UpdatedAtUtcSortTicks");
+            }
         });
 
         modelBuilder.Entity<KnowledgeBaseArticle>(entity =>

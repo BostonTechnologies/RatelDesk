@@ -6,12 +6,46 @@ using Helpdesk.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Testcontainers.PostgreSql;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
 
 namespace Helpdesk.Tests.Api;
 
 public sealed class BootstrapStartupTests : IDisposable
 {
     private readonly string directory = Path.Combine(Path.GetTempPath(), $"rateldesk-startup-{Guid.NewGuid():N}");
+
+    [Theory]
+    [InlineData(BootstrapState.Unconfigured, "Unconfigured")]
+    [InlineData(BootstrapState.Configuring, "Configuring")]
+    [InlineData(BootstrapState.Ready, "Restarting")]
+    [InlineData(BootstrapState.RecoveryRequired, "RecoveryRequired")]
+    public async Task Bootstrap_only_status_does_not_advertise_application_readiness(BootstrapState state, string expected)
+    {
+        var (_, store, options) = Create();
+        await store.LoadOrCreateAsync();
+        await store.UpdateAsync(current => current with { State = state });
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(options);
+        builder.Services.AddSingleton<IBootstrapStateStore>(store);
+        builder.Services.AddSingleton<BootstrapSessionService>();
+        builder.Services.AddSingleton<BootstrapInitializationService>();
+        builder.Services.AddSingleton<PostgreSqlSetupPreflightService>();
+        builder.Services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
+        await using var app = builder.Build();
+        app.MapBootstrapEndpoints();
+        await app.StartAsync();
+
+        using var response = await app.GetTestClient().GetAsync("/api/v1/setup/status");
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(expected, body.RootElement.GetProperty("state").GetString());
+        Assert.Equal(state, (await store.LoadOrCreateAsync()).State);
+    }
 
     [Fact]
     public async Task Fresh_sqlite_configuration_requires_setup_without_creating_database()

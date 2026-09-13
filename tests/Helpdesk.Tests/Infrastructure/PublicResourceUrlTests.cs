@@ -11,9 +11,10 @@ namespace Helpdesk.Tests.Infrastructure;
 public sealed class PublicResourceUrlTests
 {
     [Theory]
-    [InlineData("", "https://desk.example.test")]
-    [InlineData("https://media.example.test/", "https://media.example.test")]
-    public async Task SavedSignedMediaUsesConfiguredPublicOrigin(string apiOrigin, string expectedOrigin)
+    [InlineData("", "https://desk.example.test", false)]
+    [InlineData("https://media.example.test/", "https://media.example.test", false)]
+    [InlineData("", "https://desk.example.test", true)]
+    public async Task SavedSignedMediaUsesConfiguredPublicOrigin(string apiOrigin, string expectedOrigin, bool relativeStorage)
     {
         var root = Path.Combine(Path.GetTempPath(), "rateldesk-media-" + Guid.NewGuid().ToString("N"));
         try
@@ -21,10 +22,11 @@ public sealed class PublicResourceUrlTests
             var branding = Substitute.For<IInstanceBrandingProvider>();
             branding.GetEffectiveAsync(Arg.Any<CancellationToken>()).Returns(new InstanceBrandingSnapshot(
                 "Desk", "", "https://desk.example.test", "", "", "", "", "", "", "", ""));
-            var options = Options.Create(new StorageOptions { RootPath = root, PublicApiBaseUrl = apiOrigin });
+            var options = Options.Create(new StorageOptions { RootPath = relativeStorage ? "media" : root, PublicApiBaseUrl = apiOrigin });
             var signer = Substitute.For<IImageLinkSigner>();
             signer.GenerateToken(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateTimeOffset>()).Returns("signed-token");
             var environment = Substitute.For<IHostEnvironment>();
+            environment.ContentRootPath.Returns(root);
             var inline = new InlineImageStorageService(environment, options, signer, NullLogger<InlineImageStorageService>.Instance, branding);
             var tenant = new TenantBrandAssetStorageService(environment, options, signer, NullLogger<TenantBrandAssetStorageService>.Instance, branding);
             var template = new EmailTemplateImageStorageService(environment, options, signer, NullLogger<EmailTemplateImageStorageService>.Instance, branding);
@@ -41,6 +43,8 @@ public sealed class PublicResourceUrlTests
                 Assert.StartsWith(expectedOrigin + "/api/", url);
                 Assert.EndsWith("?token=signed-token", url);
             });
+            var storageRoot = relativeStorage ? Path.Combine(root, "media") : root;
+            Assert.Equal(4, Directory.GetFiles(storageRoot, "*", SearchOption.AllDirectories).Length);
         }
         finally
         {

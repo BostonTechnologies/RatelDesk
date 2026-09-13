@@ -27,7 +27,8 @@ public sealed class LocalSessionValidatorTests
         var authentication = Substitute.For<IAuthenticationService>();
         var services = new ServiceCollection().AddLogging();
         services.AddSingleton(authentication);
-        services.AddDbContext<RatelDeskIdentityDbContext>(options => options.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+        var databaseName = Guid.NewGuid().ToString();
+        services.AddDbContext<RatelDeskIdentityDbContext>(options => options.UseInMemoryDatabase(databaseName));
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();

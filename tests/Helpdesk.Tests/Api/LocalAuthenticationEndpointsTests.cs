@@ -45,6 +45,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         var applicationDatabaseName = $"local-auth-application-{Guid.NewGuid():N}";
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseSetting("Authentication:Mode", "Local");
             builder.UseSetting("Authentication:AllowInsecureLocalhost", "true");

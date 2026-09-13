@@ -220,6 +220,7 @@ public static class WorkflowOpsEndpoints
                 from service in serviceGroup.DefaultIfEmpty()
                 select new
                 {
+                    Binding = binding,
                     binding.Id,
                     binding.RequestFormId,
                     RequestFormTitle = requestForm.Title,
@@ -238,9 +239,12 @@ public static class WorkflowOpsEndpoints
                 };
 
             var totalCount = await query.CountAsync(ct);
-            var items = await query
-                .OrderByDescending(x => x.SyncState)
-                .ThenByDescending(x => x.UpdatedAtUtc)
+            var ordered = query.OrderByDescending(x => x.SyncState);
+            ordered = db.Database.IsSqlite()
+                ? ordered.ThenByDescending(x => EF.Property<long>(x.Binding, "UpdatedAtUtcSortTicks"))
+                : ordered.ThenByDescending(x => x.UpdatedAtUtc);
+            var items = await ordered
+                .ThenBy(x => x.Id)
                 .Skip(skip)
                 .Take(safePageSize)
                 .ToListAsync(ct);

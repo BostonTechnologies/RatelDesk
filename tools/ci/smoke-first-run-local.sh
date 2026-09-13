@@ -112,7 +112,7 @@ web_login_status="$(curl --silent --output /dev/null --write-out '%{http_code}' 
   --data-urlencode "password=$password" \
   "$web_base_url/local-login")"
 [[ "$web_login_status" == "302" ]]
-rg -qi '^location: /home\r?$' "$work_directory/web-login.headers"
+grep -Eiq '^location: /home[[:space:]]*$' "$work_directory/web-login.headers"
 curl --fail --silent --show-error --cookie "$web_cookie_jar" \
   "$web_base_url/api/v1/auth/me" | jq -e '.isAuthenticated == true and .isHelpdeskAdmin == true' > /dev/null
 

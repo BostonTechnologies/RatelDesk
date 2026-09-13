@@ -197,7 +197,9 @@ public static class BootstrapEndpoints
     private sealed record SetupSessionResponse(string Session, DateTimeOffset ExpiresAtUtc);
 
     private static BootstrapStatusResponse ToResponse(BootstrapDescriptor descriptor, BootstrapOptions? options = null, bool storageManaged = false) =>
-        new(descriptor.State.ToString(), descriptor.Provider, options is null ? null : new BootstrapInteractiveDefaultsResponse(
+        // This host only serves setup. The normal API reports Ready after its
+        // services have started; a committed descriptor here means it must restart.
+        new(descriptor.State == BootstrapState.Ready ? "Restarting" : descriptor.State.ToString(), descriptor.Provider, options is null ? null : new BootstrapInteractiveDefaultsResponse(
             TrimOrNull(options.Interactive.OrganizationName),
             TrimOrNull(options.Interactive.ApplicationName),
             TrimOrNull(options.Interactive.ApplicationUrl),

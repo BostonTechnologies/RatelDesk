@@ -42,6 +42,7 @@ public partial class IncidentCcRecipientsEndpointsTests : IClassFixture<WebAppli
 
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseEnvironment("Development");
 
             builder.ConfigureAppConfiguration((context, cfg) =>

@@ -1,5 +1,7 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthenticationState
+@using Helpdesk.Shared.Services
 
 @code {
     private IJSObjectReference? module;
@@ -8,7 +10,8 @@
     {
         if (!firstRender) return;
         module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/session-access.js");
-        observerId = await module.InvokeAsync<int>("start");
+        var profile = CurrentUserAccessProfile.FromClaims((await AuthenticationState.GetAuthenticationStateAsync()).User);
+        observerId = await module.InvokeAsync<int>("start", profile);
     }
     public async ValueTask DisposeAsync()
     {

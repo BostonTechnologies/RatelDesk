@@ -42,6 +42,7 @@ public sealed class BootstrapInitializationService(
         {
             return BootstrapInitializationResult.InvalidState;
         }
+        var operationId = descriptor.OperationId.Value;
 
         if (string.IsNullOrWhiteSpace(request.Email) ||
             string.IsNullOrWhiteSpace(request.DisplayName) ||
@@ -205,7 +206,7 @@ public sealed class BootstrapInitializationService(
                 {
                     Id = InstanceInitialization.SingletonId,
                     InstanceId = descriptor.InstanceId,
-                    OperationId = descriptor.OperationId.Value,
+                    OperationId = operationId,
                     SetupVersion = GetSetupVersion(),
                     TimeZoneId = request.TimeZoneId?.Trim() ?? "UTC",
                     CompletedAtUtc = completedAtUtc

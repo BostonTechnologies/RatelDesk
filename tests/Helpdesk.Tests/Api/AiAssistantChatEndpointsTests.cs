@@ -232,6 +232,7 @@ public sealed class AiAssistantChatEndpointsTests(ChatPostgresFixture database, 
         public IDomainEventPublisher Publisher { get; } = Substitute.For<IDomainEventPublisher>();
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            builder.UseIsolatedTestStorage();
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IHostedService>();
