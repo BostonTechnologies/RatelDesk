@@ -134,6 +134,8 @@
     <span class="dismiss">🗙</span>
 </div>
 
+<AuthorizeView><Authorized><SessionAccessMonitor /></Authorized></AuthorizeView>
+
 @code {
     private bool SupportsLocalAccounts =>
         string.Equals(Configuration["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)

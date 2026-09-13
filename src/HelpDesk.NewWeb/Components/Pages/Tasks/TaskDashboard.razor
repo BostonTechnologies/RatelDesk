@@ -1,5 +1,6 @@
+@using Helpdesk.Shared.Services
 @page "/tasks"
-@attribute [Authorize(Roles = "Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Request.Read,Request.Write,Request.Execute,Request.Manager,HelpdeskAdmin")]
 
 @using System.Net.Http.Json
 @using System.Security.Claims
@@ -74,11 +75,11 @@
         <MudPaper Class="pa-2 mb-2" Outlined="true">
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                 <MudText Typo="Typo.body2">@_selected.Count selected</MudText>
-                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@bulkBusy" OnClick="BulkStartAsync">Bulk Start</MudButton>
-                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" Disabled="@bulkBusy" OnClick="BulkCompleteAsync">Bulk Complete</MudButton>
-                @if (isAdmin)
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@(bulkBusy || !CanBulkOperate)" OnClick="BulkStartAsync">Bulk Start</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" Disabled="@(bulkBusy || !CanBulkOperate)" OnClick="BulkCompleteAsync">Bulk Complete</MudButton>
+                @if (profile?.HasPermission("Request.Execute") == true || isAdmin)
                 {
-                    <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" Disabled="@bulkBusy" OnClick="BulkRetryAsync">Bulk Retry</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" Disabled="@(bulkBusy || !CanBulkOperate)" OnClick="BulkRetryAsync">Bulk Retry</MudButton>
                 }
             </MudStack>
         </MudPaper>
@@ -140,15 +141,15 @@
                     }
                     @if (context.Type == RequestTaskType.Manual && context.Status == RequestTaskStatus.InProgress)
                     {
-                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="@rowActionBusy" OnClick="@(async () => await CompleteTaskAsync(context.Id))">Complete</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" Disabled="@(rowActionBusy || !CanOperate(context))" OnClick="@(async () => await CompleteTaskAsync(context.Id))">Complete</MudButton>
                     }
                     @if (context.Type == RequestTaskType.Automation && context.Status == RequestTaskStatus.InProgress)
                     {
                         <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="true">Running</MudButton>
                     }
-                    @if (context.Type == RequestTaskType.Automation && context.Status == RequestTaskStatus.Failed && isAdmin)
+                    @if (context.Type == RequestTaskType.Automation && context.Status == RequestTaskStatus.Failed && CanOperate(context))
                     {
-                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning" Disabled="@rowActionBusy" OnClick="@(async () => await RetryTaskAsync(context.Id))">Retry</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning" Disabled="@(rowActionBusy || !CanOperate(context))" OnClick="@(async () => await RetryTaskAsync(context.Id))">Retry</MudButton>
                     }
                     @if (context.Type == RequestTaskType.Automation && HasAutomationRecoveryContext(context))
                     {
@@ -166,6 +167,15 @@
 </MudPaper>
 
 @code {
+    private CurrentUserAccessProfile? profile;
+    private bool CanOperate(RequestTaskListItemDto task) => task.Type switch
+    {
+        RequestTaskType.Automation => profile?.CanExecuteRequest(task.OrganizationId) == true,
+        RequestTaskType.Manual => profile?.CanManageRequest(task.OrganizationId) == true,
+        _ => false
+    };
+    private bool CanBulkOperate => _selected.Count > 0 && _selected.All(CanOperate);
+
     [SupplyParameterFromQuery(Name = "search")]
     public string? QuerySearch { get; set; }
 
@@ -278,6 +288,7 @@
         }
 
         var user = (await AuthenticationStateTask).User;
+        profile = CurrentUserAccessProfile.FromClaims(user);
         isAdmin = user.IsInRole("HelpdeskAdmin")
             || user.Claims.Any(c =>
                 (c.Type == ClaimTypes.Role || c.Type == "roles")
@@ -411,6 +422,7 @@
 
     private async Task ExecuteBulkActionAsync(string endpoint, string successTemplate)
     {
+        if (!CanBulkOperate) return;
         bulkBusy = true;
         try
         {
@@ -453,7 +465,7 @@
 
     private bool GetStartDisabled(RequestTaskListItemDto item)
     {
-        if (rowActionBusy)
+        if (rowActionBusy || !CanOperate(item))
         {
             return true;
         }

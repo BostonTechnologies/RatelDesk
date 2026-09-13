@@ -25,6 +25,16 @@ public sealed class BootstrapInitializationService(
         FirstAdministratorRequest request,
         CancellationToken cancellationToken)
     {
+        await using var lease = await BootstrapOperationLease.AcquireAsync(options.StateDirectory, cancellationToken);
+        var current = await stateStore.LoadOrCreateAsync(cancellationToken);
+        if (current.InstanceId != descriptor.InstanceId || current.OperationId != descriptor.OperationId ||
+            current.SetupCodeHash != descriptor.SetupCodeHash ||
+            current.Provider != descriptor.Provider || current.SqlitePath != descriptor.SqlitePath ||
+            current.ProtectedPostgreSqlConnection != descriptor.ProtectedPostgreSqlConnection)
+            return BootstrapInitializationResult.InvalidState;
+        if (current.State == BootstrapState.Ready)
+            return new BootstrapInitializationResult(true, null, current);
+        descriptor = current;
         request = ApplyDeploymentManagedDefaults(request);
         if (descriptor.State is not BootstrapState.Configuring ||
             !IsSupportedConfiguredProvider(descriptor) ||
@@ -91,6 +101,40 @@ public sealed class BootstrapInitializationService(
 
         try
         {
+            if (descriptor.ProtectedKeyRingProof is not null && !BootstrapKeyRingProof.IsValid(dataProtection, descriptor))
+                return BootstrapInitializationResult.InvalidState;
+            // Check the selected target before applying migrations, including a
+            // retry after the database commit outlived its descriptor update.
+            var evidence = await BootstrapStartupService.InspectAsync(
+                descriptor.Provider!, descriptor.SqlitePath ?? string.Empty,
+                settings.GetValueOrDefault("ConnectionStrings:HelpdeskDb"), cancellationToken);
+            if (evidence.Marker is { } marker)
+            {
+                if (marker.InstanceId != descriptor.InstanceId || marker.OperationId != descriptor.OperationId)
+                    return BootstrapInitializationResult.AlreadyInitialized;
+                var reconciled = await stateStore.UpdateAsync(current => current with
+                {
+                    State = BootstrapState.Ready, CompletedAtUtc = marker.CompletedAtUtc
+                }, cancellationToken);
+                return new BootstrapInitializationResult(true, null, reconciled);
+            }
+            if (evidence.Kind is not BootstrapStartupService.TargetKind.Empty)
+                return BootstrapInitializationResult.AlreadyInitialized;
+
+            if (isPostgreSql && !evidence.HasApplicationSchema)
+            {
+                var preflight = await new PostgreSqlSetupPreflightService().CheckAsync(
+                    settings["ConnectionStrings:HelpdeskDb"], cancellationToken);
+                if (!preflight.Succeeded)
+                    return new BootstrapInitializationResult(false, preflight.Error, null);
+            }
+
+            if (descriptor.ProtectedKeyRingProof is null)
+                descriptor = await stateStore.UpdateAsync(current => current with
+                {
+                    ProtectedKeyRingProof = BootstrapKeyRingProof.Create(dataProtection, current.InstanceId)
+                }, cancellationToken);
+
             await db.Database.MigrateAsync(cancellationToken);
             await identityDb.Database.MigrateAsync(cancellationToken);
             await RoleDefinitionSeeder.EnsureBuiltInsAsync(db, cancellationToken);
@@ -133,7 +177,7 @@ public sealed class BootstrapInitializationService(
                 Email = request.Email.Trim(),
                 DisplayName = request.DisplayName.Trim(),
                 IsInstanceAdministrator = true,
-                EmailConfirmed = true
+                EmailConfirmed = false
             };
             var createUser = await userManager.CreateAsync(administrator, request.Password);
             if (!createUser.Succeeded)
@@ -141,7 +185,10 @@ public sealed class BootstrapInitializationService(
                 return BootstrapInitializationResult.PasswordRejected;
             }
 
-            var completedAtUtc = DateTimeOffset.UtcNow;
+            // PostgreSQL stores microsecond precision; use the same durable
+            // instant in the database marker and descriptor on both providers.
+            var completionTicks = DateTimeOffset.UtcNow.UtcTicks;
+            var completedAtUtc = new DateTimeOffset(completionTicks - completionTicks % 10, TimeSpan.Zero);
             try
             {
                 var organization = new Organization { Name = request.OrganizationName.Trim() };
@@ -228,10 +275,13 @@ public sealed class BootstrapInitializationService(
     {
         if (string.IsNullOrWhiteSpace(applicationUrl))
         {
-            return true;
+            return false;
         }
 
         return Uri.TryCreate(applicationUrl, UriKind.Absolute, out var applicationUri) &&
+               string.IsNullOrEmpty(applicationUri.UserInfo) &&
+               string.IsNullOrEmpty(applicationUri.Query) &&
+               string.IsNullOrEmpty(applicationUri.Fragment) &&
                (applicationUri.Scheme == Uri.UriSchemeHttps ||
                 (applicationUri.Scheme == Uri.UriSchemeHttp && applicationUri.IsLoopback));
     }

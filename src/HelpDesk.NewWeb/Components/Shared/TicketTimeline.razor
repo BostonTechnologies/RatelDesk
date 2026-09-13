@@ -37,7 +37,7 @@
             <MudButton Variant="Variant.Filled"
                        Color="Color.Primary"
                        StartIcon="@Icons.Material.Filled.AddComment"
-                       OnClick="OpenAddWorklogDialog">
+                       Disabled="@ReadOnly" OnClick="OpenAddWorklogDialog">
                 Add Note
             </MudButton>
         </div>
@@ -81,6 +81,7 @@
 </MudPaper>
 
 @code {
+    [Parameter] public bool ReadOnly { get; set; }
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private HttpClient SystemApi => HttpClientFactory.CreateClient("SystemApi");
 

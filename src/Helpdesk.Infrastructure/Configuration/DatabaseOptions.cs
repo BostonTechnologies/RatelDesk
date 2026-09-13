@@ -21,6 +21,9 @@ public sealed class DatabaseOptions
 public sealed class SqliteDatabaseOptions
 {
     public string Path { get; init; } = "/var/lib/rateldesk/data/rateldesk.db";
+
+    // The initialized runtime must never silently replace a missing database.
+    public bool CreateIfMissing { get; init; } = true;
 }
 
 public enum DatabaseProvider

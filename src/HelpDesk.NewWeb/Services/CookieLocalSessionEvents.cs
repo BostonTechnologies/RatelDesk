@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Authentication;
+using System.Security.Claims;
+using System.Text.Json;
+using Helpdesk.Shared.DTOs.Auth;
 using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace HelpDesk.NewWeb.Services;
@@ -17,33 +20,59 @@ public sealed class CookieLocalSessionEvents(
 
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {
+        var cookie = LocalSessionCookieForwarder.GetHeader(context.HttpContext, _localCookieName);
         if (context.Principal?.Identity?.IsAuthenticated != true ||
-            !context.Principal.HasClaim("auth_mode", "local") ||
-            !context.HttpContext.Request.Cookies.TryGetValue(_localCookieName, out var cookie) ||
-            string.IsNullOrWhiteSpace(cookie))
+            !context.Principal.HasClaim("auth_mode", "local") || string.IsNullOrWhiteSpace(cookie))
         {
             await RejectAsync(context);
             return;
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/me");
-        request.Headers.TryAddWithoutValidation("Cookie", $"{_localCookieName}={cookie}");
+        request.Headers.TryAddWithoutValidation("Cookie", cookie);
 
         try
         {
             using var response = await httpClientFactory.CreateClient("SystemApiNoAuth")
                 .SendAsync(request, context.HttpContext.RequestAborted);
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            if (!response.IsSuccessStatusCode)
+            {
+                context.RejectPrincipal();
+                if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                    await RejectAsync(context);
+                return;
+            }
+
+            var access = await response.Content.ReadFromJsonAsync<CurrentUserAccessDto>(context.HttpContext.RequestAborted);
+            if (access?.IsAuthenticated != true || context.Principal.Identity is not ClaimsIdentity identity)
             {
                 await RejectAsync(context);
+                return;
             }
+            WebAccessClaimsProjection.Apply(identity, access);
+
+            // The API owns renewal. Never let the Web handler overwrite its replacement
+            // with a ticket carrying stale role or security-stamp claims.
+            context.ShouldRenew = false;
+            if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
+            {
+                foreach (var renewedCookie in cookies)
+                    context.Response.Headers.Append("Set-Cookie", renewedCookie);
+            }
+        }
+        catch (JsonException exception)
+        {
+            context.RejectPrincipal();
+            logger.LogWarning(exception, "The API returned an invalid local-session projection.");
         }
         catch (HttpRequestException exception)
         {
+            context.RejectPrincipal();
             logger.LogWarning(exception, "Could not validate the local browser session because the API is unavailable.");
         }
         catch (TaskCanceledException exception) when (!context.HttpContext.RequestAborted.IsCancellationRequested)
         {
+            context.RejectPrincipal();
             logger.LogWarning(exception, "Local browser session validation timed out while calling the API.");
         }
     }

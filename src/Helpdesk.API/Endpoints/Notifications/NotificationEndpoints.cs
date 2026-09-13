@@ -1,3 +1,4 @@
+using Helpdesk.API.Endpoints.Authentication;
 using System.Security.Claims;
 using System.Text.Json;
 using Helpdesk.API.Configuration;
@@ -498,7 +499,7 @@ public static class NotificationEndpoints
         var access = await accessService.ResolveAsync(httpContext.User, ct);
         if (!access.IsHelpdeskAdmin &&
             !string.IsNullOrWhiteSpace(tenantId) &&
-            !access.AllowedOrganizationIds.Contains(tenantId))
+            !NotificationOrganizationIds(access).Contains(tenantId))
         {
             return Results.Forbid();
         }
@@ -614,10 +615,42 @@ public static class NotificationEndpoints
             return query;
         }
 
-        var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
+        var incidentScopes = access.OrganizationIdsForAny(HelpdeskPermissions.IncidentRead, HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.IncidentManager).ToArray();
+        var requestScopes = access.OrganizationIdsForAny(HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestManager).ToArray();
+        var changeScopes = access.OrganizationIdsForAny(HelpdeskPermissions.ChangeRead, HelpdeskPermissions.ChangeWrite, HelpdeskPermissions.ChangeManager).ToArray();
+        var generalScopes = incidentScopes.Intersect(requestScopes, StringComparer.OrdinalIgnoreCase)
+            .Intersect(changeScopes, StringComparer.OrdinalIgnoreCase).ToArray();
+        var incidentOwnScopes = access.OrganizationIdsFor(HelpdeskPermissions.IncidentUser).ToArray();
+        var requestOwnScopes = access.OrganizationIdsFor(HelpdeskPermissions.RequestUser).ToArray();
+        var changeOwnScopes = access.OrganizationIdsFor(HelpdeskPermissions.ChangeUser).ToArray();
+        var currentScopes = access.ScopedPermissionGrants.Count > 0
+            ? access.ScopedPermissionGrants.Select(grant => grant.OrganizationId).Distinct().ToArray()
+            : access.Permissions.Count > 0 ? access.AllowedOrganizationIds.ToArray() : [];
+        var customerId = access.CustomerId;
+        // Personal ticket notices also require current resource access: delivery does not create a permanent grant.
+        // Correlate broadcasts with their actual ticket before granting module-specific readers access.
+        // Unclassified operational notices require visibility across all ticket modules in that tenant.
         return query.Where(n =>
-            n.UserId == userId ||
-            (n.TenantId != null && allowedOrganizationIds.Contains(n.TenantId)));
+            (n.UserId == userId &&
+             (((n.Reference == null || n.Reference == "") && (n.TenantId == null || currentScopes.Contains(n.TenantId))) ||
+              db.Incidents.IgnoreQueryFilters().Any(ticket => (n.TenantId == null || ticket.OrganizationId == n.TenantId) &&
+                  (ticket.Id == n.Reference || ticket.TrackingId == n.Reference) &&
+                  (incidentScopes.Contains(ticket.OrganizationId!) || (customerId != null && ticket.CustomerId == customerId && incidentOwnScopes.Contains(ticket.OrganizationId!)))) ||
+              db.Requests.IgnoreQueryFilters().Any(ticket => (n.TenantId == null || ticket.OrganizationId == n.TenantId) &&
+                  (ticket.Id == n.Reference || ticket.TrackingId == n.Reference) &&
+                  (requestScopes.Contains(ticket.OrganizationId!) || (customerId != null && ticket.CustomerId == customerId && requestOwnScopes.Contains(ticket.OrganizationId!)))) ||
+              db.Changes.IgnoreQueryFilters().Any(ticket => (n.TenantId == null || ticket.OrganizationId == n.TenantId) &&
+                  (ticket.Id == n.Reference || ticket.TrackingId == n.Reference) &&
+                  (changeScopes.Contains(ticket.OrganizationId!) || (customerId != null && ticket.CustomerId == customerId && changeOwnScopes.Contains(ticket.OrganizationId!)))))) ||
+            (n.IsGlobal && n.UserId == null && n.TenantId != null &&
+             (generalScopes.Contains(n.TenantId) ||
+              db.Incidents.IgnoreQueryFilters().Any(ticket => ticket.OrganizationId == n.TenantId &&
+                  incidentScopes.Contains(ticket.OrganizationId!) && (ticket.Id == n.Reference || ticket.TrackingId == n.Reference)) ||
+              db.Requests.IgnoreQueryFilters().Any(ticket => ticket.OrganizationId == n.TenantId &&
+                  requestScopes.Contains(ticket.OrganizationId!) && (ticket.Id == n.Reference || ticket.TrackingId == n.Reference)) ||
+              db.Changes.IgnoreQueryFilters().Any(ticket => ticket.OrganizationId == n.TenantId &&
+                  changeScopes.Contains(ticket.OrganizationId!) && (ticket.Id == n.Reference || ticket.TrackingId == n.Reference)))));
+
     }
 
     private static IQueryable<NotificationEntity> GetScopedUnreadNotificationsQuery(
@@ -800,6 +833,7 @@ public static class NotificationEndpoints
 
     private static async Task StreamNotifications(
         HttpContext context,
+        [FromServices] HelpdeskDbContext db,
         [FromServices] INotificationEventBus eventBus,
         [FromServices] ICurrentUserAccessService accessService,
         [FromServices] ILoggerFactory loggerFactory,
@@ -818,7 +852,7 @@ public static class NotificationEndpoints
         var access = await accessService.ResolveAsync(context.User, ct);
         if (!access.IsHelpdeskAdmin &&
             !string.IsNullOrWhiteSpace(tenantId) &&
-            !access.AllowedOrganizationIds.Contains(tenantId))
+            !NotificationOrganizationIds(access).Contains(tenantId))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
@@ -852,10 +886,11 @@ public static class NotificationEndpoints
                 var completedTask = await Task.WhenAny(waitForDataTask, keepAliveTask);
 
                 access = await accessService.ResolveAsync(context.User, ct);
-                if (!CanAccessNotifications(access) ||
+                if (!await LocalSessionValidator.IsValidAsync(context, ct) ||
+                    !CanAccessNotifications(access) ||
                     (!access.IsHelpdeskAdmin &&
                      !string.IsNullOrWhiteSpace(tenantId) &&
-                     !access.AllowedOrganizationIds.Contains(tenantId)))
+                     !NotificationOrganizationIds(access).Contains(tenantId)))
                 {
                     logger.LogInformation(
                         "Notification stream authorization revoked. User={UserId} Tenant={TenantId}",
@@ -871,7 +906,8 @@ public static class NotificationEndpoints
 
                     while (reader.TryRead(out var notification))
                     {
-                        if (!MatchesStreamScope(notification, access, userId, tenantId, category))
+                        if (!MatchesStreamFilter(notification, tenantId, category) ||
+                            !await BuildScopedNotificationsQuery(db, access, userId).AnyAsync(row => row.Id == notification.Id, ct))
                             continue;
 
                         var json = JsonSerializer.Serialize(notification);
@@ -906,32 +942,24 @@ public static class NotificationEndpoints
         }
     }
 
-    private static bool MatchesStreamScope(NotificationDto notification, CurrentUserAccessProfile access, string userId, string? tenantId, string? category)
-    {
-        if (!string.IsNullOrWhiteSpace(category) &&
-            !string.Equals(notification.Category, category, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
+    private static bool MatchesStreamFilter(NotificationDto notification, string? tenantId, string? category) =>
+        (string.IsNullOrWhiteSpace(category) || string.Equals(notification.Category, category, StringComparison.OrdinalIgnoreCase)) &&
+        (string.IsNullOrWhiteSpace(tenantId) || string.Equals(notification.TenantId, tenantId, StringComparison.OrdinalIgnoreCase));
 
-        if (!string.IsNullOrWhiteSpace(tenantId) &&
-            !string.Equals(notification.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (access.IsHelpdeskAdmin)
-            return true;
-
-        if (string.Equals(notification.UserId, userId, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return !string.IsNullOrWhiteSpace(notification.TenantId) &&
-            access.AllowedOrganizationIds.Contains(notification.TenantId);
-    }
+    private static IReadOnlySet<string> NotificationOrganizationIds(CurrentUserAccessProfile access) =>
+        access.OrganizationIdsForAny(
+            HelpdeskPermissions.IncidentRead, HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.IncidentManager,
+            HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestManager,
+            HelpdeskPermissions.ChangeRead, HelpdeskPermissions.ChangeWrite, HelpdeskPermissions.ChangeManager);
 
     private static bool CanAccessNotifications(CurrentUserAccessProfile access) =>
         access.IsHelpdeskAdmin ||
+        access.HasPermission(HelpdeskPermissions.IncidentRead) ||
+        access.HasPermission(HelpdeskPermissions.RequestRead) ||
+        access.HasPermission(HelpdeskPermissions.ChangeRead) ||
+        access.HasPermission(HelpdeskPermissions.IncidentWrite) ||
+        access.HasPermission(HelpdeskPermissions.RequestWrite) ||
+        access.HasPermission(HelpdeskPermissions.ChangeWrite) ||
         access.HasPermission(HelpdeskPermissions.IncidentManager) ||
         access.HasPermission(HelpdeskPermissions.RequestManager) ||
         access.HasPermission(HelpdeskPermissions.ChangeManager);

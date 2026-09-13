@@ -67,7 +67,7 @@ public sealed class AiAssistantAiAssistantService(HelpdeskDbContext db, ITenantC
     }
     public async Task<IReadOnlyList<AiInvestigationWorklogEntryDto>> GetWorklogAsync(string ticketId, string ticketType, CancellationToken ct)
     {
-        var ticket = await TicketAsync(ticketId, ticketType, ct); return (await db.AiInvestigationWorklogEntries.Where(x => x.OrganizationId == ticket.OrganizationId && x.TicketId == ticketId && x.TicketArea == Area(ticketType)).OrderByDescending(x => x.OccurredUtc).ToListAsync(ct)).Select(ToDto).ToList();
+        var ticket = await TicketAsync(ticketId, ticketType, ct); return (await db.AiInvestigationWorklogEntries.Where(x => x.OrganizationId == ticket.OrganizationId && x.TicketId == ticketId && x.TicketArea == Area(ticketType)).OrderByUtc(db, x => x.OccurredUtc, descending: true).ToListAsync(ct)).Select(ToDto).ToList();
     }
     public async Task<bool> AppendMcpWorklogAsync(Guid invocationId, AppendAiInvestigationWorklogDto update, CancellationToken ct)
     {

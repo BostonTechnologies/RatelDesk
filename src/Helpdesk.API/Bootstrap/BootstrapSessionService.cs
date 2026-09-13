@@ -28,7 +28,8 @@ public sealed class BootstrapSessionService
 
     public bool IsValid(string? session, BootstrapDescriptor descriptor)
     {
-        if (string.IsNullOrWhiteSpace(session) ||
+        if (descriptor.State is BootstrapState.Ready or BootstrapState.RecoveryRequired ||
+            string.IsNullOrWhiteSpace(session) ||
             !_sessions.TryGetValue(session, out var setupSession))
         {
             return false;

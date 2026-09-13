@@ -79,19 +79,17 @@ public static class IncidentEndpoints
             var access = await accessService.ResolveAsync(user);
             if (!access.IsHelpdeskAdmin)
             {
-                var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                var managerOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentManager).ToArray();
-                if (managerOrganizationIds.Length > 0)
-                {
-                    query = query.Where(x => managerOrganizationIds.Contains(x.Incident.OrganizationId));
-                }
-                else
-                {
-                    query = query.Where(x =>
-                        allowedOrganizationIds.Contains(x.Incident.OrganizationId) &&
-                        !string.IsNullOrWhiteSpace(access.CustomerId) &&
-                        x.CustomerId == access.CustomerId);
-                }
+                var tenantReadOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentRead)
+                    .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentWrite))
+                    .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentManager))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var ownOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentUser).ToArray();
+                query = query.Where(x =>
+                    tenantReadOrganizationIds.Contains(x.Incident.OrganizationId) ||
+                    (ownOrganizationIds.Contains(x.Incident.OrganizationId) &&
+                     !string.IsNullOrWhiteSpace(access.CustomerId) &&
+                     x.CustomerId == access.CustomerId));
             }
 
             if (!string.IsNullOrWhiteSpace(organizationId))
@@ -292,6 +290,25 @@ public static class IncidentEndpoints
             var incident = await repo.GetAsync(id);
             if (incident == null) return Results.Problem("Incident not found", statusCode: 404);
 
+            var customer = !string.IsNullOrWhiteSpace(incident.CustomerId)
+                ? await db.Customers
+                    .AsNoTracking()
+                    .Where(x => x.Id == incident.CustomerId)
+                    .Select(x => new { x.Id, x.Name, x.Email, x.OrganizationId })
+                    .FirstOrDefaultAsync()
+                : null;
+            var organizationName = await db.Organizations
+                .AsNoTracking()
+                .Where(x => x.Id == (customer != null ? customer.OrganizationId : incident.OrganizationId))
+                .Select(x => x.Name)
+                .FirstOrDefaultAsync();
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanViewIncident(incident.OrganizationId, customer?.Id ?? incident.CustomerId, customer?.Email ?? incident.RequesterEmail))
+            {
+                return Results.Forbid();
+            }
+
             var categoryIds = await db.IncidentCategoryLinks
                 .Where(x => x.IncidentId == incident.Id)
                 .Select(x => x.TicketCategoryId)
@@ -323,25 +340,6 @@ public static class IncidentEndpoints
             var lastAiActivityAt = aiActivityDates.Count == 0
                 ? null
                 : (DateTimeOffset?)aiActivityDates.Max();
-            var customer = !string.IsNullOrWhiteSpace(incident.CustomerId)
-                ? await db.Customers
-                    .AsNoTracking()
-                    .Where(x => x.Id == incident.CustomerId)
-                    .Select(x => new { x.Id, x.Name, x.Email, x.OrganizationId })
-                    .FirstOrDefaultAsync()
-                : null;
-            var organizationName = await db.Organizations
-                .AsNoTracking()
-                .Where(x => x.Id == (customer != null ? customer.OrganizationId : incident.OrganizationId))
-                .Select(x => x.Name)
-                .FirstOrDefaultAsync();
-
-            var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanViewIncident(incident.OrganizationId, customer?.Id ?? incident.CustomerId, customer?.Email ?? incident.RequesterEmail))
-            {
-                return Results.Forbid();
-            }
-
             var incidentDto = new IncidentDto
             {
                 OrganizationId = incident.OrganizationId,
@@ -400,7 +398,7 @@ public static class IncidentEndpoints
 
             var customer = customerValidation.Customer!;
             var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanViewIncident(dto.OrganizationId, customer.Id, customer.Email))
+            if (!access.CanCreateIncident(dto.OrganizationId, customer.Id, customer.Email))
             {
                 return Results.Forbid();
             }
@@ -1065,7 +1063,7 @@ public static class IncidentEndpoints
             var idSet = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var incidents = (await repo.GetAllAsync()).Where(incident => idSet.Contains(incident.Id)).ToList();
             var access = await accessService.ResolveAsync(user, cancellationToken);
-            if (incidents.Any(incident => !access.CanManageIncident(incident.OrganizationId))) return Results.Forbid();
+            if (incidents.Any(incident => !access.CanDeleteIncident(incident.OrganizationId))) return Results.Forbid();
 
             var deleted = 0;
             var missing = 0;
@@ -1083,7 +1081,7 @@ public static class IncidentEndpoints
 
             return Results.Ok(new { deleted, missing });
         })
-        .RequireAuthorization("IncidentManager")
+        .RequireAuthorization("IncidentAccess")
         .WithName("BulkDeleteIncidents")
         .WithSummary("Bulk delete incidents")
         .WithDescription("Deletes selected incidents without notifying requesters.")
@@ -1226,7 +1224,7 @@ public static class IncidentEndpoints
             if (incident is null) return Results.Problem("Incident not found", statusCode: 404);
 
             var access = await accessService.ResolveAsync(user, cancellationToken);
-            if (!access.CanManageIncident(incident.OrganizationId)) return Results.Forbid();
+            if (!access.CanDeleteIncident(incident.OrganizationId)) return Results.Forbid();
 
             return await repo.DeleteAsync(id)
                 ? Results.NoContent()

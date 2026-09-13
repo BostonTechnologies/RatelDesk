@@ -6,7 +6,6 @@ services:
     image: ghcr.io/bostontechnologies/rateldesk-api:${RATELDESK_VERSION:-0.1.0-rc.4}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      Database__Provider: Sqlite
       Authentication__Mode: Local
       Authentication__AllowInsecureLocalhost: "true"
       DataProtection__KeyRingPath: /var/lib/rateldesk/keys

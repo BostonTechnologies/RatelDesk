@@ -431,10 +431,10 @@ public static class WorkflowOpsEndpoints
     }
 
     private static bool CanManageWorkflowOps(CurrentUserAccessProfile access) =>
-        access.IsHelpdeskAdmin || access.HasPermission(HelpdeskPermissions.RequestManager);
+        access.IsHelpdeskAdmin || access.HasPermission(HelpdeskPermissions.RequestRead) || access.HasPermission(HelpdeskPermissions.RequestWrite) || access.HasPermission(HelpdeskPermissions.RequestManager);
 
     private static IReadOnlySet<string> RequestManagerOrganizationIds(CurrentUserAccessProfile access) =>
-        access.OrganizationIdsFor(HelpdeskPermissions.RequestManager);
+        access.OrganizationIdsForAny(HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestManager);
 
     private static IQueryable<RequestTask> ApplyAllowedOrganizationFilter(
         IQueryable<RequestTask> query,

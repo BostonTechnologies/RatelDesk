@@ -130,6 +130,28 @@ public sealed class DatasetEndpointsAuthorizationTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task MixedAssignments_DoNotCombineDatasetPermissionWithOtherTenantMembership()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("Mixed");
+        var own = await harness.Client.GetAsync("/api/v1/resources/datasets?organizationId=org-alpha");
+        Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+
+        var read = await harness.Client.GetAsync("/api/v1/resources/datasets/other-custom");
+        var list = await harness.Client.GetAsync("/api/v1/resources/datasets?organizationId=org-other");
+        var delete = await harness.Client.DeleteAsync("/api/v1/resources/datasets/other-custom");
+        var create = await harness.Client.PostAsJsonAsync("/api/v1/resources/datasets", new CreateDatasetDefinitionDto
+        {
+            OrganizationId = "org-other", Name = "Denied", SourceType = DatasetSourceType.Custom
+        });
+        var credential = await harness.Client.PostAsJsonAsync("/api/v1/resources/datasets/other-custom/credentials",
+            new CreateDatasetIngestCredentialDto { Name = "Denied" });
+        var graph = await harness.Client.PutAsJsonAsync("/api/v1/resources/datasets/graph-settings",
+            new TenantGraphDatasetSettingsDto { OrganizationId = "org-other", EnableUsers = true });
+        Assert.All(new[] { read, list, delete, create, credential, graph },
+            response => Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode));
+    }
+
     private sealed class DatasetEndpointsHarness : IDisposable
     {
         private readonly WebApplication _app;
@@ -207,6 +229,15 @@ public sealed class DatasetEndpointsAuthorizationTests
                     new Claim(ClaimTypes.Role, HelpdeskPermissions.HelpdeskAdmin),
                     new Claim("roles", HelpdeskPermissions.HelpdeskAdmin)
                 ],
+                "Mixed" =>
+                [
+                    new Claim(ClaimTypes.NameIdentifier, "mixed"),
+                    new Claim("tenant_id", "org-alpha"),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.DataManagementAdmin),
+                    new Claim("allowed_organization_id", "org-other"),
+                    new Claim("scoped_permission", $"{HelpdeskPermissions.DataManagementAdmin}|org-alpha"),
+                    new Claim("scoped_permission", $"{HelpdeskPermissions.SelfServiceUser}|org-other")
+                ],
                 "SelfService" =>
                 [
                     new Claim(ClaimTypes.NameIdentifier, "self-service"),
@@ -248,6 +279,7 @@ public sealed class DatasetEndpointsAuthorizationTests
                 allowed.Add(tenantId);
             }
 
+            allowed.UnionWith(user.FindAll("allowed_organization_id").Select(claim => claim.Value));
             if (roles.Contains(AuthentikRbacGroups.ClientAdmin))
             {
                 roles.Add(HelpdeskPermissions.DataManagementAdmin);
@@ -265,7 +297,12 @@ public sealed class DatasetEndpointsAuthorizationTests
                 roles,
                 roles,
                 allowed,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+            {
+                ScopedPermissionGrants = user.FindAll("scoped_permission")
+                    .Select(claim => ScopedPermissionGrant.TryParse(claim.Value))
+                    .OfType<ScopedPermissionGrant>().ToHashSet()
+            });
         }
     }
 

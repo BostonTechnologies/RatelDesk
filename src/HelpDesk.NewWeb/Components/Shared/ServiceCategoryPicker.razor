@@ -4,7 +4,7 @@
 @inject IHttpClientFactory HttpClientFactory
 
 <MudAutocomplete T="TicketCategoryDto"
-                 Label="Add Service Category"
+                 Label="Add Service Category" Disabled="@ReadOnly"
                  SearchFunc="Search"
                  ToStringFunc="x => x?.Name"
                  ValueChanged="AddCategory"
@@ -18,7 +18,7 @@
     @foreach (var cat in SelectedCategories)
     {
         <MudChip T="TicketCategoryDto"
-                 Closeable="true"
+                 Closeable="@(!ReadOnly)"
                  Size="Size.Small"
                  Variant="Variant.Outlined"
                  OnClose="() => RemoveCategory(cat.Id)">
@@ -31,6 +31,7 @@
 </MudChipSet>
 
 @code {
+    [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public TicketCategoryType RequestedType { get; set; }
     [Parameter] public HashSet<Guid> SelectedCategoryIds { get; set; } = new();
     [Parameter] public EventCallback<HashSet<Guid>> SelectedCategoryIdsChanged { get; set; }

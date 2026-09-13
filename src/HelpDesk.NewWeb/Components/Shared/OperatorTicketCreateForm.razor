@@ -1,3 +1,6 @@
+@using Helpdesk.Shared.Services
+@using Helpdesk.Shared.Auth
+@inject AuthenticationStateProvider AccessAuthenticationState
 @using Helpdesk.Shared.DTOs.Organization
 @using Helpdesk.Shared.DTOs.User
 @using Helpdesk.Shared.DTOs.Auth
@@ -54,7 +57,7 @@
                                         }
                                     </MudSelect>
 
-                                    <CustomerRequesterPicker OrganizationId="@model.OrganizationId"
+                                    <CustomerRequesterPicker Module="@Module" OrganizationId="@model.OrganizationId"
                                                              CustomerId="@model.CustomerId"
                                                              CustomerIdChanged="OnCustomerChanged"
                                                              Organizations="organizations"
@@ -119,6 +122,9 @@
     [CascadingParameter]
     private IMudDialogInstance Dialog { get; set; } = default!;
 
+    [Parameter] public string Module { get; set; } = "incident";
+    private CurrentUserAccessProfile? profile;
+
     [Parameter]
     public string Title { get; set; } = "Create Ticket";
 
@@ -148,21 +154,15 @@
     {
         try
         {
+            profile = CurrentUserAccessProfile.FromClaims((await AccessAuthenticationState.GetAuthenticationStateAsync()).User);
             var accessTask = HelpdeskApi.GetFromJsonAsync<CurrentUserAccessDto>("api/v1/auth/me");
-            var organizationsTask = HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/ticketing/organizations");
+            var organizationsTask = HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>($"api/v1/ticketing/organizations?module={Module}");
 
             access = await accessTask;
             organizations = (await organizationsTask ?? new())
                 .Where(x => x.IsEnabled)
                 .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-
-            canAssign = access?.IsHelpdeskAdmin == true ||
-                access?.Permissions.Any(permission =>
-                    string.Equals(permission, "Incident.Manager", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(permission, "Request.Manager", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(permission, "Change.Manager", StringComparison.OrdinalIgnoreCase)) == true;
-            canCreateCustomers = access?.IsHelpdeskAdmin == true || canAssign;
 
             if (organizations.Count == 1)
             {
@@ -178,6 +178,14 @@
     private async Task OnOrganizationChanged(string? value)
     {
         model.OrganizationId = string.IsNullOrWhiteSpace(value) ? null : value;
+        canAssign = Module switch
+        {
+            "incident" => profile?.CanManageIncident(model.OrganizationId) == true,
+            "request" => profile?.CanManageRequest(model.OrganizationId) == true,
+            "change" => profile?.CanManageChange(model.OrganizationId) == true,
+            _ => false
+        };
+        canCreateCustomers = canAssign;
         if (!FilteredUsers.Any(x => x.Id == model.AssignedToId))
         {
             model.AssignedToId = null;
@@ -195,7 +203,7 @@
     {
         try
         {
-            users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>($"api/v1/ticketing/assignees?organizationId={Uri.EscapeDataString(organizationId)}") ?? new();
+            users = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>($"api/v1/ticketing/assignees?module={Module}&organizationId={Uri.EscapeDataString(organizationId)}") ?? new();
         }
         catch
         {

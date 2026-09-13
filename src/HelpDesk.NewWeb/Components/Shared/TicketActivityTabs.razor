@@ -36,7 +36,7 @@
                  BadgeColor="Color.Primary">
         @if (IsPanelActive(1))
         {
-            <TicketTimeline TicketId="@TicketId"
+            <TicketTimeline ReadOnly="@(!CanContribute)" TicketId="@TicketId"
                             TicketType="@TicketType"
                             PublicMode="@PublicMode"
                             OnWorklogAdded="OnWorklogAdded"
@@ -50,7 +50,7 @@
                  BadgeColor="Color.Info">
         @if (IsPanelActive(2))
         {
-            <TicketAttachments TicketId="@TicketId"
+            <TicketAttachments ReadOnly="@(!CanContribute)" TicketId="@TicketId"
                                OnAttachmentsLoaded="OnAttachmentsLoaded" />
         }
     </MudTabPanel>
@@ -61,12 +61,14 @@
                  BadgeColor="Color.Secondary">
         @if (IsPanelActive(3))
         {
-            <TicketListeners TicketId="@TicketId"
+            <TicketListeners ReadOnly="@(!CanManage)" TicketId="@TicketId"
                              TicketType="@TicketType"
                              OnListenersLoaded="OnListenersLoaded" />
         }
     </MudTabPanel>
 
+    @if (CanManage)
+    {
     <MudTabPanel Text="AI Assistant"
                  Icon="@Icons.Material.Filled.AutoAwesome"
                  BadgeData="@AiBadge"
@@ -77,15 +79,17 @@
         }
     </MudTabPanel>
 
+    }
+
     @if (IsIncidentType)
     {
         <MudTabPanel Text="Relations"
                      Icon="@Icons.Material.Filled.AccountTree"
                      BadgeData="@RelationsBadge"
                      BadgeColor="Color.Primary">
-            @if (IsPanelActive(5))
+            @if (IsPanelActive(CanManage ? 5 : 4))
             {
-                <TicketRelations TicketId="@TicketId"
+                <TicketRelations ReadOnly="@(!CanManage)" TicketId="@TicketId"
                                  TicketType="@TicketType"
                                  OnRelationsLoaded="OnRelationsLoaded" />
             }
@@ -99,6 +103,8 @@
     [Parameter] public string TicketType { get; set; } = "incidents";
     [Parameter] public string? OrganizationId { get; set; }
     [Parameter] public bool PublicMode { get; set; }
+    [Parameter] public bool CanContribute { get; set; }
+    [Parameter] public bool CanManage { get; set; }
     [Parameter] public EventCallback OnWorklogAdded { get; set; }
     [Parameter] public string Class { get; set; } = string.Empty;
     [Parameter] public bool ShowAiStatusSummary { get; set; } = true;

@@ -10,9 +10,18 @@ public sealed class UserAccessClaimsMiddleware(RequestDelegate next)
     {
         if (context.User.Identity?.IsAuthenticated == true && context.User.Identity is ClaimsIdentity identity)
         {
-            RemoveScopedAccessClaims(identity);
+            // Preserve verified upstream roles before replacing the role claims
+            // with the application projection. Subsequent endpoint resolution
+            // must not mistake that projection for new provider authority.
+            if (!identity.HasClaim("permission_scope_mode", "scoped"))
+            {
+                foreach (var claim in identity.Claims.Where(claim => claim.Type is ClaimTypes.Role or "roles").ToArray())
+                    AddClaim(identity, "provider_role", claim.Value);
+            }
+            RemoveScopedAccessClaims(identity, preserveSourceMarker: true);
             var access = await accessService.ResolveAsync(context.User, context.RequestAborted);
             RemoveApplicationAccessClaims(identity);
+            AddClaim(identity, "permission_scope_mode", "scoped");
             AddClaim(identity, "organization_id", access.PrimaryOrganizationId);
             AddClaim(identity, "customer_id", access.CustomerId);
             foreach (var organizationId in access.AllowedOrganizationIds)
@@ -45,14 +54,14 @@ public sealed class UserAccessClaimsMiddleware(RequestDelegate next)
         }
     }
 
-    private static void RemoveScopedAccessClaims(ClaimsIdentity identity)
+    private static void RemoveScopedAccessClaims(ClaimsIdentity identity, bool preserveSourceMarker = false)
     {
         foreach (var claim in identity.Claims.Where(claim => claim.Type is
                      "organization_id" or
                      "allowed_organization_id" or
                      "customer_id" or
                      "scoped_permission" or
-                     "provider_role").ToArray())
+                     "permission_scope_mode").Where(claim => !preserveSourceMarker || claim.Type != "permission_scope_mode").ToArray())
         {
             identity.RemoveClaim(claim);
         }
@@ -70,16 +79,6 @@ public sealed class UserAccessClaimsMiddleware(RequestDelegate next)
             HelpdeskRoleBundles.Technical or
             HelpdeskRoleBundles.DataManagementAdmin or
             HelpdeskRoleBundles.HelpdeskAdmin or
-            HelpdeskPermissions.HelpdeskAdmin or
-            HelpdeskPermissions.SelfServiceUser or
-            HelpdeskPermissions.IncidentUser or
-            HelpdeskPermissions.IncidentManager or
-            HelpdeskPermissions.RequestUser or
-            HelpdeskPermissions.RequestManager or
-            HelpdeskPermissions.ChangeUser or
-            HelpdeskPermissions.ChangeManager or
-            HelpdeskPermissions.DataManagementAdmin or
-            HelpdeskPermissions.TenantUsersManage or
-            HelpdeskPermissions.TenantRolesAssign or
-            HelpdeskPermissions.TenantSettingsManage;
+            HelpdeskPermissions.HelpdeskAdmin ||
+        HelpdeskPermissions.AssignablePermissions.Contains(value, StringComparer.OrdinalIgnoreCase);
 }

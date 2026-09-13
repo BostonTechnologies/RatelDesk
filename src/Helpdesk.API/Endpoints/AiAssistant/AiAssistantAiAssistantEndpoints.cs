@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Helpdesk.API.Endpoints.Authentication;
 using System.Text.Json;
 using Helpdesk.Application.AiAssistant;
 using Helpdesk.Infrastructure.Persistence;
@@ -55,17 +56,28 @@ public static class AiAssistantAiAssistantEndpoints
         var reader = bus.Subscribe(ticketId);
         try
         {
-            await foreach (var item in reader.ReadAllAsync(ct))
+            while (!ct.IsCancellationRequested)
             {
-                // The subscription may outlive a role, account, or tenant grant. Re-resolve
-                // the parent ticket before each delivery and end the stream after revocation.
-                if (await AuthorizeTicketManagementAsync(ticketType, ticketId, context.User, db, accessService, ct) is not null)
-                {
+                if (!await LocalSessionValidator.IsValidAsync(context, ct) ||
+                    await AuthorizeTicketManagementAsync(ticketType, ticketId, context.User, db, accessService, ct) is not null)
                     return;
-                }
 
-                await context.Response.WriteAsync($"event: ai-worklog\ndata: {JsonSerializer.Serialize(item)}\n\n", ct);
+                while (reader.TryRead(out var item))
+                {
+                    if (!await LocalSessionValidator.IsValidAsync(context, ct) ||
+                        await AuthorizeTicketManagementAsync(ticketType, ticketId, context.User, db, accessService, ct) is not null)
+                        return;
+                    await context.Response.WriteAsync($"event: ai-worklog\ndata: {JsonSerializer.Serialize(item)}\n\n", ct);
+                }
+                await context.Response.WriteAsync(": keepalive\n\n", ct);
                 await context.Response.Body.FlushAsync(ct);
+                using var wake = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                wake.CancelAfter(TimeSpan.FromSeconds(15));
+                try
+                {
+                    if (!await reader.WaitToReadAsync(wake.Token)) return;
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
             }
         }
         finally { bus.Unsubscribe(ticketId, reader); }

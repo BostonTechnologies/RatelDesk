@@ -1,5 +1,8 @@
+@using Helpdesk.Shared.Services
+@using Helpdesk.Shared.Auth
+@inject AuthenticationStateProvider AccessAuthenticationState
 @page "/requests"
-@attribute [Authorize(Roles = "Request.User,Request.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Request.User,Request.Read,Request.Write,Request.Manager,HelpdeskAdmin")]
 @using Helpdesk.Shared.DTOs
 @using Helpdesk.Shared.DTOs.Request
 @using Helpdesk.Shared.DTOs.User
@@ -23,7 +26,10 @@
                            aria-label="Show historic requests"
                            OnClick="ToggleHistoric" />
         </MudTooltip>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+        @if (CanCreate)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+        }
     </MudStack>
 
     <div class="helpdesk-list-toolbar">
@@ -46,6 +52,8 @@
     <TicketTable TTicket="RequestDto"
                  @ref="_table"
                  TicketType="requests"
+                 CanEditItem="@(item => accessProfile?.CanManageRequest(item.OrganizationId) == true)"
+                 EnableSelection="@CanWriteAny"
                  ServerData="LoadServerData"
                  SelectedItems="_selected"
                  SelectedItemsChanged="@(x => _selected = x)"
@@ -73,14 +81,17 @@
         </SubjectTemplate>
         <AssigneeTemplate Context="request">
             <TicketAssigneePicker
+                ReadOnly="@(accessProfile?.CanManageRequest(request.OrganizationId) != true)"
+                OrganizationId="@request.OrganizationId"
                 TicketId="@request.Id"
                 TicketType="requests"
                 AssignedToId="@request.AssignedToId"
                 AssignedToIdChanged="@(x => request.AssignedToId = x)"
-                TeamMembers="teamMembers" />
+                TeamMembers="@(teamMembers.Where(user => string.Equals(user.OrganizationId, request.OrganizationId, StringComparison.OrdinalIgnoreCase)).ToList())" />
         </AssigneeTemplate>
         <CustomerTemplate Context="request">
             <TicketCustomerPicker
+                ReadOnly="@(accessProfile?.CanManageRequest(request.OrganizationId) != true)"
                 TicketId="@request.Id"
                 TicketType="requests"
                 OrganizationId="@request.OrganizationId"
@@ -94,6 +105,11 @@
 </div>
 
 @code {
+    private CurrentUserAccessProfile? accessProfile;
+    private bool CanWriteAny => accessProfile?.HasPermission(HelpdeskPermissions.RequestWrite) == true || accessProfile?.HasPermission(HelpdeskPermissions.RequestManager) == true;
+    private bool CanCreate => CanWriteAny || accessProfile?.HasPermission(HelpdeskPermissions.RequestUser) == true;
+    protected override async Task OnInitializedAsync() => accessProfile = CurrentUserAccessProfile.FromClaims((await AccessAuthenticationState.GetAuthenticationStateAsync()).User);
+
     [SupplyParameterFromQuery(Name = "search")]
     public string? QuerySearch { get; set; }
 
@@ -147,11 +163,6 @@
             url += $"&q={Uri.EscapeDataString(search)}";
         }
 
-        if (teamMembers.Count == 0)
-        {
-            try { teamMembers = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users", cancellationToken) ?? new(); }
-            catch { teamMembers = new(); }
-        }
 
         var response = await HelpdeskApi.GetFromJsonAsync<PagedResponse<RequestDto>>(url, cancellationToken) ?? new();
         return new TableData<RequestDto>
@@ -216,7 +227,7 @@
 
     private async Task ApplyBulkState()
     {
-        if (_selected.Count == 0 || _table is null) return;
+        if (_selected.Count == 0 || _table is null || _selected.Any(item => accessProfile?.CanManageRequest(item.OrganizationId) != true)) return;
 
         var ids = _selected.Select(x => x.Id).ToList();
         var selectedState = _table.SelectedBulkState;
@@ -234,7 +245,7 @@
 
     private async Task ApplyBulkAssign()
     {
-        if (_selected.Count == 0 || _table is null) return;
+        if (_selected.Count == 0 || _table is null || _selected.Any(item => accessProfile?.CanManageRequest(item.OrganizationId) != true)) return;
 
         var ids = _selected.Select(x => x.Id).ToList();
         var assigneeId = _table.SelectedBulkAssigneeId;

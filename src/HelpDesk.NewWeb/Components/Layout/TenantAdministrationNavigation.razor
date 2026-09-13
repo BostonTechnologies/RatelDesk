@@ -1,30 +1,11 @@
-@inject IHttpClientFactory HttpClientFactory
-
-@if (canManageMembers)
-{
+<AuthorizeView Roles="Tenant.Roles.Assign,HelpdeskAdmin">
     <MudNavLink Href="/tenant-administration" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Groups">Tenant members</MudNavLink>
-    <AuthorizeView Roles="HelpdeskAdmin">
+    <AuthorizeView Roles="HelpdeskAdmin" Context="tenantRoleAdmin">
         <NotAuthorized>
             <MudNavLink Href="/admin/roles" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Security">Tenant roles</MudNavLink>
         </NotAuthorized>
     </AuthorizeView>
-}
-
-@code {
-    private bool canManageMembers;
-
-    protected override async Task OnInitializedAsync()
-    {
-        if (!RendererInfo.IsInteractive)
-        {
-            return;
-        }
-
-        using var response = await HttpClientFactory.CreateClient("HelpdeskApi")
-            .GetAsync("api/v1/tenant-admin/organizations");
-        canManageMembers = response.IsSuccessStatusCode &&
-            (await response.Content.ReadFromJsonAsync<List<TenantOrganization>>())?.Count > 0;
-    }
-
-    private sealed record TenantOrganization(string Id, string Name);
-}
+</AuthorizeView>
+<AuthorizeView Roles="Tenant.Settings.Manage,HelpdeskAdmin">
+    <MudNavLink Href="/tenant-settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Apartment">Tenant settings</MudNavLink>
+</AuthorizeView>

@@ -1,3 +1,4 @@
+using Helpdesk.Application.Services.Branding;
 using System.Text.RegularExpressions;
 using Helpdesk.Application.Services.EmailTemplates;
 using Helpdesk.Application.WorkLogs;
@@ -11,7 +12,8 @@ public sealed class EmailTemplateImageStorageService(
     IHostEnvironment env,
     IOptions<StorageOptions> options,
     IImageLinkSigner imageLinkSigner,
-    ILogger<EmailTemplateImageStorageService> logger) : IEmailTemplateImageStorageService
+    ILogger<EmailTemplateImageStorageService> logger,
+    IInstanceBrandingProvider? brandingProvider = null) : IEmailTemplateImageStorageService
 {
     private readonly string _storageRoot = string.IsNullOrWhiteSpace(options.Value.RootPath)
         ? Path.Combine(env.ContentRootPath, "storage")
@@ -39,9 +41,7 @@ public sealed class EmailTemplateImageStorageService(
         var relative =
             $"/api/email-templates/{Uri.EscapeDataString(safeTemplateName)}/images/{Uri.EscapeDataString(safeFilename)}?token={Uri.EscapeDataString(token)}";
 
-        return string.IsNullOrWhiteSpace(_publicApiBaseUrl)
-            ? relative
-            : $"{_publicApiBaseUrl.TrimEnd('/')}{relative}";
+        return await PublicResourceUrl.BuildAsync(relative, _publicApiBaseUrl, brandingProvider);
     }
 
     private static string SanitizePathSegment(string value)

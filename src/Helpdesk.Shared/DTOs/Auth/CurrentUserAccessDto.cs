@@ -15,5 +15,7 @@ public sealed record CurrentUserAccessDto(
     IReadOnlyList<string> AllowedOrganizationIds,
     IReadOnlyList<string> ManagedOrganizationIds)
 {
+    public bool UsesScopedPermissions { get; init; }
+
     public IReadOnlyList<ScopedPermissionGrant> ScopedPermissionGrants { get; init; } = [];
 }

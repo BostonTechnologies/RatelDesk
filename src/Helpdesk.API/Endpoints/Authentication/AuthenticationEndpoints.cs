@@ -96,6 +96,7 @@ public static class AuthenticationEndpoints
             access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray())
         {
+            UsesScopedPermissions = access.UsesScopedPermissions,
             ScopedPermissionGrants = access.ScopedPermissionGrants
                 .OrderBy(grant => grant.OrganizationId, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(grant => grant.Permission, StringComparer.OrdinalIgnoreCase)

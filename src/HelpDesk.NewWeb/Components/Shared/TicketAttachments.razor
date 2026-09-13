@@ -33,6 +33,8 @@
         <MudText Typo="Typo.body2">No attachments have been uploaded.</MudText>
     }
 
+    @if (!ReadOnly)
+    {
     <MudDivider />
 
     <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
@@ -101,9 +103,11 @@
             Upload @GetQueuedCount() item(s)
         </MudButton>
     }
+    }
 </MudStack>
 
 @code {
+    [Parameter] public bool ReadOnly { get; set; }
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
 
     [Parameter] public string TicketId { get; set; } = string.Empty;

@@ -89,7 +89,7 @@
                          Size="Size.Small"
                          Variant="Variant.Outlined"
                          Color="Color.Default"
-                         OnClose="() => RemoveCategory(category.Id)">
+                         Closeable="@(!ReadOnly)" OnClose="() => RemoveCategory(category.Id)">
                     @category.Name
                 </MudChip>
             }
@@ -100,6 +100,7 @@
 </MudPaper>
 
 @code {
+    [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public string Title { get; set; } = string.Empty;
     [Parameter] public string? TrackingId { get; set; }
     [Parameter] public TicketState Status { get; set; }

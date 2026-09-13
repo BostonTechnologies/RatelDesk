@@ -200,7 +200,7 @@ public static class TicketEndpoints
             var items = await db.TicketAiFeedback
                 .AsNoTracking()
                 .Where(x => x.TicketId == ticketId)
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => new TicketAiFeedbackDto
                 {
                     Id = x.Id,
@@ -234,7 +234,7 @@ public static class TicketEndpoints
             var items = await db.AiOperationAuditRecords
                 .AsNoTracking()
                 .Where(x => x.SubjectId == ticketId)
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => new TicketAiAuditEntryDto
                 {
                     Id = x.Id,

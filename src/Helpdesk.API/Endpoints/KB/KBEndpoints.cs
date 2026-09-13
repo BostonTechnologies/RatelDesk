@@ -145,7 +145,7 @@ public static class KBEndpoints
                     (!string.IsNullOrWhiteSpace(linkedTicketId) &&
                      x.SubjectId == linkedTicketId &&
                      x.OperationName == "kb-draft-from-ticket"))
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => new KnowledgeArticleAiAuditEntryDto
                 {
                     Id = x.Id,
@@ -320,7 +320,7 @@ public static class KBEndpoints
                 : (double)automationResolvedCount / automationFeedbackCount;
             var aiAuditCount = await db.AiOperationAuditRecords.CountAsync(token);
             var lastAiAuditAt = await db.AiOperationAuditRecords
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => (DateTimeOffset?)x.CreatedAt)
                 .FirstOrDefaultAsync(token);
             var knowledgeBuildAuditCount = await db.AiOperationAuditRecords
@@ -339,7 +339,7 @@ public static class KBEndpoints
                 .CountAsync(x => x.OperationName == "runtime-chat-failure", token);
             var lastRuntimeAuditAt = await db.AiOperationAuditRecords
                 .Where(x => x.OperationName == "runtime-chat-fallback" || x.OperationName == "runtime-chat-failure")
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => (DateTimeOffset?)x.CreatedAt)
                 .FirstOrDefaultAsync(token);
             var topRuntimeFallback = await db.AiOperationAuditRecords
@@ -358,7 +358,7 @@ public static class KBEndpoints
                 .FirstOrDefaultAsync(token);
             var recentRuntimeEvidence = await db.AiOperationAuditRecords
                 .Where(x => x.OperationName == "runtime-chat-fallback" || x.OperationName == "runtime-chat-failure")
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Take(5)
                 .Select(x => $"{x.CreatedAt.LocalDateTime:g}: {x.OperationName} - {x.ProviderName} - {x.Notes}")
                 .ToListAsync(token);

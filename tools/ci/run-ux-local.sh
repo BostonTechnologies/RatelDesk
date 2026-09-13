@@ -105,22 +105,37 @@ stop_process() {
 }
 
 run_setup_wizard_validation() {
-  ASPNETCORE_ENVIRONMENT=Development \
-  ASPNETCORE_URLS="$setup_api_url" \
-  ConnectionStrings__HelpdeskDb= \
-  Bootstrap__StateDirectory="$setup_state_dir/state" \
-  Bootstrap__DataDirectory="$setup_state_dir/data" \
-  Bootstrap__SetupCode="$setup_code" \
-  dotnet run --project src/Helpdesk.API/Helpdesk.API.csproj --configuration Release --no-build --no-launch-profile >"$setup_api_log" 2>&1 &
+  setup_web_publish="$setup_state_dir/published-web"
+  dotnet publish src/HelpDesk.NewWeb/HelpDesk.NewWeb.csproj --configuration Release --no-build --no-restore --output "$setup_web_publish"
+  # The bootstrap host exits after commit; supervise that transition just like Compose.
+  (
+    trap 'kill "$child_pid" 2>/dev/null || true; exit 0' TERM INT
+    while true; do
+      ASPNETCORE_ENVIRONMENT=Production \
+      ASPNETCORE_URLS="$setup_api_url" \
+      ConnectionStrings__HelpdeskDb= \
+      Authentication__AllowInsecureLocalhost=true \
+      DataProtection__KeyRingPath="$setup_state_dir/keys" \
+      Bootstrap__StateDirectory="$setup_state_dir/state" \
+      Bootstrap__DataDirectory="$setup_state_dir/data" \
+      Bootstrap__SetupCode="$setup_code" \
+      StorageOptions__RootPath="$setup_state_dir/storage" \
+      dotnet run --project src/Helpdesk.API/Helpdesk.API.csproj --configuration Release --no-build --no-launch-profile >>"$setup_api_log" 2>&1 &
+      child_pid=$!
+      wait "$child_pid" || exit $?
+    done
+  ) &
   setup_api_pid=$!
   wait_for_health 'Bootstrap Helpdesk API' "$setup_api_pid" "$setup_api_url" '/health/ready' "$setup_api_log"
 
-  ASPNETCORE_ENVIRONMENT=Development \
+  ASPNETCORE_ENVIRONMENT=Production \
+  ASPNETCORE_CONTENTROOT="$setup_web_publish" \
   ASPNETCORE_URLS="$setup_web_url" \
+  DataProtection__KeyRingPath="$setup_state_dir/keys" \
   ApiBaseUrl="${setup_api_url}/" \
-  Authentication__Mode=Local \
+  ReverseProxy__Clusters__apiCluster__Destinations__api1__Address="${setup_api_url}/" \
   Authentication__AllowInsecureLocalhost=true \
-  dotnet run --project src/HelpDesk.NewWeb/HelpDesk.NewWeb.csproj --configuration Release --no-build --no-launch-profile >"$setup_web_log" 2>&1 &
+  dotnet "$setup_web_publish/HelpDesk.NewWeb.dll" >"$setup_web_log" 2>&1 &
   setup_web_pid=$!
   wait_for_health 'Bootstrap Helpdesk web' "$setup_web_pid" "$setup_web_url" '/' "$setup_web_log"
 
@@ -142,7 +157,23 @@ compose_started=true
 RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" up --detach postgres
 wait_for_database
 
+RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" exec -T postgres \
+  psql -U rateldesk -d rateldesk -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+Bootstrap__StateDirectory="$setup_state_dir/e2e-state" \
+DataProtection__KeyRingPath="$setup_state_dir/e2e-keys" \
+Bootstrap__Unattended__Provider=PostgreSql \
+Bootstrap__Unattended__PostgreSqlConnectionString="Host=127.0.0.1;Port=${database_port};Database=rateldesk;Username=rateldesk;Password=rateldesk" \
+Bootstrap__Unattended__Email=fixture.admin@example.test \
+Bootstrap__Unattended__DisplayName='Fixture Administrator' \
+Bootstrap__Unattended__Password="$e2e_system_secret" \
+Bootstrap__Unattended__OrganizationName='Fixture Organization' \
+Bootstrap__Unattended__ApplicationUrl="$web_url" \
+dotnet run --project src/Helpdesk.API/Helpdesk.API.csproj --configuration Release --no-build --no-launch-profile -- --initialize-unattended
+
 ASPNETCORE_ENVIRONMENT=Development \
+Bootstrap__StateDirectory="$setup_state_dir/e2e-state" \
+DataProtection__KeyRingPath="$setup_state_dir/e2e-keys" \
+Authentication__Mode=Oidc \
 ASPNETCORE_URLS="$api_url" \
 ConnectionStrings__HelpdeskDb="Host=127.0.0.1;Port=${database_port};Database=rateldesk;Username=rateldesk;Password=rateldesk" \
 EmailIngestion__Enabled=false \
@@ -160,6 +191,7 @@ wait_for_health 'Helpdesk API' "$api_pid" "$api_url" '/health/live' "$api_log"
 ASPNETCORE_ENVIRONMENT=Development \
 ASPNETCORE_URLS="$web_url" \
 ApiBaseUrl="${api_url}/" \
+ReverseProxy__Clusters__apiCluster__Destinations__api1__Address="${api_url}/" \
 AUTHENTIK_CLIENT_SECRET="$e2e_system_secret" \
 Authentication__Authentik__Authority=https://127.0.0.1:5999/application/o/helpdesk-e2e/ \
 Authentication__Authentik__ClientId=helpdesk-e2e \

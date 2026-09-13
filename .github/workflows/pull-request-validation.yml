@@ -228,6 +228,7 @@ jobs:
       RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME: Initial Administrator
       RATELDESK_BOOTSTRAP_ADMIN_PASSWORD: ci-placeholder-long-passphrase
       RATELDESK_BOOTSTRAP_ORGANIZATION_NAME: Example Organization
+      RATELDESK_BOOTSTRAP_APPLICATION_URL: http://localhost:8111
     steps:
       - name: Check out triggering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

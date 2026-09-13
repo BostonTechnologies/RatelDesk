@@ -10,16 +10,21 @@ sent by a browser is not trusted as an authorization decision.
 | --- | --- | --- |
 | Instance Administrator | Instance | Full instance administration, including roles, tenant administration, and local accounts. It remains compatible with the `HelpdeskAdmin` role. |
 | Tenant Administrator | Each assigned tenant | Tenant user, role-assignment, and settings permissions for that tenant. It has no database, identity-provider, or instance-administrator access. |
-| Technician | Each assigned tenant | The standard staff incident, request, change, and self-service permission bundle. |
+| Technician | Each assigned tenant | Incident, request and change read/write; change approval; self-service. Deletion is a separate permission. |
+| Incident / Request / Change Reader | Each assigned tenant | Read all records of the selected module in that tenant, including staff conversation history; no mutation. |
+| Incident / Request / Change Writer | Each assigned tenant | Read, create and update that module in the tenant. Deletion and change approval remain separate. |
+| Request Executor | Each assigned tenant | Read requests and execute orchestration actions; Request Writer does not imply execution. |
+| Change Approver | Each assigned tenant | Read changes and approve a submitted change; cannot otherwise edit or implement it. |
 | Self-service User | Own resources in each assigned tenant | The self-service, incident-user, and request-user permission bundle. |
 
 Built-in roles are protected. Instance administrators can create tenant-owned
 custom roles in **Administration → Roles & Permissions**. A custom role can
-only contain the published assignable permissions, and writer permissions must
-also include their corresponding user/read permission. A tenant administrator
+only contain the published assignable permissions, and write, delete and approval permissions must
+also include the corresponding tenant-wide `.Read` permission. `.User` remains
+limited to the linked contact’s own records; it is not a tenant-wide reader. A tenant administrator
 can use **Tenant roles** to create, edit, or delete custom roles owned by an
 assigned tenant only. Its delegation ceiling is deliberately smaller: self
-service and the incident, request, and change reader/writer permissions. It
+service and the incident, request, and change read/write/delete/approval permissions. It
 cannot delegate tenant-management, data-management, or instance permissions.
 
 ## Tenant membership delegation
@@ -27,7 +32,7 @@ cannot delegate tenant-management, data-management, or instance permissions.
 The **Tenant members** navigation item appears only when the API resolves at
 least one tenant where the signed-in principal has `Tenant.Roles.Assign`. The
 page lists local accounts in those tenants, can add or remove the
-`SelfServiceUser` assignment or a safe custom role owned by that tenant, and
+operational built-in assignments or a custom role owned by that tenant, and
 can invite a new local account directly into the selected tenant. The invitation
 response contains a one-time activation token; the administrator must share it
 through an approved secure channel.
@@ -36,8 +41,9 @@ This workflow deliberately cannot alter an existing global account, reset
 credentials, enable or disable accounts, grant instance access, expose
 non-delegable role assignments, or replace memberships in another tenant. A
 new invitation always creates a non-administrator local account with only the
-self-service assignment in the selected tenant. A pre-existing technician or
-tenant-administrator assignment is preserved when delegated access changes.
+self-service assignment in the selected tenant. A pre-existing tenant-administrator assignment is preserved when delegated
+access changes. Operational Technician grants can be assigned or removed
+inside the selected tenant.
 Instance administrators use the full Team administration flow for all broader
 account actions.
 
@@ -48,7 +54,7 @@ The API remains authoritative for the page and all direct requests:
   administrator).
 - Tenant member and membership routes require the same tenant-scoped
   permission and reject users outside that tenant and instance administrators.
-- The membership route accepts `SelfServiceUser` and custom tenant roles only
+- The membership route accepts operational built-ins and custom tenant roles only
   when their owner matches the selected tenant and their permissions remain
   within the delegation ceiling; it preserves every non-delegable assignment.
 
@@ -77,3 +83,35 @@ scoped-role grant or revocation takes effect for both API operations and Web
 navigation on the next request. Local-account membership changes instead
 invalidate the account's authorization revision and security stamp, causing the
 next API request to reject the old local session.
+
+## Permission and upgrade behavior
+
+Application-managed accounts have explicit assignments. Removing the last
+assignment removes all application grants; a historical `User.Role`, linked
+contact, or previously issued role claim never recreates them. The effective
+permission projection preserves `(permission, organization)` pairs, including
+when a user is a writer in one tenant and a self-service user in another.
+
+For rc.3 OIDC compatibility, explicit upstream `*.Manager` permissions and the
+configured Technical group retain their existing capabilities, including deletion.
+They are resolved only for the verified linked organization and its configured
+support organizations. New application-managed Technician roles use the narrower
+read/write/approval bundle. A legacy external link receives its original
+self-service assignment once when provisioning links its application user;
+subsequent logins do not recreate removed assignments. Provider grants remain
+an independent source and must be removed at the provider to revoke them.
+
+A signed change-approval email link delegates a decision to its particular
+recipient and change. `Change.Approve` separately permits the authenticated
+tenant-wide approval action; neither a reader nor a writer role implies it.
+
+## Tenant display settings
+
+`Tenant.Settings.Manage` enables **Tenant settings** for the assigned
+organization. It can change the organization name and contact information.
+The endpoint deliberately exposes only these fields; identity-provider,
+external orchestration, database and support-routing configuration remain
+instance administration. Updates are recorded with actor and organization.
+
+Request-task approvals use the existing signed, designated-recipient capability.
+A Request Writer or Request Executor cannot approve on behalf of that recipient.

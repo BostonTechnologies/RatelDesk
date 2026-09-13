@@ -1,4 +1,4 @@
-﻿@implements IDisposable
+@implements IDisposable
 @inject NavigationManager NavigationManager
 
 <MudNavMenu>
@@ -11,20 +11,22 @@
         </MudNavGroup>
     </AuthorizeView>
 
-    <AuthorizeView Roles="Incident.User,Incident.Manager,Request.User,Request.Manager,Change.User,Change.Manager,DataManagement.Admin,HelpdeskAdmin">
+    <AuthorizeView Roles="Incident.User,Incident.Read,Incident.Write,Incident.Manager,Request.User,Request.Read,Request.Write,Request.Execute,Request.Manager,Change.User,Change.Read,Change.Write,Change.Manager,DataManagement.Admin,HelpdeskAdmin">
         @*
         <MudNavLink Href="/technician/dashboard" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Dashboard">Technician Dashboard</MudNavLink>
         *@
         
         <MudNavGroup Title="Workspace" Icon="@Icons.Material.Filled.Workspaces" Expanded="false">
-            <AuthorizeView Roles="Incident.User,Incident.Manager,HelpdeskAdmin" Context="incidentAuth">
+            <AuthorizeView Roles="Incident.User,Incident.Read,Incident.Write,Incident.Manager,HelpdeskAdmin" Context="incidentAuth">
                 <MudNavLink Href="incidents" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ListAlt">Incidents</MudNavLink>
             </AuthorizeView>
-            <AuthorizeView Roles="Request.User,Request.Manager,HelpdeskAdmin" Context="requestAuth">
+            <AuthorizeView Roles="Request.User,Request.Read,Request.Write,Request.Execute,Request.Manager,HelpdeskAdmin" Context="requestAuth">
                 <MudNavLink Href="requests" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.List">Requests</MudNavLink>
+            </AuthorizeView>
+            <AuthorizeView Roles="Request.Read,Request.Write,Request.Execute,Request.Manager,HelpdeskAdmin" Context="tasksAuth">
                 <MudNavLink Href="tasks" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.TaskAlt">Tasks</MudNavLink>
             </AuthorizeView>
-            <AuthorizeView Roles="Change.User,Change.Manager,HelpdeskAdmin" Context="changeAuth">
+            <AuthorizeView Roles="Change.User,Change.Read,Change.Write,Change.Manager,HelpdeskAdmin" Context="changeAuth">
                 <MudNavLink Href="changes" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ChangeCircle">Changes</MudNavLink>
             </AuthorizeView>
         </MudNavGroup>

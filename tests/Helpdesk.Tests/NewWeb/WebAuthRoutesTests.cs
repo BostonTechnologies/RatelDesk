@@ -26,6 +26,63 @@ namespace Helpdesk.Tests.NewWeb;
 public class WebAuthRoutesTests
 {
     [Fact]
+    public async Task Anonymous_session_poll_returns_unauthorized_without_an_oidc_redirect()
+    {
+        using var factory = CreateFactory(authenticationMode: "Oidc");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var response = await client.GetAsync("/session/access");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+        Assert.True(response.Headers.CacheControl?.NoStore);
+    }
+
+    [Fact]
+    public async Task Omitted_mode_and_oidc_credentials_default_to_a_working_local_login_form()
+    {
+        using var factory = CreateFactory(omitAuthenticationMode: true);
+        using var client = factory.CreateClient();
+        var response = await client.GetAsync("/login");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var html = await response.Content.ReadAsStringAsync();
+        Assert.Contains("action=\"/local-login\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("href=\"/login-authentik\"", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Oidc_only_logout_does_not_require_a_local_cookie_handler()
+    {
+        using var factory = CreateFactory(authenticationMode: "Oidc");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var response = await client.GetAsync("/logout");
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.StartsWith("https://id.example.com/application/o/rateldesk/end-session", response.Headers.Location!.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("HelpdeskApi")]
+    [InlineData("HelpdeskApiStreaming")]
+    [InlineData("SystemApi")]
+    [InlineData("SystemApiNoAuth")]
+    public void Shared_api_handlers_never_store_browser_cookies(string name)
+    {
+        using var factory = CreateFactory(localAuthentication: true, stubApi: false);
+        var handler = factory.Services.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(name);
+        while (handler is DelegatingHandler wrapper)
+            handler = wrapper.InnerHandler!;
+        Assert.False(Assert.IsType<HttpClientHandler>(handler).UseCookies);
+    }
+
+    [Fact]
+    public async Task Local_login_rejects_a_form_without_an_antiforgery_token()
+    {
+        using var factory = CreateFactory(localAuthentication: true);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string> { ["email"] = "user@example.test", ["password"] = "password" });
+        var response = await client.PostAsync("/local-login", form);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Login_Page_Shows_Provider_Neutral_Authentik_Branding()
     {
         using var factory = CreateFactory();
@@ -293,14 +350,16 @@ public class WebAuthRoutesTests
         bool enableTestAuth = false,
         bool useAzureFallback = false,
         bool localAuthentication = false,
-        string? authenticationMode = null)
+        string? authenticationMode = null,
+        bool omitAuthenticationMode = false,
+        bool stubApi = true)
     {
         return new WebApplicationFactory<TokenService>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Production");
             builder.UseEnvironment("Production");
             var selectedAuthenticationMode = authenticationMode ?? (localAuthentication ? "Local" : null);
-            builder.UseSetting("Authentication:Mode", selectedAuthenticationMode ?? "Oidc");
+            builder.UseSetting("Authentication:Mode", omitAuthenticationMode ? "" : selectedAuthenticationMode ?? "Oidc");
             if (selectedAuthenticationMode is not null)
                 builder.UseSetting("Authentication:AllowInsecureLocalhost", "true");
 
@@ -316,7 +375,7 @@ public class WebAuthRoutesTests
                         ["Authentication:Azure:ApiScope"] = "api://helpdesk/access_as_user",
                         ["Authentication:Azure:CallbackPath"] = "/signin-azure",
                         ["Authentication:Azure:SignedOutCallbackPath"] = "/signout-azure",
-                        ["ApiBaseUrl"] = "https://helpdesk-api.test/"
+                        ["ApiBaseUrl"] = "http://127.0.0.1:9/"
                     }
                     : new Dictionary<string, string?>
                     {
@@ -326,7 +385,7 @@ public class WebAuthRoutesTests
                         ["Authentication:Authentik:ApiScope"] = "helpdesk-api",
                         ["Authentication:Authentik:CallbackPath"] = "/signin-authentik",
                         ["Authentication:Authentik:SignedOutCallbackPath"] = "/signout-authentik",
-                        ["ApiBaseUrl"] = "https://helpdesk-api.test/"
+                        ["ApiBaseUrl"] = "http://127.0.0.1:9/"
                     };
 
                 if (selectedAuthenticationMode is not null)
@@ -335,11 +394,23 @@ public class WebAuthRoutesTests
                     settings["Authentication:AllowInsecureLocalhost"] = "true";
                 }
 
+                if (omitAuthenticationMode)
+                {
+                    settings["Authentication:Mode"] = "";
+                    settings["Authentication:Authentik:ClientId"] = "";
+                    settings["AUTHENTIK_CLIENT_SECRET"] = "";
+                }
                 cfg.AddInMemoryCollection(settings);
             });
 
             builder.ConfigureServices(services =>
             {
+                if (stubApi)
+                {
+                    foreach (var clientName in new[] { "HelpdeskApi", "HelpdeskApiStreaming", "SystemApi", "SystemApiNoAuth" })
+                        services.AddHttpClient(clientName).ConfigurePrimaryHttpMessageHandler(() => new BrandingApiHandler());
+                }
+
                 services.PostConfigure<OpenIdConnectOptions>("Authentik", options =>
                 {
                     var configuration = new OpenIdConnectConfiguration
@@ -364,6 +435,16 @@ public class WebAuthRoutesTests
                 }).AddScheme<AuthenticationSchemeOptions, NewWebTestAuthHandler>("Test", _ => { });
             });
         });
+    }
+
+    private sealed class BrandingApiHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"applicationName\":\"RatelDesk\",\"compactLogoUrl\":\"/branding/rateldesk-mark.webp\",\"faviconUrl\":\"/favicon.ico\"}",
+                    System.Text.Encoding.UTF8, "application/json")
+            });
     }
 
     private sealed class StubTokenService : ITokenService

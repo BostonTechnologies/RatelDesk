@@ -56,7 +56,7 @@ public sealed class UserAccessClaimsMiddlewareTests
             claim.Value == $"{HelpdeskPermissions.IncidentManager}|server-org");
         Assert.DoesNotContain(context.User.Claims, claim => claim.Value.StartsWith("attacker-", StringComparison.Ordinal));
         Assert.DoesNotContain(context.User.Claims, claim =>
-            claim.Value == HelpdeskPermissions.ChangeManager);
+            claim.Type is ClaimTypes.Role or "roles" && claim.Value == HelpdeskPermissions.ChangeManager);
     }
 
     private sealed class RecordingAccessService(CurrentUserAccessProfile profile) : ICurrentUserAccessService

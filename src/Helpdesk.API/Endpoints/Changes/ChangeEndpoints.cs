@@ -44,9 +44,6 @@ public static class ChangeEndpoints
         var group = app.MapGroup("/api/v1/changes")
             .WithTags("Changes")
             .RequireAuthorization("ChangeAccess");
-        var staffGroup = app.MapGroup("/api/v1/changes")
-            .WithTags("Changes")
-            .RequireAuthorization("ChangeManager");
 
         group.MapGet("/", GetChanges);
 
@@ -67,7 +64,7 @@ public static class ChangeEndpoints
             var timelineEvents = await db.TicketTimelineEvents
                 .AsNoTracking()
                 .Where(evt => evt.TicketId == id)
-                .Where(evt => authorization.Access!.CanManageChange(authorization.OrganizationId) || evt.EventType != TimelineEventType.InternalNote)
+                .Where(evt => CanReadInternalChange(authorization.Access!, authorization.OrganizationId) || evt.EventType != TimelineEventType.InternalNote)
                 .ToListAsync(ct);
 
             var ordered = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
@@ -259,7 +256,7 @@ public static class ChangeEndpoints
             }
 
             var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanManageChange(organization.Id))
+            if (!access.CanCreateChange(organization.Id, null, null))
             {
                 return Results.Forbid();
             }
@@ -278,7 +275,7 @@ public static class ChangeEndpoints
             }
 
             var templateValidation = changeReviewService.ValidateTemplate(normalizedChangeType, dto.ChangeTemplate);
-            var lifecycleState = ResolveInitialLifecycleState(templateValidation.IsComplete, dto.ApproverUserIds);
+            var lifecycleState = ResolveInitialLifecycleState(templateValidation.IsComplete, dto.ApproverUserIds, access.CanApproveChange(organization.Id));
 
             var categoryIds = NormalizeCategoryIds(dto.CategoryIds);
             var validation = await ValidateCategorySelectionAsync(
@@ -448,6 +445,19 @@ public static class ChangeEndpoints
             var previousTemplateJson = existing.ChangeTemplateJson;
             var previousChangeType = existing.ChangeType;
             var previousLifecycleState = EffectiveLifecycleState(existing);
+            if (dto.LifecycleState == ChangeLifecycleState.ApprovedForImplementation &&
+                previousLifecycleState != ChangeLifecycleState.ApprovedForImplementation &&
+                !access.CanApproveChange(existing.OrganizationId))
+            {
+                return Results.Forbid();
+            }
+            if ((dto.LifecycleState is ChangeLifecycleState.ImplementationInProgress
+                    or ChangeLifecycleState.ImplementedSuccess or ChangeLifecycleState.ImplementedBackedOut) &&
+                dto.LifecycleState != previousLifecycleState &&
+                previousLifecycleState is not (ChangeLifecycleState.ApprovedForImplementation or ChangeLifecycleState.ImplementationInProgress))
+            {
+                return Results.BadRequest("Change must be approved before implementation.");
+            }
 
             if (previousLifecycleState != ChangeLifecycleState.Draft &&
                 await HasLockedChangeFieldUpdatesAsync(db, existing, dto, changeReviewService, token))
@@ -603,7 +613,8 @@ public static class ChangeEndpoints
             {
                 existing.LifecycleState = ResolveInitialLifecycleState(
                     currentTemplateValidation.IsComplete,
-                    existing.ApproverUserIds);
+                    existing.ApproverUserIds,
+                    access.CanApproveChange(existing.OrganizationId));
                 var updateParticipantLookup = await BuildParticipantLookupAsync(db, [existing], token);
                 AddChangeListeners(existing, updateParticipantLookup);
                 await ReconcileApprovalRecordsAsync(db, existing, updateParticipantLookup, token);
@@ -1101,7 +1112,7 @@ public static class ChangeEndpoints
         .WithDescription("Assigns the selected changes to the specified team member.")
         .WithTags("Changes");
 
-        staffGroup.MapPost("/{id}/lifecycle", async (
+        group.MapPost("/{id}/lifecycle", async (
             [FromRoute] string id,
             [FromBody] QuickChangeLifecycleRequest req,
             ClaimsPrincipal user,
@@ -1123,7 +1134,10 @@ public static class ChangeEndpoints
             }
 
             var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanManageChange(change.OrganizationId))
+            var isApproval = req.LifecycleState == ChangeLifecycleState.ApprovedForImplementation;
+            if (isApproval
+                ? !access.CanApproveChange(change.OrganizationId)
+                : !access.CanManageChange(change.OrganizationId))
             {
                 return Results.Forbid();
             }
@@ -1150,7 +1164,8 @@ public static class ChangeEndpoints
             {
                 nextLifecycleState = ResolveInitialLifecycleState(
                     currentTemplateValidation.IsComplete,
-                    change.ApproverUserIds);
+                    change.ApproverUserIds,
+                    access.CanApproveChange(change.OrganizationId));
             }
 
             if (nextLifecycleState == ChangeLifecycleState.ApprovedForImplementation &&
@@ -1306,7 +1321,7 @@ public static class ChangeEndpoints
             var allLogs = await repo.GetAllAsync();
             var logs = allLogs
                 .Where(log => log.TicketId == id)
-                .Where(log => authorization.Access!.CanManageChange(authorization.OrganizationId) || !log.IsInternalNote)
+                .Where(log => CanReadInternalChange(authorization.Access!, authorization.OrganizationId) || !log.IsInternalNote)
                 .Select(l => new WorkLogDto
             {
                 Id = l.Id,
@@ -1331,10 +1346,15 @@ public static class ChangeEndpoints
             [FromServices] IRequestSender sender,
             CancellationToken ct) =>
         {
-            var authorization = await AuthorizeChangeAsync(id, context.User, accessService, db, requireManager: true, ct);
+            var authorization = await AuthorizeChangeAsync(id, context.User, accessService, db, requireManager: false, ct, requireContributor: true);
             if (authorization.Failure is not null)
             {
                 return authorization.Failure;
+            }
+
+            if ((dto.IsInternalNote || dto.Hours != 0) && !authorization.Access!.CanManageChange(authorization.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             if (string.IsNullOrWhiteSpace(dto.Notes))
@@ -1379,12 +1399,16 @@ public static class ChangeEndpoints
             if (change is null) return Results.Problem("Change not found", statusCode: 404);
 
             var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanManageChange(change.OrganizationId)) return Results.Forbid();
+            if (!access.CanDeleteChange(change.OrganizationId)) return Results.Forbid();
 
             return await repo.DeleteAsync(id) ? Results.NoContent() : Results.Problem("Change not found", statusCode: 404);
         })
-        .RequireAuthorization("ChangeManager");
+        .RequireAuthorization("ChangeAccess");
     }
+
+    private static bool CanReadInternalChange(CurrentUserAccessProfile access, string? organizationId) =>
+        access.CanManageChange(organizationId) ||
+        access.HasPermission(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeRead, organizationId);
 
     private static async Task<IResult> GetPublicChangeApproval(
         [FromQuery] string trackingId,
@@ -1564,7 +1588,7 @@ public static class ChangeEndpoints
 
         var logger = loggerFactory.CreateLogger("ChangeEndpoints");
         var reader = eventBus.Subscribe(id);
-        var canManageChange = authorization.Access!.CanManageChange(authorization.OrganizationId);
+        var canReadInternalChange = CanReadInternalChange(authorization.Access!, authorization.OrganizationId);
 
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Append("Connection", "keep-alive");
@@ -1586,6 +1610,12 @@ public static class ChangeEndpoints
                 var keepAliveTask = Task.Delay(keepAliveInterval, ct);
                 var completedTask = await Task.WhenAny(waitForDataTask, keepAliveTask);
 
+                if (!await Helpdesk.API.Endpoints.Authentication.LocalSessionValidator.IsValidAsync(context, ct))
+                {
+                    logger.LogInformation("Timeline stream session revoked {TicketId}", id);
+                    break;
+                }
+
                 var currentAuthorization = await AuthorizeChangeAsync(
                     id,
                     context.User,
@@ -1599,7 +1629,7 @@ public static class ChangeEndpoints
                     break;
                 }
 
-                canManageChange = currentAuthorization.Access!.CanManageChange(currentAuthorization.OrganizationId);
+                canReadInternalChange = CanReadInternalChange(currentAuthorization.Access!, currentAuthorization.OrganizationId);
 
                 if (completedTask == waitForDataTask)
                 {
@@ -1610,7 +1640,7 @@ public static class ChangeEndpoints
 
                     while (reader.TryRead(out var evt))
                     {
-                        if (!canManageChange && evt.EventType == TimelineEventType.InternalNote)
+                        if (!canReadInternalChange && evt.EventType == TimelineEventType.InternalNote)
                         {
                             continue;
                         }
@@ -1666,7 +1696,8 @@ public static class ChangeEndpoints
         ICurrentUserAccessService accessService,
         HelpdeskDbContext db,
         bool requireManager,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireContributor = false)
     {
         var change = await db.Changes.AsNoTracking()
             .Where(candidate => candidate.Id == changeId)
@@ -1686,7 +1717,9 @@ public static class ChangeEndpoints
         var access = await accessService.ResolveAsync(user, cancellationToken);
         var allowed = requireManager
             ? access.CanManageChange(change.OrganizationId)
-            : access.CanViewChange(
+            : requireContributor
+                ? access.CanContributeChange(change.OrganizationId, customer?.Id ?? change.CustomerId, customer?.Email ?? change.RequesterEmail)
+                : access.CanViewChange(
                 change.OrganizationId,
                 customer?.Id ?? change.CustomerId,
                 customer?.Email ?? change.RequesterEmail);
@@ -1741,19 +1774,17 @@ public static class ChangeEndpoints
         var access = await accessService.ResolveAsync(user);
         if (!access.IsHelpdeskAdmin)
         {
-            var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-            var managerOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeManager).ToArray();
-            if (managerOrganizationIds.Length > 0)
-            {
-                query = query.Where(x => managerOrganizationIds.Contains(x.Change.OrganizationId));
-            }
-            else
-            {
-                query = query.Where(x =>
-                    allowedOrganizationIds.Contains(x.Change.OrganizationId) &&
-                    !string.IsNullOrWhiteSpace(access.CustomerId) &&
-                    x.Change.CustomerId == access.CustomerId);
-            }
+            var tenantReadOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeRead)
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeWrite))
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeManager))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var ownOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeUser).ToArray();
+            query = query.Where(x =>
+                tenantReadOrganizationIds.Contains(x.Change.OrganizationId) ||
+                (ownOrganizationIds.Contains(x.Change.OrganizationId) &&
+                 !string.IsNullOrWhiteSpace(access.CustomerId) &&
+                 x.Change.CustomerId == access.CustomerId));
         }
 
         if (state is not null)
@@ -1993,14 +2024,14 @@ public static class ChangeEndpoints
         return Results.Ok(response);
     }
 
-    private static ChangeLifecycleState ResolveInitialLifecycleState(bool isTemplateComplete, IEnumerable<string>? approverUserIds)
+    private static ChangeLifecycleState ResolveInitialLifecycleState(bool isTemplateComplete, IEnumerable<string>? approverUserIds, bool canApprove)
     {
         if (!isTemplateComplete)
         {
             return ChangeLifecycleState.Draft;
         }
 
-        return NormalizeUserIds(approverUserIds).Count > 0
+        return !canApprove || NormalizeUserIds(approverUserIds).Count > 0
             ? ChangeLifecycleState.PendingApproval
             : ChangeLifecycleState.ApprovedForImplementation;
     }
@@ -2023,7 +2054,8 @@ public static class ChangeEndpoints
         return currentState switch
         {
             ChangeLifecycleState.Draft when requestedState == ChangeLifecycleState.Submitted => null,
-            ChangeLifecycleState.PendingApproval when requestedState == ChangeLifecycleState.Draft => null,
+            ChangeLifecycleState.PendingApproval when requestedState is ChangeLifecycleState.Draft
+                or ChangeLifecycleState.ApprovedForImplementation => null,
             ChangeLifecycleState.ApprovedForImplementation
                 when requestedState is ChangeLifecycleState.ImplementationInProgress
                     or ChangeLifecycleState.ImplementedSuccess
@@ -2033,7 +2065,7 @@ public static class ChangeEndpoints
                     or ChangeLifecycleState.ImplementedBackedOut => null,
             ChangeLifecycleState.ImplementedSuccess => "Implemented changes are terminal from the table state picker.",
             ChangeLifecycleState.ImplementedBackedOut => "Implemented changes are terminal from the table state picker.",
-            ChangeLifecycleState.PendingApproval => "Pending approval changes can only be moved back to Draft from the table.",
+            ChangeLifecycleState.PendingApproval => "Pending approval changes can only be approved or moved back to Draft.",
             ChangeLifecycleState.ApprovedForImplementation => "Approved changes can only move forward from the table.",
             ChangeLifecycleState.ImplementationInProgress => "Changes in progress can only be completed from the table.",
             _ => "That lifecycle transition is not allowed from the table."

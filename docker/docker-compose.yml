@@ -8,7 +8,6 @@ services:
       dockerfile: docker/api/Dockerfile
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      Database__Provider: Sqlite
       Authentication__Mode: Local
       Authentication__AllowInsecureLocalhost: "true"
       DataProtection__KeyRingPath: /var/lib/rateldesk/keys

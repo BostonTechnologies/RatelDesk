@@ -69,6 +69,10 @@ public static class LocalAuthenticationEndpoints
                     identity.AddClaim(new Claim("roles", role));
                 }
             }
+            if (access.UsesScopedPermissions)
+                identity.AddClaim(new Claim("permission_scope_mode", "scoped"));
+            foreach (var grant in access.ScopedPermissionGrants)
+                identity.AddClaim(new Claim("scoped_permission", grant.ToString()));
             await context.SignInAsync(LocalAuthenticationOptions.Scheme, principal, new AuthenticationProperties
             {
                 IsPersistent = request.RememberMe,
@@ -88,14 +92,21 @@ public static class LocalAuthenticationEndpoints
         .RequireAuthorization();
 
         group.MapPost("/two-factor/setup", async (
+            [FromBody] StartAuthenticatorSetupRequest request,
             [FromServices] UserManager<ApplicationUser> users,
             HttpContext context) =>
         {
-            var user = await users.GetUserAsync(context.User);
+            var user = await GetLocalUserAsync(users, context.User);
             if (user is null || !user.IsEnabled)
             {
                 return Results.Unauthorized();
             }
+
+            if (await users.GetTwoFactorEnabledAsync(user))
+                return Results.Conflict(new { error = "authenticator_already_enabled" });
+
+            if (!await users.CheckPasswordAsync(user, request.CurrentPassword))
+                return Results.BadRequest(new { error = "authenticator_setup_failed" });
 
             var reset = await users.ResetAuthenticatorKeyAsync(user);
             if (!reset.Succeeded)
@@ -105,6 +116,7 @@ public static class LocalAuthenticationEndpoints
 
             user.AuthorizationRevision++;
             await users.UpdateAsync(user);
+            await RenewCurrentSessionAsync(context, user);
             var sharedKey = await users.GetAuthenticatorKeyAsync(user);
             var accountName = user.Email ?? user.UserName ?? user.Id;
             var issuer = "RatelDesk";
@@ -118,7 +130,7 @@ public static class LocalAuthenticationEndpoints
             [FromServices] UserManager<ApplicationUser> users,
             HttpContext context) =>
         {
-            var user = await users.GetUserAsync(context.User);
+            var user = await GetLocalUserAsync(users, context.User);
             if (user is null || !user.IsEnabled ||
                 !await users.VerifyTwoFactorTokenAsync(user, TokenOptions.DefaultAuthenticatorProvider, NormalizeAuthenticatorCode(request.Code)))
             {
@@ -134,6 +146,7 @@ public static class LocalAuthenticationEndpoints
             var recoveryCodes = await users.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
             user.AuthorizationRevision++;
             await users.UpdateAsync(user);
+            await RenewCurrentSessionAsync(context, user);
             return Results.Ok(new TwoFactorRecoveryCodesResponse(recoveryCodes?.ToArray() ?? []));
         })
         .RequireAuthorization();
@@ -143,7 +156,7 @@ public static class LocalAuthenticationEndpoints
             [FromServices] UserManager<ApplicationUser> users,
             HttpContext context) =>
         {
-            var user = await users.GetUserAsync(context.User);
+            var user = await GetLocalUserAsync(users, context.User);
             if (user is null || !user.IsEnabled ||
                 !await users.CheckPasswordAsync(user, request.CurrentPassword) ||
                 !await users.VerifyTwoFactorTokenAsync(user, TokenOptions.DefaultAuthenticatorProvider, NormalizeAuthenticatorCode(request.Code)))
@@ -169,7 +182,7 @@ public static class LocalAuthenticationEndpoints
             [FromServices] UserManager<ApplicationUser> users,
             HttpContext context) =>
         {
-            var user = await users.GetUserAsync(context.User);
+            var user = await GetLocalUserAsync(users, context.User);
             if (user is null || !user.IsEnabled)
             {
                 return Results.Unauthorized();
@@ -318,12 +331,11 @@ public static class LocalAuthenticationEndpoints
                     assignment.RoleKey?.Trim() ?? string.Empty,
                     assignment.OrganizationId?.Trim() ?? string.Empty))
                 .ToArray();
-            if (requestedAssignments.Length == 0 ||
-                requestedAssignments.Any(assignment => string.IsNullOrWhiteSpace(assignment.OrganizationId)))
+            if (requestedAssignments.Any(assignment => string.IsNullOrWhiteSpace(assignment.OrganizationId) || string.IsNullOrWhiteSpace(assignment.RoleKey)))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["assignments"] = ["Assign at least one local role to an enabled organization."]
+                    ["assignments"] = ["Each role assignment must name a role and an enabled organization."]
                 });
             }
 
@@ -418,7 +430,7 @@ public static class LocalAuthenticationEndpoints
             var role = request.IsInstanceAdministrator
                 ? "HelpdeskAdmin"
                 : request.Role?.Trim() ?? string.Empty;
-            if (role is not ("User" or "Technician"))
+            if (!request.IsInstanceAdministrator && role is not ("User" or "Technician"))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
@@ -602,6 +614,8 @@ public static class LocalAuthenticationEndpoints
 
     public sealed record ReplaceLocalScopedRoleAssignmentsRequest(IReadOnlyList<LocalScopedRoleAssignment> Assignments);
 
+    public sealed record StartAuthenticatorSetupRequest(string CurrentPassword);
+
     public sealed record EnableTwoFactorRequest(string Code);
 
     public sealed record DisableTwoFactorRequest(string CurrentPassword, string Code);
@@ -609,6 +623,22 @@ public static class LocalAuthenticationEndpoints
     public sealed record AuthenticatorSetupResponse(string SharedKey, string AuthenticatorUri);
 
     public sealed record TwoFactorRecoveryCodesResponse(IReadOnlyList<string> RecoveryCodes);
+
+    private static Task<ApplicationUser?> GetLocalUserAsync(UserManager<ApplicationUser> users, ClaimsPrincipal principal) =>
+        principal.HasClaim("auth_mode", "local") ? users.GetUserAsync(principal) : Task.FromResult<ApplicationUser?>(null);
+
+    private static async Task RenewCurrentSessionAsync(HttpContext context, ApplicationUser user)
+    {
+        var authentication = await context.AuthenticateAsync(LocalAuthenticationOptions.Scheme);
+        var identity = new ClaimsIdentity(context.User.Identity as ClaimsIdentity
+            ?? throw new InvalidOperationException("A local session is required."));
+        foreach (var claim in identity.FindAll("security_stamp").Concat(identity.FindAll("authorization_revision")).ToArray())
+            identity.RemoveClaim(claim);
+        identity.AddClaim(new Claim("security_stamp", user.SecurityStamp ?? string.Empty));
+        identity.AddClaim(new Claim("authorization_revision", user.AuthorizationRevision.ToString(global::System.Globalization.CultureInfo.InvariantCulture)));
+        await context.SignInAsync(LocalAuthenticationOptions.Scheme, new ClaimsPrincipal(identity),
+            authentication.Properties ?? new AuthenticationProperties());
+    }
 
     private static async Task<bool> IsSecondFactorValidAsync(UserManager<ApplicationUser> users, ApplicationUser user, string? code)
     {

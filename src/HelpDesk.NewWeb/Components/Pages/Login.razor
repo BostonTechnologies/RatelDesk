@@ -1,3 +1,4 @@
+@inject HelpDesk.NewWeb.Models.WebAuthenticationMode AuthenticationMode
 @page "/login"
 @attribute [AllowAnonymous]
 
@@ -28,6 +29,7 @@
             @if (SupportsLocalAccounts)
             {
                 <form method="post" action="/local-login" class="helpdesk-login-local-form">
+                    <AntiforgeryToken />
                     <MudTextField T="string" Name="email" Label="Email" InputType="InputType.Email" Required="true" Variant="Variant.Outlined" FullWidth="true" />
                     <MudTextField T="string" Name="password" Label="Password" InputType="InputType.Password" Required="true" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" />
                     <MudTextField T="string" Name="twoFactorCode" Label="Authenticator or recovery code" InputType="InputType.Password" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" HelperText="Required only if two-factor authentication is enabled." />
@@ -101,11 +103,8 @@
             ? label
             : "Production system";
 
-    private bool SupportsLocalAccounts =>
-        string.Equals(Config["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(Config["Authentication:Mode"], "Hybrid", StringComparison.OrdinalIgnoreCase);
-
-    private bool SupportsOidc => !string.Equals(Config["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase);
+    private bool SupportsLocalAccounts => AuthenticationMode.SupportsLocalAccounts;
+    private bool SupportsOidc => AuthenticationMode.UsesOidc;
 
     private sealed class BrandingSnapshot
     {

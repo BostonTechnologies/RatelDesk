@@ -1,8 +1,9 @@
 
 @inject IHttpClientFactory HttpClientFactory
-@inject IConfiguration Configuration
+@inject HelpDesk.NewWeb.Models.WebAuthenticationMode AuthenticationMode
 <MudDialog>
     <DialogContent>
+        @if (error is not null) { <MudAlert Severity="Severity.Error">@error</MudAlert> }
         <MudText Typo="Typo.body1">Are you sure you want to @ActionName @User.Name?</MudText>
     </DialogContent>
     <DialogActions>
@@ -13,9 +14,8 @@
 
 @code {
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
-    private bool SupportsLocalAccounts =>
-        string.Equals(Configuration["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(Configuration["Authentication:Mode"], "Hybrid", StringComparison.OrdinalIgnoreCase);
+    private bool SupportsLocalAccounts => AuthenticationMode.SupportsLocalAccounts;
+    private string? error;
     private bool? isLocalAccountEnabled;
     private string ActionName => isLocalAccountEnabled switch
     {
@@ -46,15 +46,11 @@
             ? await HelpdeskApi.PostAsync($"api/v1/local-auth/users/{User.Id}/{(enabled ? "disable" : "enable")}", content: null)
             : await HelpdeskApi.DeleteAsync($"api/v1/users/{User.Id}");
 
-        if (isLocalAccountEnabled is not null && response.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            response = await HelpdeskApi.DeleteAsync($"api/v1/users/{User.Id}");
-        }
-
         if (response.IsSuccessStatusCode)
         {
             Dialog.Close(DialogResult.Ok(true));
         }
+        else error = "The account could not be changed. The last enabled administrator must remain active. Use Manage local account for local credentials.";
     }
 
     private void Cancel() => Dialog.Cancel();

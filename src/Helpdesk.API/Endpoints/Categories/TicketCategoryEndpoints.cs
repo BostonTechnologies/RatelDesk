@@ -15,7 +15,7 @@ public static class TicketCategoryEndpoints
     {
         var group = app.MapGroup("/api/v1/categories")
             .WithTags("Ticket Categories")
-            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
+            .RequireAuthorization("TicketReadAccess");
 
         group.MapGet("/", GetCategories);
 

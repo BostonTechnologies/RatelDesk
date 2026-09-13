@@ -32,8 +32,8 @@ public static class DashboardEndpoints
             var access = await accessService.ResolveAsync(user, token);
             return await sender.Send(new GetTechnicianDashboardQuery(
                 id,
-                access.OrganizationIdsFor(HelpdeskPermissions.IncidentManager),
-                access.OrganizationIdsFor(HelpdeskPermissions.ChangeManager),
+                access.OrganizationIdsForAny(HelpdeskPermissions.IncidentRead, HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.IncidentManager),
+                access.OrganizationIdsForAny(HelpdeskPermissions.ChangeRead, HelpdeskPermissions.ChangeWrite, HelpdeskPermissions.ChangeManager),
                 access.IsHelpdeskAdmin), token);
         })
         .WithName("GetTechnicianDashboard")
@@ -50,7 +50,8 @@ public static class DashboardEndpoints
             var access = await accessService.ResolveAsync(user, token);
             return string.IsNullOrWhiteSpace(access.CustomerId)
                 ? new CustomerDashboardDto(0, 0)
-                : await sender.Send(new GetCustomerDashboardQuery(access.CustomerId), token);
+                : await sender.Send(new GetCustomerDashboardQuery(access.CustomerId,
+                    access.IsHelpdeskAdmin ? null : access.OrganizationIdsFor(HelpdeskPermissions.IncidentUser)), token);
         })
         .WithName("GetCustomerDashboard")
         .WithSummary("Customer dashboard metrics.")

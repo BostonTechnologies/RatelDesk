@@ -56,6 +56,20 @@ public static class RequestEndpoints
             var entity = await repo.GetAsync(id);
             if (entity == null) return Results.Problem("Request not found", statusCode: 404);
 
+            var customer = !string.IsNullOrWhiteSpace(entity.CustomerId)
+                ? await db.Customers
+                    .AsNoTracking()
+                    .Where(x => x.Id == entity.CustomerId)
+                    .Select(x => new { x.Id, x.Name, x.Email })
+                    .FirstOrDefaultAsync()
+                : null;
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanViewRequest(entity.OrganizationId, customer?.Id ?? entity.CustomerId, customer?.Email ?? entity.RequesterEmail))
+            {
+                return Results.Forbid();
+            }
+
             var categoryIds = await db.RequestCategoryLinks
                 .Where(x => x.RequestId == entity.Id)
                 .Select(x => x.TicketCategoryId)
@@ -87,20 +101,6 @@ public static class RequestEndpoints
                     .Select(x => x.Title)
                     .FirstOrDefaultAsync()
                 : null;
-            var customer = !string.IsNullOrWhiteSpace(entity.CustomerId)
-                ? await db.Customers
-                    .AsNoTracking()
-                    .Where(x => x.Id == entity.CustomerId)
-                    .Select(x => new { x.Id, x.Name, x.Email })
-                    .FirstOrDefaultAsync()
-                : null;
-
-            var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanViewRequest(entity.OrganizationId, customer?.Id ?? entity.CustomerId, customer?.Email ?? entity.RequesterEmail))
-            {
-                return Results.Forbid();
-            }
-
             var dto = new RequestDto
             {
                 OrganizationId = entity.OrganizationId,
@@ -226,7 +226,7 @@ public static class RequestEndpoints
             var items = await db.AiOperationAuditRecords
                 .AsNoTracking()
                 .Where(x => x.SubjectId == id)
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => new TicketAiAuditEntryDto
                 {
                     Id = x.Id,
@@ -285,7 +285,7 @@ public static class RequestEndpoints
 
             var customer = customerValidation.Customer!;
             var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanViewRequest(dto.OrganizationId, customer.Id, customer.Email))
+            if (!access.CanCreateRequest(dto.OrganizationId, customer.Id, customer.Email))
             {
                 return Results.Forbid();
             }
@@ -662,7 +662,7 @@ public static class RequestEndpoints
             var allLogs = await repo.GetAllAsync();
             var logs = allLogs
                 .Where(log => log.TicketId == id)
-                .Where(log => authorization.Access!.CanManageRequest(authorization.OrganizationId) || !log.IsInternalNote)
+                .Where(log => CanReadInternalRequest(authorization.Access!, authorization.OrganizationId) || !log.IsInternalNote)
                 .Select(l => new WorkLogDto
             {
                 Id = l.Id,
@@ -694,18 +694,18 @@ public static class RequestEndpoints
             var timelineQuery = db.TicketTimelineEvents
                 .AsNoTracking()
                 .Where(evt => evt.TicketId == id);
-            if (!authorization.Access!.CanManageRequest(authorization.OrganizationId))
+            if (!CanReadInternalRequest(authorization.Access!, authorization.OrganizationId))
             {
                 timelineQuery = timelineQuery.Where(evt => evt.EventType != TimelineEventType.InternalNote);
             }
 
-            timelineQuery = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
-                ? timelineQuery.OrderBy(evt => evt.CreatedUtc)
-                : timelineQuery.OrderByDescending(evt => evt.CreatedUtc);
-
-            var timeline = await timelineQuery
-                .Select(evt => ToTimelineDto(evt))
-                .ToListAsync(ct);
+            // The ticket and visibility filters remain in SQL. SQLite cannot order
+            // DateTimeOffset, so order this already bounded ticket history in memory.
+            var events = await timelineQuery.ToListAsync(ct);
+            var ordered = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
+                ? events.OrderBy(evt => evt.CreatedUtc)
+                : events.OrderByDescending(evt => evt.CreatedUtc);
+            var timeline = ordered.Select(ToTimelineDto).ToList();
 
             return Results.Ok(timeline);
         });
@@ -722,10 +722,15 @@ public static class RequestEndpoints
             [FromServices] IRequestSender sender,
             CancellationToken ct) =>
         {
-            var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: true, ct);
+            var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: false, ct, requireContributor: true);
             if (authorization.Failure is not null)
             {
                 return authorization.Failure;
+            }
+
+            if ((dto.IsInternalNote || dto.Hours != 0) && !authorization.Access!.CanManageRequest(authorization.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             if (string.IsNullOrWhiteSpace(dto.Notes))
@@ -770,13 +775,17 @@ public static class RequestEndpoints
             if (request is null) return Results.Problem("Request not found", statusCode: 404);
 
             var access = await accessService.ResolveAsync(user, cancellationToken);
-            if (!access.CanManageRequest(request.OrganizationId)) return Results.Forbid();
+            if (!access.CanDeleteRequest(request.OrganizationId)) return Results.Forbid();
 
             return await repo.DeleteAsync(id)
                 ? Results.NoContent()
                 : Results.Problem("Request not found", statusCode: 404);
         });
     }
+
+    private static bool CanReadInternalRequest(CurrentUserAccessProfile access, string? organizationId) =>
+        access.CanManageRequest(organizationId) ||
+        access.HasPermission(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestRead, organizationId);
 
     private static async Task<IResult> GetRequests(
         [FromServices] HelpdeskDbContext db,
@@ -812,19 +821,17 @@ public static class RequestEndpoints
         var access = await accessService.ResolveAsync(user);
         if (!access.IsHelpdeskAdmin)
         {
-            var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-            var managerOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestManager).ToArray();
-            if (managerOrganizationIds.Length > 0)
-            {
-                query = query.Where(x => managerOrganizationIds.Contains(x.Request.OrganizationId));
-            }
-            else
-            {
-                query = query.Where(x =>
-                    allowedOrganizationIds.Contains(x.Request.OrganizationId) &&
-                    !string.IsNullOrWhiteSpace(access.CustomerId) &&
-                    x.CustomerId == access.CustomerId);
-            }
+            var tenantReadOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestRead)
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestWrite))
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestManager))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var ownOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestUser).ToArray();
+            query = query.Where(x =>
+                tenantReadOrganizationIds.Contains(x.Request.OrganizationId) ||
+                (ownOrganizationIds.Contains(x.Request.OrganizationId) &&
+                 !string.IsNullOrWhiteSpace(access.CustomerId) &&
+                 x.CustomerId == access.CustomerId));
         }
 
         if (state is not null)
@@ -1238,7 +1245,7 @@ public static class RequestEndpoints
 
         var logger = loggerFactory.CreateLogger("RequestEndpoints");
         var reader = eventBus.Subscribe(id);
-        var canManageRequest = authorization.Access!.CanManageRequest(authorization.OrganizationId);
+        var canReadInternalRequest = CanReadInternalRequest(authorization.Access!, authorization.OrganizationId);
 
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Append("Connection", "keep-alive");
@@ -1260,6 +1267,12 @@ public static class RequestEndpoints
                 var keepAliveTask = Task.Delay(keepAliveInterval, ct);
                 var completedTask = await Task.WhenAny(waitForDataTask, keepAliveTask);
 
+                if (!await Helpdesk.API.Endpoints.Authentication.LocalSessionValidator.IsValidAsync(context, ct))
+                {
+                    logger.LogInformation("Timeline stream session revoked {TicketId}", id);
+                    break;
+                }
+
                 var currentAuthorization = await AuthorizeRequestAsync(
                     id,
                     context.User,
@@ -1273,7 +1286,7 @@ public static class RequestEndpoints
                     break;
                 }
 
-                canManageRequest = currentAuthorization.Access!.CanManageRequest(currentAuthorization.OrganizationId);
+                canReadInternalRequest = CanReadInternalRequest(currentAuthorization.Access!, currentAuthorization.OrganizationId);
 
                 if (completedTask == waitForDataTask)
                 {
@@ -1284,7 +1297,7 @@ public static class RequestEndpoints
 
                     while (reader.TryRead(out var evt))
                     {
-                        if (!canManageRequest && evt.EventType == TimelineEventType.InternalNote)
+                        if (!canReadInternalRequest && evt.EventType == TimelineEventType.InternalNote)
                         {
                             continue;
                         }
@@ -1343,7 +1356,8 @@ public static class RequestEndpoints
         ICurrentUserAccessService accessService,
         HelpdeskDbContext db,
         bool requireManager,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireContributor = false)
     {
         var request = await db.Requests.AsNoTracking()
             .Where(candidate => candidate.Id == requestId)
@@ -1363,7 +1377,9 @@ public static class RequestEndpoints
         var access = await accessService.ResolveAsync(user, cancellationToken);
         var allowed = requireManager
             ? access.CanManageRequest(request.OrganizationId)
-            : access.CanViewRequest(
+            : requireContributor
+                ? access.CanContributeRequest(request.OrganizationId, customer?.Id ?? request.CustomerId, customer?.Email ?? request.RequesterEmail)
+                : access.CanViewRequest(
                 request.OrganizationId,
                 customer?.Id ?? request.CustomerId,
                 customer?.Email ?? request.RequesterEmail);

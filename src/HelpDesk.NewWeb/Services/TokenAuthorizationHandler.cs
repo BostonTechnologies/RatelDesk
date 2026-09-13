@@ -64,9 +64,11 @@ public class TokenAuthorizationHandler : DelegatingHandler
             return;
         }
 
-        if (context.Request.Cookies.TryGetValue(_localCookieName, out var cookie) && !string.IsNullOrWhiteSpace(cookie))
+        var cookie = LocalSessionCookieForwarder.GetHeader(context, _localCookieName);
+        if (!string.IsNullOrWhiteSpace(cookie))
         {
-            request.Headers.TryAddWithoutValidation("Cookie", $"{_localCookieName}={cookie}");
+            request.Headers.TryAddWithoutValidation("Cookie", cookie);
+            request.Headers.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
         }
     }
 }

@@ -12,13 +12,13 @@ public static class BootstrapEndpoints
         app.MapGet("/api/v1/setup/status", async (
             [FromServices] IBootstrapStateStore stateStore,
             [FromServices] BootstrapOptions options,
+            [FromServices] IConfiguration configuration,
             CancellationToken cancellationToken) =>
         {
             var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
-            return Results.Ok(ToResponse(descriptor, options));
+            return Results.Ok(ToResponse(descriptor, options, IsStorageManaged(configuration)));
         })
         .AllowAnonymous()
-        .RequireRateLimiting("SetupUnlock")
         .WithTags("Setup");
 
         app.MapPost("/api/v1/setup/session", async (
@@ -44,12 +44,27 @@ public static class BootstrapEndpoints
             [FromServices] BootstrapOptions options,
             [FromServices] PostgreSqlSetupPreflightService postgreSqlPreflight,
             [FromServices] IDataProtectionProvider dataProtection,
+            [FromServices] IConfiguration configuration,
             CancellationToken cancellationToken) =>
         {
+            await using var lease = await BootstrapOperationLease.AcquireAsync(options.StateDirectory, cancellationToken);
             var currentDescriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
             if (!sessions.IsValid(session, currentDescriptor))
             {
                 return Results.Unauthorized();
+            }
+
+            var reconciled = await BootstrapStartupService.ReconcileSelectedMarkerAsync(
+                stateStore, currentDescriptor, dataProtection, cancellationToken);
+            if (reconciled is not null)
+                return Results.Conflict(ToResponse(reconciled, options, IsStorageManaged(configuration)));
+
+            if (IsStorageManaged(configuration))
+            {
+                // Connection details stay on the server; setup cannot override deployment-owned storage.
+                return currentDescriptor.State == BootstrapState.Configuring
+                    ? Results.Ok(ToResponse(currentDescriptor, options, true))
+                    : Results.Conflict(ToResponse(currentDescriptor, options, true));
             }
 
             if (request.Provider is not ("Sqlite" or "PostgreSql"))
@@ -96,7 +111,7 @@ public static class BootstrapEndpoints
                         Provider = request.Provider,
                         SqlitePath = null,
                         ProtectedPostgreSqlConnection = protectedConnection,
-                        OperationId = current.OperationId ?? Guid.NewGuid()
+                        OperationId = Guid.NewGuid()
                     },
                     _ => current
                 }, cancellationToken);
@@ -126,7 +141,7 @@ public static class BootstrapEndpoints
                     Provider = request.Provider,
                     SqlitePath = sqlitePath,
                     ProtectedPostgreSqlConnection = null,
-                    OperationId = current.OperationId ?? Guid.NewGuid()
+                    OperationId = Guid.NewGuid()
                 },
                 _ => current
             }, cancellationToken);
@@ -181,16 +196,20 @@ public static class BootstrapEndpoints
 
     private sealed record SetupSessionResponse(string Session, DateTimeOffset ExpiresAtUtc);
 
-    private static BootstrapStatusResponse ToResponse(BootstrapDescriptor descriptor, BootstrapOptions? options = null) =>
+    private static BootstrapStatusResponse ToResponse(BootstrapDescriptor descriptor, BootstrapOptions? options = null, bool storageManaged = false) =>
         new(descriptor.State.ToString(), descriptor.Provider, options is null ? null : new BootstrapInteractiveDefaultsResponse(
             TrimOrNull(options.Interactive.OrganizationName),
             TrimOrNull(options.Interactive.ApplicationName),
             TrimOrNull(options.Interactive.ApplicationUrl),
-            TrimOrNull(options.Interactive.TimeZoneId)));
+            TrimOrNull(options.Interactive.TimeZoneId)), storageManaged);
 
     private static string? TrimOrNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private sealed record BootstrapStatusResponse(string State, string? Provider, BootstrapInteractiveDefaultsResponse? Defaults);
+    private static bool IsStorageManaged(IConfiguration configuration) =>
+        !string.IsNullOrWhiteSpace(configuration.GetConnectionString("HelpdeskDb")) ||
+        !string.IsNullOrWhiteSpace(configuration["Database:Sqlite:Path"]);
+
+    private sealed record BootstrapStatusResponse(string State, string? Provider, BootstrapInteractiveDefaultsResponse? Defaults, bool StorageManaged);
 
     private sealed record BootstrapInteractiveDefaultsResponse(
         string? OrganizationName,

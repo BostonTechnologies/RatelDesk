@@ -153,12 +153,6 @@
         error = null;
         if (hasScopedRoleAssignments)
         {
-            if (assignments.Count == 0)
-            {
-                error = "An application user must retain at least one scoped role.";
-                return;
-            }
-
             var response = await HelpdeskApi.PutAsJsonAsync(
                 $"api/v1/local-auth/users/{User.Id}/assignments",
                 new ReplaceLocalScopedRoleAssignmentsRequest(assignments));

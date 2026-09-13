@@ -233,7 +233,7 @@ else
                         </MudStack>
                     </Authorized>
                     <NotAuthorized>
-                        <AuthorizeView Roles="Incident.User,Incident.Manager,Request.User,Request.Manager,Change.User,Change.Manager" Context="workspaceAuth">
+                        <AuthorizeView Roles="Incident.User,Incident.Read,Incident.Write,Incident.Manager,Request.User,Request.Read,Request.Write,Request.Manager,Change.User,Change.Read,Change.Write,Change.Manager" Context="workspaceAuth">
                             <Authorized>
                                 <MudStack Spacing="2">
                                     <MudText Typo="Typo.h4">Welcome to Helpdesk</MudText>

@@ -14,4 +14,6 @@ public sealed record BootstrapDescriptor(
     // This value is protected with the durable bootstrap data-protection key ring.
     // It is never included in setup status responses or logs.
     public string? ProtectedPostgreSqlConnection { get; init; }
+    public bool AdoptedLegacy { get; init; }
+    public string? ProtectedKeyRingProof { get; init; }
 }

@@ -20,6 +20,21 @@ namespace Helpdesk.Tests.NewWeb;
 
 public sealed class GlobalSearchServiceTests
 {
+    [Theory]
+    [InlineData("Incident.Read", "incidents")]
+    [InlineData("Incident.Write", "incidents")]
+    [InlineData("Request.Read", "requests")]
+    [InlineData("Change.Read", "changes")]
+    public async Task Scoped_module_roles_discover_only_their_permitted_ticket_sections(string permission, string section)
+    {
+        var service = CreateService(new FakeHttpClientFactory(new Dictionary<string, object?>()), permission);
+        var groups = await service.SearchAsync("");
+        Assert.Contains(groups, group => group.Key == section);
+        Assert.DoesNotContain(groups, group => group.Key == "team");
+        foreach (var otherSection in new[] { "incidents", "requests", "changes" }.Where(key => key != section))
+            Assert.DoesNotContain(groups, group => group.Key == otherSection);
+    }
+
     [Fact]
     public async Task Empty_query_shows_role_appropriate_sections()
     {

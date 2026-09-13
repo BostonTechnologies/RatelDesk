@@ -16,6 +16,8 @@ public sealed record CurrentUserAccessProfile(
     IReadOnlySet<string> AllowedOrganizationIds,
     IReadOnlySet<string> ManagedOrganizationIds)
 {
+    public bool UsesScopedPermissions { get; init; }
+
     public IReadOnlySet<ScopedPermissionGrant> ScopedPermissionGrants { get; init; } =
         new HashSet<ScopedPermissionGrant>();
 
@@ -29,17 +31,19 @@ public sealed record CurrentUserAccessProfile(
             return true;
         }
 
-        if (ScopedPermissionGrants.Count > 0)
+        if (UsesScopedPermissions || ScopedPermissionGrants.Count > 0)
         {
             return !string.IsNullOrWhiteSpace(organizationId) &&
-                   ScopedPermissionGrants.Contains(new ScopedPermissionGrant(permission, organizationId));
+                   ScopedPermissionGrants.Any(grant =>
+                       string.Equals(grant.Permission, permission, StringComparison.OrdinalIgnoreCase) &&
+                       string.Equals(grant.OrganizationId, organizationId, StringComparison.OrdinalIgnoreCase));
         }
 
         return InAllowedOrg(organizationId) && Permissions.Contains(permission);
     }
 
     public IReadOnlySet<string> OrganizationIdsFor(string permission) =>
-        ScopedPermissionGrants.Count > 0
+        UsesScopedPermissions || ScopedPermissionGrants.Count > 0
             ? ScopedPermissionGrants
                 .Where(grant => string.Equals(grant.Permission, permission, StringComparison.OrdinalIgnoreCase))
                 .Select(grant => grant.OrganizationId)
@@ -48,22 +52,69 @@ public sealed record CurrentUserAccessProfile(
                 ? AllowedOrganizationIds
                 : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+    public IReadOnlySet<string> OrganizationIdsForAny(params string[] permissions) =>
+        permissions.SelectMany(OrganizationIdsFor).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     public bool CanViewIncident(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageIncident(organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
+        HasPermission(HelpdeskPermissions.IncidentRead, organizationId) || CanManageIncident(organizationId) ||
+        CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageIncident(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.IncidentWrite, organizationId) ||
         HasPermission(HelpdeskPermissions.IncidentManager, organizationId);
 
+    public bool CanDeleteIncident(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.IncidentDelete, organizationId) ||
+        HasPermission(HelpdeskPermissions.IncidentManager, organizationId);
+
+    public bool CanContributeIncident(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageIncident(organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
+
+    public bool CanCreateIncident(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageIncident(organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
+
     public bool CanViewRequest(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageRequest(organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
+        HasPermission(HelpdeskPermissions.RequestRead, organizationId) || CanManageRequest(organizationId) ||
+        CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageRequest(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.RequestWrite, organizationId) ||
+        HasPermission(HelpdeskPermissions.RequestManager, organizationId);
+
+    public bool CanDeleteRequest(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.RequestDelete, organizationId) ||
+        HasPermission(HelpdeskPermissions.RequestManager, organizationId);
+
+    public bool CanContributeRequest(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageRequest(organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
+
+    public bool CanCreateRequest(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageRequest(organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
+
+    public bool CanExecuteRequest(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.RequestExecute, organizationId) ||
         HasPermission(HelpdeskPermissions.RequestManager, organizationId);
 
     public bool CanViewChange(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageChange(organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
+        HasPermission(HelpdeskPermissions.ChangeRead, organizationId) || CanManageChange(organizationId) ||
+        CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageChange(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.ChangeWrite, organizationId) ||
+        HasPermission(HelpdeskPermissions.ChangeManager, organizationId);
+
+    public bool CanDeleteChange(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.ChangeDelete, organizationId) ||
+        HasPermission(HelpdeskPermissions.ChangeManager, organizationId);
+
+    public bool CanContributeChange(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageChange(organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
+
+    public bool CanCreateChange(string? organizationId, string? customerId, string? requesterEmail) =>
+        CanManageChange(organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
+
+    public bool CanApproveChange(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.ChangeApprove, organizationId) ||
         HasPermission(HelpdeskPermissions.ChangeManager, organizationId);
 
     public static CurrentUserAccessProfile FromClaims(ClaimsPrincipal user)
@@ -111,6 +162,7 @@ public sealed record CurrentUserAccessProfile(
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase))
         {
+            UsesScopedPermissions = user.HasClaim("permission_scope_mode", "scoped"),
             ScopedPermissionGrants = scopedPermissionGrants
         };
     }

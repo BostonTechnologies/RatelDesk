@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Helpdesk.API.Endpoints.Authentication;
 using System.Text.Json;
 using Helpdesk.Application.AiAssistant.Chat;
 using Helpdesk.Infrastructure.AiAssistant.Chat;
@@ -15,6 +16,19 @@ public static class AiAssistantChatEndpoints
 {
     public static void MapAiAssistantChatEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapGet("/api/v1/{ticketType}/{ticketId}/ai-assistant/chat-capabilities", async (
+            string ticketType, string ticketId, HttpContext context, HelpdeskDbContext db,
+            ICurrentUserAccessService access, IOptions<AiAssistantChatOptions> options, CancellationToken ct) =>
+        {
+            var failure = await AuthorizeTicketManagementAsync(ticketType, ticketId, context.User, db, access, ct);
+            if (failure is not null) return failure;
+            return Results.Ok(db.Database.IsSqlite()
+                ? new ChatCapabilities(false, "Native chat requires PostgreSQL. Webhook AI assistance is available below.")
+                : options.Value.Enabled
+                    ? new ChatCapabilities(true, null)
+                    : new ChatCapabilities(false, "Native chat has not been enabled for this instance. Webhook AI assistance is available below."));
+        }).RequireAuthorization("HelpdeskStaff").WithTags("AiAssistant Chat");
+
         var group = app.MapGroup("/api/v1/{ticketType}/{ticketId}/ai-assistant/chat").RequireAuthorization("HelpdeskStaff").WithTags("AiAssistant Chat");
         group.AddEndpointFilter(async (context, next) =>
         {
@@ -118,6 +132,7 @@ public static class AiAssistantChatEndpoints
             var started = false;
             while (!ct.IsCancellationRequested)
             {
+                if (!await LocalSessionValidator.IsValidAsync(context, ct)) return;
                 ChatSnapshot snapshot;
                 // Fresh scope avoids stale tracked state during a long-lived response.
                 await using (var scope = scopes.CreateAsyncScope())
@@ -146,6 +161,7 @@ public static class AiAssistantChatEndpoints
                 }
                 foreach (var item in snapshot.Events)
                 {
+                    if (!await LocalSessionValidator.IsValidAsync(context, ct)) return;
                     await context.Response.WriteAsync($"id: {item.Sequence}\nevent: chat\ndata: {JsonSerializer.Serialize(item)}\n\n", ct);
                     position = item.Sequence;
                 }

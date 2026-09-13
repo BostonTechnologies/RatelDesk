@@ -38,10 +38,11 @@ then invoking the explicit command once. It is never performed automatically
 at API startup. For SQLite, set `Bootstrap__Unattended__Provider=Sqlite`,
 `Bootstrap__Unattended__Email`, `Bootstrap__Unattended__DisplayName`,
 `Bootstrap__Unattended__Password`, and
-`Bootstrap__Unattended__OrganizationName`; optional
-`Bootstrap__Unattended__ApplicationName` and
-`Bootstrap__Unattended__ApplicationUrl` use the same branding behavior as the
-wizard. `Bootstrap__Unattended__TimeZoneId` accepts an installed IANA time-zone
+`Bootstrap__Unattended__OrganizationName`, and
+`Bootstrap__Unattended__ApplicationUrl`. The canonical application URL must be
+HTTPS (localhost HTTP is accepted) with no user information, query or fragment.
+`Bootstrap__Unattended__ApplicationName` is optional and uses the same branding
+behavior as the wizard. `Bootstrap__Unattended__TimeZoneId` accepts an installed IANA time-zone
 ID and defaults to `UTC`. The password belongs in an operator-controlled secret
 input, not a committed Compose file.
 
@@ -84,15 +85,16 @@ Complete `/setup` with host `postgres`, port `5432`, database/user `rateldesk`, 
 
 For an interactive first run, start the default source or release Compose stack and select PostgreSQL at `/setup`. The API remains in the restricted setup host until it has preflighted the external connection and committed the one-time initialization. The external database must therefore be reachable from the API container, but its credential is supplied only in the setup request; it is never placed in the normal runtime environment.
 
-For deployment-managed unattended initialization, use [docker/docker-compose.external-postgres.yml](../docker/docker-compose.external-postgres.yml) with either base Compose file. It maps operator-supplied values only to the `Bootstrap__Unattended__*` settings; it does not set `ConnectionStrings__HelpdeskDb`, which is reserved for already-established deployments and their conservative adoption path.
+For deployment-managed unattended initialization, use [docker/docker-compose.external-postgres.yml](../docker/docker-compose.external-postgres.yml) with either base Compose file. It maps operator-supplied values only to the `Bootstrap__Unattended__*` settings; it does not need to set `ConnectionStrings__HelpdeskDb`. That ordinary connection setting is also supported for fresh databases: setup keeps deployment-owned storage read-only and still requires the first administrator. Established installations follow the conservative adoption path.
 
 ```bash
-RATELDESK_POSTGRES_CONNECTION_STRING='Host=db.example.test;Port=5432;Database=rateldesk;Username=rateldesk;Password=replace-with-a-secret;Ssl Mode=Require' \
-RATELDESK_BOOTSTRAP_ADMIN_EMAIL='admin@example.test' \
-RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME='Initial Administrator' \
-RATELDESK_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-passphrase' \
-RATELDESK_BOOTSTRAP_ORGANIZATION_NAME='Example Organization' \
-  docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.external-postgres.yml up -d
+export RATELDESK_POSTGRES_CONNECTION_STRING='Host=db.example.test;Port=5432;Database=rateldesk;Username=rateldesk;Password=replace-with-a-secret;Ssl Mode=Require'
+export RATELDESK_BOOTSTRAP_ADMIN_EMAIL='admin@example.test'
+export RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME='Initial Administrator'
+export RATELDESK_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-passphrase'
+export RATELDESK_BOOTSTRAP_ORGANIZATION_NAME='Example Organization'
+export RATELDESK_BOOTSTRAP_APPLICATION_URL='https://desk.example.test'
+docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.external-postgres.yml up -d
 
 docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.external-postgres.yml exec api \
   dotnet Helpdesk.API.dll --initialize-unattended
@@ -106,7 +108,7 @@ unset RATELDESK_POSTGRES_CONNECTION_STRING RATELDESK_BOOTSTRAP_ADMIN_EMAIL RATEL
 docker compose -f docker/docker-compose.release.yml up -d
 ```
 
-For a new instance, the target must be empty. RatelDesk tests the connection with bounded timeouts before it creates schema. It identifies a historical RatelDesk schema separately from an unrelated non-empty database, but refuses setup for both so an existing installation cannot be modified by a first-run session. The setup principal must be able to apply the existing migrations but does not need superuser access. A database administrator must install the required `vector` and `pg_trgm` extensions in the target database before setup, and should enforce TLS, least-privilege credentials, and provider-managed backups. Deployment-managed `ConnectionStrings__HelpdeskDb` remains the compatibility path for established installations.
+For a new instance, the target must be empty. RatelDesk tests the connection with bounded timeouts before it creates schema. It identifies a historical RatelDesk schema separately from an unrelated non-empty database, but refuses setup for both so an existing installation cannot be modified by a first-run session. The setup principal must be able to apply the existing migrations but does not need superuser access. A database administrator must install the required `vector` and `pg_trgm` extensions in the target database before setup, and should enforce TLS, least-privilege credentials, and provider-managed backups. Deployment-managed `ConnectionStrings__HelpdeskDb` supports both fresh setup and established installations. Readiness is determined from installation evidence, not from the presence of a connection string.
 
 Back up an external deployment as a complete recovery set: a consistent PostgreSQL backup (including required extensions and roles according to the database provider's procedure), the bootstrap state directory, the shared data-protection key ring, and attachments. Test restoring that set into an isolated target before relying on it. To upgrade, take and verify this backup, deploy one versioned image release, and let the API apply its existing migration chain. If the migration fails, stop the new image and restore the complete recovery set; never point the original initialized descriptor at a new empty database to recover it.
 
@@ -131,7 +133,9 @@ The command only succeeds for an existing instance-administrator account in the 
 
 ### Local account security
 
-Signed-in local users can change their passphrase at `/account/change-password` and set up a time-based authenticator at `/account/authenticator`. The authenticator page gives the user a shared key to enter or scan in a TOTP application, requires its current six-digit code to confirm setup, and displays ten recovery codes exactly once. Store recovery codes separately from the authenticator device. After TOTP is enabled, local sign-in requires either an authenticator code or an unused recovery code. An administrator can issue a fresh one-time activation token for a local account through the user administration UI; this is the no-SMTP password-reset path.
+Signed-in local users can change their passphrase at `/account/change-password` and set up a time-based authenticator at `/account/authenticator`. The authenticator page verifies the current passphrase before giving the user a shared key to enter or scan in a TOTP application, requires its current six-digit code to confirm setup, and displays ten recovery codes exactly once. Store recovery codes separately from the authenticator device. After TOTP is enabled, local sign-in requires either an authenticator code or an unused recovery code. An administrator can issue a fresh one-time activation token for a local account through the user administration UI; this is the no-SMTP password-reset path.
+
+The browser login form includes an antiforgery token. Direct cookie-based API clients must send `X-Requested-With: XMLHttpRequest` for local login and authenticated mutations; same-origin browsers also supply Fetch Metadata. Cross-site cookie requests are rejected. Bearer-token integrations do not need this header. Create accounts from **Team → Create**. Reset and disable actions are available from **Team → Manage local account**; local accounts are disabled rather than deleting the application profile while leaving credentials active.
 
 ## Email
 
@@ -140,6 +144,8 @@ Microsoft Graph delivery is disabled by default. Enable it only after configurin
 ## AI, MCP, and orchestration
 
 AI providers are configurable and should use provider-specific credentials from a secret store. MCP hosts use isolated `RATELDESK_MCP_CONFIG` configuration files and `RATELDESK_MCP_<INSTANCE>_API_BASE_URL` endpoint pinning. External orchestration is an optional integration: configure a provider endpoint and credentials only when required by your deployment.
+
+Native AI Assistant chat is an optional PostgreSQL capability in rc.4 and is disabled by default. Its durable transport ownership uses PostgreSQL advisory locks. SQLite supports webhook AI assistance and its investigation history; the ticket UI falls back to that workflow when native chat is unavailable. To enable native chat, use PostgreSQL and configure `AiAssistantChat__Enabled=true` together with its endpoint and credential. Enabling it with SQLite is rejected during startup with an actionable configuration error.
 
 ### AI Assistant chat recovery
 
@@ -160,3 +166,13 @@ OpenTelemetry is enabled through standard `OTEL_*` settings. Export to an OTLP e
 - Check OIDC issuer, callback, audience, and client-secret configuration when login fails.
 - Confirm `DataProtection__KeyRingPath` is writable and durable in production.
 - Use health endpoints and structured logs before changing application state.
+
+### Initialization and storage recovery
+
+On startup, RatelDesk verifies the database instance and operation marker before applying migrations. A missing or mismatched initialized database enters `RecoveryRequired`; it does not recreate SQLite or reopen first-admin setup. Restore the matching database, bootstrap descriptor and keys, then restart. Startup also reconciles an initialization that committed its database marker before the descriptor was marked Ready. An established pre-rc.4 PostgreSQL installation is adopted only after finding historical migration and tenant/user evidence.
+
+Private attachments live under `StorageOptions__RootPath/attachments` (the Compose `/app/storage` volume). At startup existing files under `wwwroot/attachments` are migrated into that directory. A different file with the same name is reported as a conflict and both copies are retained. Legacy `/attachments/...` URLs no longer serve private files anonymously; use the authorized attachment API. Keep the storage volume when recreating API containers.
+
+For the bundled PostgreSQL sidecar, use host `postgres`, port `5432`, and the configured database credentials in setup. Leave **Require TLS** unchecked for that private Compose network; the bundled server does not configure TLS. Use **Require TLS** for an external server with TLS configured.
+
+Explicit `Authentication__Mode` values remain authoritative after setup. Without an explicit mode, fresh instances use Local and adopted legacy installations use OIDC. `Branding__ApplicationName` and `Branding__ApplicationUrl` prefill deployment-managed setup fields; optional visual branding does not discard the instance name.

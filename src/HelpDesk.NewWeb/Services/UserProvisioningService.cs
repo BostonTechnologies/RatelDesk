@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Security.Claims;
 using Helpdesk.Shared.DTOs.Auth;
 
@@ -19,13 +20,15 @@ public class UserProvisioningService : IUserProvisioningService
 
     public async Task EnsureUserExistsAsync(
         ClaimsPrincipal principal,
+        string accessToken,
         CancellationToken cancellationToken)
     {
-        await EnsureUserAccessAsync(principal, cancellationToken);
+        await EnsureUserAccessAsync(principal, accessToken, cancellationToken);
     }
 
     public async Task<CurrentUserAccessDto?> EnsureUserAccessAsync(
         ClaimsPrincipal principal,
+        string accessToken,
         CancellationToken cancellationToken)
     {
         var email =
@@ -41,28 +44,13 @@ public class UserProvisioningService : IUserProvisioningService
 
         try
         {
-            var client = _httpClientFactory.CreateClient("SystemApi");
-            _logger.LogInformation("Provisioning started for {Email}", email);
-            _logger.LogInformation("Provisioning user via system endpoint: {Email}", email);
+            if (string.IsNullOrWhiteSpace(accessToken))
+                throw new InvalidOperationException("A verified user's API access token is required for provisioning.");
 
-            var name =
-                principal.Identity?.Name ??
-                principal.FindFirst("name")?.Value ??
-                email;
-
-            var createResponse = await client.PostAsJsonAsync(
-                "/api/v1/users/provision",
-                new
-                {
-                    Email = email,
-                    Name = name,
-                    Issuer = principal.FindFirst("iss")?.Value,
-                    Subject = principal.FindFirst("sub")?.Value,
-                    AuthentikUserId = principal.FindFirst("authentik_user_id")?.Value
-                        ?? principal.FindFirst("ak_user_id")?.Value,
-                    PreferredUsername = principal.FindFirst("preferred_username")?.Value
-                },
-                cancellationToken);
+            var client = _httpClientFactory.CreateClient("SystemApiNoAuth");
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/users/provision");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            using var createResponse = await client.SendAsync(request, cancellationToken);
 
             createResponse.EnsureSuccessStatusCode();
             _logger.LogInformation("Provisioning ensured successfully for {Email}", email);

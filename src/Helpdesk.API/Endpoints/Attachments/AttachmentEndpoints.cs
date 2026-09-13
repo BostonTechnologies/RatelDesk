@@ -1,5 +1,6 @@
 using Helpdesk.Application.Services.Tickets;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Storage;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Attachment;
 using Helpdesk.Shared.Models;
@@ -31,7 +32,7 @@ public static class AttachmentEndpoints
             [FromServices] HelpdeskDbContext db,
             [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
-            IWebHostEnvironment env,
+            TicketAttachmentFileStore fileStore,
             CancellationToken token) =>
         {
             var attachment = await db.Attachments.FindAsync([id], token);
@@ -41,8 +42,8 @@ public static class AttachmentEndpoints
                 return Results.NotFound("Attachment not found.");
             }
 
-            var filePath = Path.Combine(env.ContentRootPath, "wwwroot", "attachments", attachment.FilePath);
-            if (!File.Exists(filePath))
+            var filePath = fileStore.GetReadPath(attachment.FilePath);
+            if (filePath is null)
             {
                 return Results.NotFound("Attachment not found.");
             }

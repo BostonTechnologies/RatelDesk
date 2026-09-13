@@ -64,7 +64,7 @@
                                        Size="Size.Small"
                                        Color="Color.Error"
                                        AriaLabel="Remove relation"
-                                       Disabled="@deletingRelationIds.Contains(context.Id)"
+                                       Disabled="@(ReadOnly || deletingRelationIds.Contains(context.Id))"
                                        OnClick="@(() => DeleteRelationAsync(context))" />
                     </MudStack>
                 </MudTd>
@@ -74,6 +74,7 @@
 </MudStack>
 
 @code {
+    [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public string TicketId { get; set; } = string.Empty;
     [Parameter] public string TicketType { get; set; } = "incidents";
     [Parameter] public EventCallback<int> OnRelationsLoaded { get; set; }

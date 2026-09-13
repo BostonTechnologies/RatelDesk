@@ -157,6 +157,12 @@ public class HelpdeskDbContext(
         });
         modelBuilder.Entity<AiInvestigationWorklogEntry>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("OccurredUtcSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"OccurredUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("OccurredUtcSortTicks");
+            }
             entity.HasIndex(x => new { x.OrganizationId, x.TicketArea, x.TicketId, x.OccurredUtc });
             entity.HasIndex(x => x.CallbackEventId).IsUnique().HasFilter("\"CallbackEventId\" IS NOT NULL");
         });
@@ -286,6 +292,12 @@ public class HelpdeskDbContext(
 
         modelBuilder.Entity<AiOperationAuditRecord>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("CreatedAtSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"CreatedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("CreatedAtSortTicks");
+            }
             entity.Property(x => x.OperationName).HasMaxLength(128);
             entity.Property(x => x.OrganizationId).HasMaxLength(128);
             entity.Property(x => x.ProviderName).HasMaxLength(128);
@@ -379,6 +391,12 @@ public class HelpdeskDbContext(
 
         modelBuilder.Entity<DatasetIngestCredential>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("CreatedAtUtcSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"CreatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("CreatedAtUtcSortTicks");
+            }
             entity.ToTable("DatasetIngestCredentials");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.DatasetId, x.Name });
@@ -519,6 +537,12 @@ public class HelpdeskDbContext(
 
         modelBuilder.Entity<InboundEmailProcessingLog>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("CreatedAtUtcSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"CreatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("CreatedAtUtcSortTicks");
+            }
             entity.ToTable("InboundEmailProcessingLogs");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.MessageId).HasMaxLength(512).IsRequired();
@@ -838,6 +862,12 @@ public class HelpdeskDbContext(
 
         modelBuilder.Entity<TicketAiFeedback>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("CreatedAtSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"CreatedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("CreatedAtSortTicks");
+            }
             entity.ToTable("TicketAiFeedback");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.FeedbackType).HasMaxLength(64);

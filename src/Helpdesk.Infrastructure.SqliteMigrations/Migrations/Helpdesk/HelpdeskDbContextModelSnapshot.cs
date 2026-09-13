@@ -540,6 +540,11 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("OccurredUtcSortTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"OccurredUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CallbackEventId")
@@ -547,6 +552,8 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                         .HasFilter("\"CallbackEventId\" IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "TicketArea", "TicketId", "OccurredUtc");
+
+                    b.HasIndex("OccurredUtcSortTicks");
 
                     b.ToTable("AiInvestigationWorklogEntries");
                 });
@@ -626,11 +633,18 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("CreatedAtSortTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"CreatedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("OrganizationId", "CreatedAt");
 
                     b.HasIndex("SubjectId", "CreatedAt");
+
+                    b.HasIndex("CreatedAtSortTicks");
 
                     b.ToTable("AiOperationAuditRecords");
                 });
@@ -1185,11 +1199,18 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("CreatedAtUtcSortTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"CreatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("DatasetId", "KeyHash");
 
                     b.HasIndex("DatasetId", "Name");
+
+                    b.HasIndex("CreatedAtUtcSortTicks");
 
                     b.ToTable("DatasetIngestCredentials", (string)null);
                 });
@@ -1502,6 +1523,11 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("CreatedAtUtcSortTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"CreatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("TicketId");
@@ -1511,6 +1537,8 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                         .HasFilter("\"Status\" = 1");
 
                     b.HasIndex("MessageId", "MailboxKey", "RuleId", "ActionKey", "Status");
+
+                    b.HasIndex("CreatedAtUtcSortTicks");
 
                     b.ToTable("InboundEmailProcessingLogs", (string)null);
                 });
@@ -2900,6 +2928,11 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("CreatedAtSortTicks")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("INTEGER")
+                        .HasComputedColumnSql("CAST((julianday(\"CreatedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("TicketId", "CreatedAt");
@@ -2907,6 +2940,8 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Helpdesk
                     b.HasIndex("TicketId", "ArticleId", "FeedbackType", "FeedbackValue");
 
                     b.HasIndex("TicketId", "RequestId", "FeedbackType", "FeedbackValue");
+
+                    b.HasIndex("CreatedAtSortTicks");
 
                     b.ToTable("TicketAiFeedback", (string)null);
                 });

@@ -13,20 +13,27 @@ namespace Helpdesk.API.Endpoints.Users;
 public static class TenantAdministrationEndpoints
 {
     private static readonly HashSet<string> BuiltInDelegableRoleKeys =
-        [ScopedRoleCatalog.SelfServiceUser];
+        [ScopedRoleCatalog.SelfServiceUser, ScopedRoleCatalog.Technician,
+         ScopedRoleCatalog.IncidentReader, ScopedRoleCatalog.IncidentWriter,
+         ScopedRoleCatalog.RequestReader, ScopedRoleCatalog.RequestWriter, ScopedRoleCatalog.RequestExecutor,
+         ScopedRoleCatalog.ChangeReader, ScopedRoleCatalog.ChangeWriter, ScopedRoleCatalog.ChangeApprover];
 
     public static void MapTenantAdministrationEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/tenant-admin/organizations", async (
+            string? permission,
             HttpContext context,
             ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
             CancellationToken cancellationToken) =>
         {
             var access = await accessService.ResolveAsync(context.User, cancellationToken);
+            var requiredPermission = string.Equals(permission, HelpdeskPermissions.TenantSettingsManage, StringComparison.OrdinalIgnoreCase)
+                ? HelpdeskPermissions.TenantSettingsManage
+                : HelpdeskPermissions.TenantRolesAssign;
             var organizationIds = access.IsHelpdeskAdmin
                 ? null
-                : access.OrganizationIdsFor(HelpdeskPermissions.TenantRolesAssign);
+                : access.OrganizationIdsFor(requiredPermission);
             if (organizationIds is { Count: 0 })
             {
                 return Results.Ok(Array.Empty<TenantOrganizationResponse>());
@@ -45,6 +52,43 @@ public static class TenantAdministrationEndpoints
         })
         .RequireAuthorization()
         .WithName("GetTenantAdministrationOrganizations");
+
+        var settings = app.MapGroup("/api/v1/tenant-admin/organizations/{organizationId}/settings")
+            .WithTags("Tenant settings")
+            .RequireAuthorization();
+        settings.MapGet("/", async (string organizationId, HttpContext context,
+            ICurrentUserAccessService accessService, HelpdeskDbContext db, CancellationToken ct) =>
+        {
+            var access = await accessService.ResolveAsync(context.User, ct);
+            if (!access.HasPermission(HelpdeskPermissions.TenantSettingsManage, organizationId)) return Results.Forbid();
+            var organization = await db.Organizations.AsNoTracking()
+                .SingleOrDefaultAsync(candidate => candidate.Id == organizationId && candidate.IsEnabled, ct);
+            return organization is null ? Results.NotFound() : Results.Ok(new TenantSettingsResponse(
+                organization.Id, organization.Name, organization.ContactInfo));
+        });
+        settings.MapPut("/", async (string organizationId, UpdateTenantSettingsRequest request,
+            HttpContext context, ICurrentUserAccessService accessService, HelpdeskDbContext db, CancellationToken ct) =>
+        {
+            var access = await accessService.ResolveAsync(context.User, ct);
+            if (!access.HasPermission(HelpdeskPermissions.TenantSettingsManage, organizationId)) return Results.Forbid();
+            if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 200 || request.ContactInfo?.Length > 4000)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["settings"] = ["Organization name is required (up to 200 characters); contact information must not exceed 4000 characters."]
+                });
+            var organization = await db.Organizations
+                .SingleOrDefaultAsync(candidate => candidate.Id == organizationId && candidate.IsEnabled, ct);
+            if (organization is null) return Results.NotFound();
+            organization.Name = request.Name.Trim();
+            organization.ContactInfo = string.IsNullOrWhiteSpace(request.ContactInfo) ? null : request.ContactInfo.Trim();
+            db.ActivityLogs.Add(new ActivityLog
+            {
+                UserId = ResolveActorId(context.User), RelatedEntityId = organizationId,
+                Message = $"Updated organization display and contact settings in organization '{organizationId}'."
+            });
+            await db.SaveChangesAsync(ct);
+            return Results.Ok(new TenantSettingsResponse(organization.Id, organization.Name, organization.ContactInfo));
+        });
 
         var group = app.MapGroup("/api/v1/tenant-admin/organizations/{organizationId}/users")
             .WithTags("Tenant administration")
@@ -154,7 +198,8 @@ public static class TenantAdministrationEndpoints
             if (!await CanManageAsync(context, accessService, organizationId, cancellationToken)) return Results.Forbid();
 
             var members = await db.Users.AsNoTracking()
-                .Where(user => user.OrganizationId == organizationId)
+                .Where(user => user.OrganizationId == organizationId || db.ScopedRoleAssignments.Any(assignment =>
+                    assignment.UserId == user.Id && assignment.OrganizationId == organizationId))
                 .OrderBy(user => user.Name)
                 .Select(user => new TenantMemberCandidate(user.Id, user.Name, user.Email))
                 .ToArrayAsync(cancellationToken);
@@ -263,14 +308,15 @@ public static class TenantAdministrationEndpoints
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["roleKeys"] = ["Tenant administrators may assign only self-service or tenant-owned roles within the approved delegation ceiling."]
+                    ["roleKeys"] = ["Tenant administrators may assign only operational built-ins or tenant-owned roles within the approved delegation ceiling."]
                 });
             }
 
+            roleKeys = roleKeys.Select(key => delegableRoleKeys.Single(known =>
+                string.Equals(known, key, StringComparison.OrdinalIgnoreCase))).ToArray();
             var existing = await db.ScopedRoleAssignments
                 .Where(assignment => assignment.UserId == userId && assignment.OrganizationId == organizationId)
                 .ToListAsync(cancellationToken);
-            var hadDelegableAccess = existing.Any(assignment => delegableRoleKeys.Contains(assignment.RoleKey));
             var hasDelegableAccess = roleKeys.Length > 0;
             db.ScopedRoleAssignments.RemoveRange(existing.Where(assignment => delegableRoleKeys.Contains(assignment.RoleKey)));
             db.ScopedRoleAssignments.AddRange(roleKeys.Select(key => new ScopedRoleAssignment
@@ -279,7 +325,9 @@ public static class TenantAdministrationEndpoints
                 OrganizationId = organizationId,
                 RoleKey = key
             }));
-            if (hadDelegableAccess != hasDelegableAccess)
+            var previousRoleKeys = existing.Where(assignment => delegableRoleKeys.Contains(assignment.RoleKey))
+                .Select(assignment => assignment.RoleKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!previousRoleKeys.SetEquals(roleKeys))
             {
                 var selfServiceOnly = (roleKeys.Length == 1 &&
                     string.Equals(roleKeys[0], ScopedRoleCatalog.SelfServiceUser, StringComparison.OrdinalIgnoreCase)) ||
@@ -293,7 +341,8 @@ public static class TenantAdministrationEndpoints
                 {
                     UserId = ResolveActorId(context.User),
                     RelatedEntityId = userId,
-                    Message = $"{(hasDelegableAccess ? "Granted" : "Removed")} {accessDescription} in organization '{organizationId}'."
+                    Message = $"{(hasDelegableAccess ? "Granted" : "Removed")} {accessDescription} in organization '{organizationId}'. " +
+                              $"Roles: [{string.Join(", ", previousRoleKeys.Order(StringComparer.OrdinalIgnoreCase))}] -> [{string.Join(", ", roleKeys.Order(StringComparer.OrdinalIgnoreCase))}]."
                 });
             }
             await db.SaveChangesAsync(cancellationToken);
@@ -349,7 +398,8 @@ public static class TenantAdministrationEndpoints
         UserManager<ApplicationUser> users,
         CancellationToken cancellationToken)
     {
-        if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == userId && user.OrganizationId == organizationId, cancellationToken))
+        if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == userId && (user.OrganizationId == organizationId ||
+                db.ScopedRoleAssignments.Any(assignment => assignment.UserId == user.Id && assignment.OrganizationId == organizationId)), cancellationToken))
         {
             return null;
         }
@@ -363,6 +413,8 @@ public static class TenantAdministrationEndpoints
         user.Identity?.Name ??
         "unknown";
 
+    public sealed record TenantSettingsResponse(string OrganizationId, string Name, string? ContactInfo);
+    public sealed record UpdateTenantSettingsRequest(string Name, string? ContactInfo);
     public sealed record ReplaceTenantMembershipRequest(IReadOnlyList<string> RoleKeys);
     public sealed record TenantMembershipResponse(string UserId, string OrganizationId, IReadOnlyList<string> RoleKeys);
     public sealed record TenantOrganizationResponse(string Id, string Name);

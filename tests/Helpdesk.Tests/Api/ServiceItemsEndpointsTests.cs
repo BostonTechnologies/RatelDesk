@@ -206,11 +206,14 @@ public sealed class ServiceItemsEndpointsTests
                 options.DefaultChallengeScheme = "Test";
             }).AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
             builder.Services.AddAuthorization(options =>
+            {
                 options.AddPolicy(
                     HelpdeskPermissions.SelfServiceUser,
                     policy => policy.RequireRole(
                         HelpdeskPermissions.SelfServiceUser,
-                        HelpdeskPermissions.HelpdeskAdmin)));
+                        HelpdeskPermissions.HelpdeskAdmin));
+                options.AddPolicy("TicketReadAccess", policy => policy.RequireRole(HelpdeskPermissions.SelfServiceUser, HelpdeskPermissions.HelpdeskAdmin));
+            });
 
             var app = builder.Build();
             app.UseAuthentication();

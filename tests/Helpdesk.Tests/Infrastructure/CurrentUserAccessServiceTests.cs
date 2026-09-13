@@ -127,6 +127,13 @@ public class CurrentUserAccessServiceTests
         });
         await db.SaveChangesAsync();
 
+        db.Users.Add(new User { Id = "local-account-1", Name = "Local user", Email = "primary@example.com", OrganizationId = "org-alpha" });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "local-account-1", OrganizationId = "org-alpha", RoleKey = ScopedRoleCatalog.SelfServiceUser
+        });
+        await db.SaveChangesAsync();
+
         var principal = new ClaimsPrincipal(new ClaimsIdentity(
             [
                 new Claim(ClaimTypes.NameIdentifier, "local-account-1"),
@@ -195,7 +202,7 @@ public class CurrentUserAccessServiceTests
 
         var access = await new CurrentUserAccessService(db).ResolveAsync(principal);
 
-        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-a"));
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentWrite, "org-a"));
         Assert.False(access.HasPermission(HelpdeskPermissions.IncidentManager, "org-b"));
         Assert.True(access.HasPermission(HelpdeskPermissions.IncidentUser, "org-b"));
     }
@@ -381,7 +388,7 @@ public class CurrentUserAccessServiceTests
             role.Key == ScopedRoleCatalog.Technician &&
             role.Permissions.Select(permission => permission.Permission)
                 .OrderBy(permission => permission)
-                .SequenceEqual(HelpdeskPermissions.TechnicalBundle.OrderBy(permission => permission)));
+                .SequenceEqual(HelpdeskPermissions.OperatorBundle.OrderBy(permission => permission)));
     }
 
     private static ClaimsPrincipal User(string email, string subject, params string[] groups)

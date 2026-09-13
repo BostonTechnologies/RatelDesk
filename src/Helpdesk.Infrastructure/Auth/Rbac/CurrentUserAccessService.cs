@@ -34,22 +34,30 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
         var localAccountId = IsLocalAccount(user)
             ? user.FindFirstValue(ClaimTypes.NameIdentifier)
             : null;
+        ApplicationUser? localAccount = null;
         if (_identityDb is not null && !string.IsNullOrWhiteSpace(localAccountId))
         {
-            var isEnabled = await _identityDb.Users.AsNoTracking()
-                .AnyAsync(account => account.Id == localAccountId && account.IsEnabled, ct);
-            if (!isEnabled)
+            localAccount = await _identityDb.Users.AsNoTracking()
+                .SingleOrDefaultAsync(account => account.Id == localAccountId, ct);
+            if (localAccount?.IsEnabled != true)
             {
                 return Empty(true);
             }
         }
 
-        var groups = ClaimValues(user, "groups", "provider_role", ClaimTypes.Role, "roles")
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Local role claims are an authorization projection, never a source of
+        // grants. OIDC groups remain an explicit, independent provider source.
+        var groups = string.IsNullOrWhiteSpace(localAccountId)
+            ? ClaimValues(user, user.HasClaim("permission_scope_mode", "scoped")
+                    ? ["groups", "provider_role"]
+                    : ["groups", "provider_role", ClaimTypes.Role, "roles"])
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var bundles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var scopedPermissionGrants = new HashSet<ScopedPermissionGrant>();
-        var isAdmin = groups.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
+        var isAdmin = localAccount?.IsInstanceAdministrator == true ||
+                      groups.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
                       groups.Contains(AuthentikRbacGroups.HelpdeskAdmin);
 
         if (isAdmin)
@@ -99,8 +107,11 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
         var domainUserOrganization = domainUser is null || string.IsNullOrWhiteSpace(domainUser.OrganizationId)
             ? null
             : await _db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == domainUser.OrganizationId, ct);
-        var hasActiveDomainUser = domainUser is not null && domainUserOrganization?.IsEnabled == true;
-        if (hasActiveCustomer)
+        var hasActiveDomainUser = domainUser is not null;
+        // A missing DomainUserId marks a legacy external customer link. Once
+        // linked to an application-managed user, only persisted assignments
+        // supply its application roles, including the zero-assignment case.
+        if (hasActiveCustomer && string.IsNullOrWhiteSpace(localAccountId) && string.IsNullOrWhiteSpace(link!.DomainUserId))
         {
             bundles.Add(HelpdeskRoleBundles.User);
             foreach (var permission in HelpdeskPermissions.UserBundle)
@@ -117,6 +128,7 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
                 }
             }
         }
+        var providerPermissions = permissions.ToArray();
         if (hasActiveDomainUser)
         {
             var assignments = await (
@@ -159,15 +171,11 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
                 }
             }
 
-            if (assignments.Count == 0)
-            {
-                AddLocalRoleBundle(domainUser.Role, bundles, permissions);
-            }
         }
 
         var primaryOrganizationId = hasActiveCustomer
             ? customer!.OrganizationId
-            : hasActiveDomainUser
+            : domainUserOrganization?.IsEnabled == true
                 ? domainUser!.OrganizationId
                 : null;
         var allowedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -197,6 +205,22 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(localAccountId))
+        {
+            // Membership alone is not permission. A local account with no
+            // assignments must remain without access after all later logins.
+            allowedOrganizations.IntersectWith(scopedPermissionGrants.Select(grant => grant.OrganizationId));
+        }
+        else
+        {
+            var providerOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(primaryOrganizationId)) providerOrganizations.Add(primaryOrganizationId);
+            providerOrganizations.UnionWith(managedOrganizations);
+            foreach (var organizationId in providerOrganizations)
+            foreach (var permission in providerPermissions)
+                scopedPermissionGrants.Add(new ScopedPermissionGrant(permission, organizationId));
+        }
+
         return new CurrentUserAccessProfile(
             IsAuthenticated: true,
             Name: user.Identity?.Name ?? FirstClaim(user, "name", "preferred_username") ?? email,
@@ -210,6 +234,7 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
             AllowedOrganizationIds: allowedOrganizations,
             ManagedOrganizationIds: managedOrganizations)
         {
+            UsesScopedPermissions = true,
             ScopedPermissionGrants = scopedPermissionGrants
         };
     }
@@ -248,44 +273,9 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
     private static bool IsLocalAccount(ClaimsPrincipal user) =>
         string.Equals(user.FindFirstValue("auth_mode"), "local", StringComparison.OrdinalIgnoreCase);
 
-    private static void AddLocalRoleBundle(
-        string role,
-        HashSet<string> bundles,
-        HashSet<string> permissions)
-    {
-        var bundle = role switch
-        {
-            "User" => HelpdeskRoleBundles.User,
-            "Technician" => HelpdeskRoleBundles.Technical,
-            _ => null
-        };
-        if (bundle is null)
-        {
-            return;
-        }
-
-        bundles.Add(bundle);
-        foreach (var permission in bundle == HelpdeskRoleBundles.User
-                     ? HelpdeskPermissions.UserBundle
-                     : HelpdeskPermissions.TechnicalBundle)
-        {
-            permissions.Add(permission);
-        }
-    }
-
     private static void AddDirectPermissionClaims(HashSet<string> groups, HashSet<string> permissions)
     {
-        foreach (var permission in new[]
-                 {
-                     HelpdeskPermissions.SelfServiceUser,
-                     HelpdeskPermissions.IncidentUser,
-                     HelpdeskPermissions.IncidentManager,
-                     HelpdeskPermissions.RequestUser,
-                     HelpdeskPermissions.RequestManager,
-                     HelpdeskPermissions.ChangeUser,
-                     HelpdeskPermissions.ChangeManager,
-                     HelpdeskPermissions.DataManagementAdmin
-                 })
+        foreach (var permission in HelpdeskPermissions.AssignablePermissions)
         {
             if (groups.Contains(permission))
             {

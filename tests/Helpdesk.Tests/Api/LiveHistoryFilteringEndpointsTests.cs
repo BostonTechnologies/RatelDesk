@@ -9,6 +9,7 @@ using Helpdesk.API.Endpoints.Changes;
 using Helpdesk.API.Endpoints.Incidents;
 using Helpdesk.API.Endpoints.Requests;
 using Helpdesk.API.Endpoints.RequestTasks;
+using Helpdesk.API.Endpoints.WorkLogs;
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Messaging;
 using Helpdesk.Application.Services.Changes;
@@ -43,7 +44,7 @@ using System.Threading.Channels;
 
 namespace Helpdesk.Tests.Api;
 
-public sealed class LiveHistoryFilteringEndpointsTests
+public sealed partial class LiveHistoryFilteringEndpointsTests
 {
     [Fact]
     public async Task Requests_DefaultsToLiveAndHistoricOnlyReturnsResolved()
@@ -1634,7 +1635,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         public HttpClient Client { get; }
         public CapturingDomainEventPublisher DomainEvents { get; }
 
-        public static async Task<LiveHistoryFilteringHarness> CreateAsync()
+        public static async Task<LiveHistoryFilteringHarness> CreateAsync(CurrentUserAccessProfile? accessProfile = null, Helpdesk.Application.RequestTasks.IRequestTaskLifecycleService? lifecycleService = null)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -1654,6 +1655,10 @@ public sealed class LiveHistoryFilteringEndpointsTests
             builder.Services.AddScoped<IRepository<Change>, EfRepository<Change>>();
             builder.Services.AddScoped<IRepository<KnowledgeBaseArticle>, EfRepository<KnowledgeBaseArticle>>();
             builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
+            if (accessProfile is not null)
+            {
+                builder.Services.AddSingleton<ICurrentUserAccessService>(new FixedTicketAccessService(accessProfile));
+            }
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("org-1", "admin-1", isHelpdeskAdmin: true));
             builder.Services.AddSingleton<CapturingDomainEventPublisher>();
             builder.Services.AddSingleton<IDomainEventPublisher>(sp => sp.GetRequiredService<CapturingDomainEventPublisher>());
@@ -1662,6 +1667,11 @@ public sealed class LiveHistoryFilteringEndpointsTests
             builder.Services.AddSingleton<IImageLinkSigner, TestImageLinkSigner>();
             builder.Services.AddSingleton<ITimelineEventBus, TestTimelineEventBus>();
             builder.Services.AddSingleton<IRequestSender, FailFastRequestSender>();
+            if (lifecycleService is not null)
+            {
+                builder.Services.AddSingleton(lifecycleService);
+                builder.Services.AddSingleton(NSubstitute.Substitute.For<Helpdesk.Application.Workflow.IWorkflowEngine>());
+            }
             builder.Services.AddSingleton<Helpdesk.Application.Services.Tickets.ITicketRefGeneratorService, Helpdesk.Application.Services.Tickets.TicketRefGeneratorService>();
             builder.Services.AddSingleton<IChangeReviewService, TestChangeReviewService>();
             builder.Services.AddSingleton<ITicketNotificationService, NoopTicketNotificationService>();
@@ -1701,37 +1711,37 @@ public sealed class LiveHistoryFilteringEndpointsTests
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Incident.User", "Incident.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Incident.User", "Incident.Read", "Incident.Write", "Incident.Delete", "Incident.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("IncidentManager", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Incident.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Incident.Write", "Incident.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("RequestAccess", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Request.User", "Request.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Request.User", "Request.Read", "Request.Write", "Request.Delete", "Request.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("RequestManager", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Request.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Request.Write", "Request.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("ChangeAccess", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Change.User", "Change.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Change.User", "Change.Read", "Change.Write", "Change.Delete", "Change.Approve", "Change.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("ChangeManager", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Change.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Change.Write", "Change.Manager", "HelpdeskAdmin");
                 });
             });
 
@@ -1742,6 +1752,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
             app.MapRequestEndpoints();
             app.MapChangeEndpoints();
             app.MapRequestTaskEndpoints();
+            app.MapWorkLogEndpoints();
 
             using (var scope = app.Services.CreateScope())
             {

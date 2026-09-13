@@ -160,7 +160,7 @@ public class GraphEmailProcessorTests
             .Options;
         var tenant = Substitute.For<ITenantContext>();
         var db = new HelpdeskDbContext(options, tenant, new HttpContextAccessor());
-        var attachmentService = new TicketAttachmentService(db, env);
+        var attachmentService = new TicketAttachmentService(db, new Helpdesk.Infrastructure.Storage.TicketAttachmentFileStore(env, Microsoft.Extensions.Options.Options.Create(new Helpdesk.Infrastructure.Storage.StorageOptions { RootPath = Path.Combine(tempRoot, "storage") })));
         var emailService = Substitute.For<IEmailService>();
         emailService.SendEmailAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
         var templateRepo = Substitute.For<IRepository<EmailTemplate>>();
@@ -235,7 +235,7 @@ public class GraphEmailProcessorTests
         await mediator.DidNotReceive().Send(Arg.Any<CreateWorkLogCommand>(), Arg.Any<CancellationToken>());
         Assert.Single(db.Attachments);
         var saved = db.Attachments.First();
-        Assert.True(File.Exists(Path.Combine(tempRoot, "wwwroot", "attachments", saved.FilePath)));
+        Assert.True(File.Exists(Path.Combine(tempRoot, "storage", "attachments", saved.FilePath)));
         Assert.Equal(TicketState.WaitingReply, created.State);
         Assert.NotNull(created.UpdatedAt);
         Assert.Equal(customer.Name, created.LastReplierName);
@@ -266,7 +266,7 @@ public class GraphEmailProcessorTests
             .Options;
         var tenant = Substitute.For<ITenantContext>();
         var db = new HelpdeskDbContext(options, tenant, new HttpContextAccessor());
-        var attachmentService = new TicketAttachmentService(db, env);
+        var attachmentService = new TicketAttachmentService(db, new Helpdesk.Infrastructure.Storage.TicketAttachmentFileStore(env, Microsoft.Extensions.Options.Options.Create(new Helpdesk.Infrastructure.Storage.StorageOptions { RootPath = Path.Combine(tempRoot, "storage") })));
         var emailService = Substitute.For<IEmailService>();
         emailService.SendEmailAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
         var templateRepo = Substitute.For<IRepository<EmailTemplate>>();
@@ -330,7 +330,7 @@ public class GraphEmailProcessorTests
             Arg.Any<CancellationToken>());
         Assert.Single(db.Attachments);
         var saved = db.Attachments.First();
-        Assert.True(File.Exists(Path.Combine(tempRoot, "wwwroot", "attachments", saved.FilePath)));
+        Assert.True(File.Exists(Path.Combine(tempRoot, "storage", "attachments", saved.FilePath)));
         Assert.Equal(TicketState.WaitingReply, existing.State);
         Assert.NotNull(existing.UpdatedAt);
         Assert.Equal(customer.Name, existing.LastReplierName);
@@ -409,7 +409,7 @@ public class GraphEmailProcessorTests
             .Options;
         var tenant = Substitute.For<ITenantContext>();
         var db = new HelpdeskDbContext(options, tenant, new HttpContextAccessor());
-        var attachmentService = new TicketAttachmentService(db, env);
+        var attachmentService = new TicketAttachmentService(db, new Helpdesk.Infrastructure.Storage.TicketAttachmentFileStore(env, Microsoft.Extensions.Options.Options.Create(new Helpdesk.Infrastructure.Storage.StorageOptions { RootPath = Path.Combine(tempRoot, "storage") })));
         var emailService = Substitute.For<IEmailService>();
         emailService.SendEmailAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
         var templateRepo = Substitute.For<IRepository<EmailTemplate>>();
@@ -573,7 +573,7 @@ public class GraphEmailProcessorTests
             .Options;
         var tenant = Substitute.For<ITenantContext>();
         var db = new HelpdeskDbContext(options, tenant, new HttpContextAccessor());
-        var attachmentService = new TicketAttachmentService(db, env);
+        var attachmentService = new TicketAttachmentService(db, new Helpdesk.Infrastructure.Storage.TicketAttachmentFileStore(env, Microsoft.Extensions.Options.Options.Create(new Helpdesk.Infrastructure.Storage.StorageOptions { RootPath = Path.Combine(tempRoot, "storage") })));
         var emailService = Substitute.For<IEmailService>();
         emailService.SendEmailAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
         var templateRepo = Substitute.For<IRepository<EmailTemplate>>();

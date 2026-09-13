@@ -1,9 +1,12 @@
 using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Services;
 using Helpdesk.Shared.DTOs.Auth;
 using Helpdesk.Shared.DTOs.User;
 using Dodo.Primitives;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Identity;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -80,11 +83,24 @@ public static class UserEndpoints
             var link = await FindCustomerLoginAsync(issuer, subject, authentikUserId, db);
             if (link is null)
             {
-                return Results.Forbid();
+                // An explicitly authorized external instance administrator does not
+                // require a customer-contact link. Other users need an established identity link.
+                var unlinkedAccess = await accessService.ResolveAsync(principal);
+                return unlinkedAccess.IsHelpdeskAdmin
+                    ? Results.Ok(ToAccessDto(unlinkedAccess))
+                    : Results.Forbid();
             }
+
+            var linkedCustomer = await db.Customers.AsNoTracking().SingleOrDefaultAsync(customer => customer.Id == link.CustomerId);
+            if (linkedCustomer?.IsEnabled != true ||
+                !await db.Organizations.AnyAsync(organization => organization.Id == linkedCustomer.OrganizationId && organization.IsEnabled))
+                return Results.Forbid();
 
             var hasLinkedDomainUser = !string.IsNullOrWhiteSpace(link.DomainUserId) &&
                                       await db.Users.AnyAsync(user => user.Id == link.DomainUserId);
+            if (!hasLinkedDomainUser && !string.IsNullOrWhiteSpace(link.DomainUserId))
+                return Results.Forbid();
+
             if (!hasLinkedDomainUser)
             {
                 var user = new User
@@ -92,10 +108,17 @@ public static class UserEndpoints
                     Id = Uuid.CreateVersion7().ToString(),
                     Name = principal.Identity?.Name ?? FirstClaim(principal, "name") ?? email,
                     Email = email,
-                    Role = "Customer"
+                    Role = "Customer",
+                    OrganizationId = linkedCustomer.OrganizationId
                 };
                 db.Users.Add(user);
                 link.DomainUserId = user.Id;
+                db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+                {
+                    UserId = user.Id,
+                    OrganizationId = linkedCustomer.OrganizationId,
+                    RoleKey = ScopedRoleCatalog.SelfServiceUser
+                });
             }
 
             UpdateCustomerLogin(link, issuer, subject, authentikUserId, preferredUsername, email);
@@ -132,10 +155,17 @@ public static class UserEndpoints
                 : Results.Ok(ToDto(updated));
         });
 
-        group.MapDelete("/{id}", async ([FromRoute] string id, [FromServices] IRepository<User> repo) =>
-            await repo.DeleteAsync(id)
+        group.MapDelete("/{id}", async (
+            [FromRoute] string id,
+            [FromServices] IRepository<User> repo,
+            [FromServices] UserManager<ApplicationUser> users) =>
+        {
+            if (await users.FindByIdAsync(id) is not null)
+                return Results.Conflict(new { error = "local_account_requires_disable", message = "Disable this local account through account management; deleting its application profile does not revoke login." });
+            return await repo.DeleteAsync(id)
                 ? Results.NoContent()
-                : Results.Problem("User not found", statusCode: 404));
+                : Results.Problem("User not found", statusCode: 404);
+        });
     }
 
     private static UserDto ToDto(User user) => new(user.Id, user.Name, user.Email, user.Role, user.IsTestUser, user.OrganizationId);
@@ -153,6 +183,7 @@ public static class UserEndpoints
             access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray())
     {
+        UsesScopedPermissions = access.UsesScopedPermissions,
         ScopedPermissionGrants = access.ScopedPermissionGrants
                 .OrderBy(grant => grant.OrganizationId, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(grant => grant.Permission, StringComparer.OrdinalIgnoreCase)

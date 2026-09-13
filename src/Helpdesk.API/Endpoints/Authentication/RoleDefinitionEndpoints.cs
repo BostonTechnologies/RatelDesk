@@ -250,7 +250,7 @@ public static class RoleDefinitionEndpoints
         }
         if (!RoleDefinitionCatalog.SatisfiesDependencies(permissions))
         {
-            return RoleValidation.Invalid("permissions", "Writer permissions must include their corresponding reader permission.");
+            return RoleValidation.Invalid("permissions", "Write, delete and approval permissions must include their corresponding read permission.");
         }
 
         var existing = await db.Roles.AsNoTracking()

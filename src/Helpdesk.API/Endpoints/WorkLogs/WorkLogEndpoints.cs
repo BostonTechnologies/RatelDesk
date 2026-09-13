@@ -1,3 +1,4 @@
+using Helpdesk.API.Endpoints.Authentication;
 using System.Security.Claims;
 using System.Text.Json;
 using Helpdesk.Application.Messaging;
@@ -6,6 +7,7 @@ using Helpdesk.Application.WorkLogs;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Infrastructure.Storage;
 using Helpdesk.Shared.DTOs.Worklog;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -40,18 +42,18 @@ public static class WorkLogEndpoints
             var timelineQuery = db.TicketTimelineEvents
                 .AsNoTracking()
                 .Where(evt => evt.TicketId == id);
-            if (!authorization.Access!.CanManageIncident(authorization.OrganizationId))
+            if (!CanReadInternalNotes(authorization.Access!, authorization.OrganizationId))
             {
                 timelineQuery = timelineQuery.Where(evt => evt.EventType != Helpdesk.Shared.Enums.TimelineEventType.InternalNote);
             }
 
-            timelineQuery = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
-                ? timelineQuery.OrderBy(evt => evt.CreatedUtc)
-                : timelineQuery.OrderByDescending(evt => evt.CreatedUtc);
-
-            var timeline = await timelineQuery
-                .Select(evt => ToDto(evt))
-                .ToListAsync(ct);
+            // Filter the authorized ticket in SQL, then sort its materialized events.
+            // SQLite does not support DateTimeOffset ordering in SQL.
+            var events = await timelineQuery.ToListAsync(ct);
+            var ordered = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
+                ? events.OrderBy(evt => evt.CreatedUtc)
+                : events.OrderByDescending(evt => evt.CreatedUtc);
+            var timeline = ordered.Select(ToDto).ToList();
 
             return Results.Ok(timeline);
         })
@@ -179,7 +181,7 @@ public static class WorkLogEndpoints
 
         var logger = loggerFactory.CreateLogger("WorkLogEndpoints");
         var reader = eventBus.Subscribe(id);
-        var canManageIncident = authorization.Access!.CanManageIncident(authorization.OrganizationId);
+        var canReadInternalNotes = CanReadInternalNotes(authorization.Access!, authorization.OrganizationId);
 
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Append("Connection", "keep-alive");
@@ -211,13 +213,13 @@ public static class WorkLogEndpoints
                     db,
                     requireManager: false,
                     ct);
-                if (currentAuthorization.Failure is not null)
+                if (!await LocalSessionValidator.IsValidAsync(context, ct) || currentAuthorization.Failure is not null)
                 {
                     logger.LogInformation("Timeline stream authorization revoked {TicketId}", id);
                     break;
                 }
 
-                canManageIncident = currentAuthorization.Access!.CanManageIncident(currentAuthorization.OrganizationId);
+                canReadInternalNotes = CanReadInternalNotes(currentAuthorization.Access!, currentAuthorization.OrganizationId);
 
                 if (completedTask == waitForDataTask)
                 {
@@ -228,7 +230,7 @@ public static class WorkLogEndpoints
 
                     while (reader.TryRead(out var evt))
                     {
-                        if (!canManageIncident && evt.EventType == Helpdesk.Shared.Enums.TimelineEventType.InternalNote)
+                        if (!canReadInternalNotes && evt.EventType == Helpdesk.Shared.Enums.TimelineEventType.InternalNote)
                         {
                             continue;
                         }
@@ -281,6 +283,9 @@ public static class WorkLogEndpoints
             IsRetryable = evt.IsRetryable
         };
     }
+
+    private static bool CanReadInternalNotes(CurrentUserAccessProfile access, string? organizationId) =>
+        access.HasPermission(HelpdeskPermissions.IncidentRead, organizationId) || access.CanManageIncident(organizationId);
 
     private static async Task<IncidentAuthorization> AuthorizeIncidentAsync(
         string incidentId,

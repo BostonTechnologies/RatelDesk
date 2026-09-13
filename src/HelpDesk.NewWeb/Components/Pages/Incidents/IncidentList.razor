@@ -1,5 +1,8 @@
+@using Helpdesk.Shared.Services
+@using Helpdesk.Shared.Auth
+@inject AuthenticationStateProvider AccessAuthenticationState
 @page "/incidents"
-@attribute [Authorize(Roles = "Incident.User,Incident.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Incident.User,Incident.Read,Incident.Write,Incident.Manager,HelpdeskAdmin")]
 @using Helpdesk.Shared.DTOs.User
 
 @inject NavigationManager NavigationManager
@@ -21,7 +24,10 @@
                            aria-label="Show historic incidents"
                            OnClick="ToggleHistoric" />
         </MudTooltip>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+        @if (CanCreate)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+        }
     </MudStack>
 
     <div class="helpdesk-list-toolbar">
@@ -44,13 +50,15 @@
     <TicketTable TTicket="IncidentDto"
                  @ref="_table"
                  TicketType="incidents"
+                 CanEditItem="@(item => accessProfile?.CanManageIncident(item.OrganizationId) == true)"
+                 EnableSelection="@CanWriteAny"
                  ServerData="LoadServerData"
                  SelectedItems="_selected"
                  SelectedItemsChanged="@(x => _selected = x)"
                  OnRowClick="NavigateToIncident"
                  BulkStateRequested="ApplyBulkState"
                  BulkAssignRequested="ApplyBulkAssign"
-                 BulkActions="IncidentBulkActions"
+                 BulkActions="AvailableBulkActions"
                  BulkActionRequested="ApplyBulkAction">
         <SubjectTemplate Context="incident">
             <MudStack Spacing="0">
@@ -83,14 +91,17 @@
         </SubjectTemplate>
         <AssigneeTemplate Context="incident">
             <TicketAssigneePicker
+                ReadOnly="@(accessProfile?.CanManageIncident(incident.OrganizationId) != true)"
+                OrganizationId="@incident.OrganizationId"
                 TicketId="@incident.Id"
                 TicketType="incidents"
                 AssignedToId="@incident.AssignedToId"
                 AssignedToIdChanged="@(x => incident.AssignedToId = x)"
-                TeamMembers="teamMembers" />
+                TeamMembers="@(teamMembers.Where(user => string.Equals(user.OrganizationId, incident.OrganizationId, StringComparison.OrdinalIgnoreCase)).ToList())" />
         </AssigneeTemplate>
         <CustomerTemplate Context="incident">
             <TicketCustomerPicker
+                ReadOnly="@(accessProfile?.CanManageIncident(incident.OrganizationId) != true)"
                 TicketId="@incident.Id"
                 TicketType="incidents"
                 OrganizationId="@incident.OrganizationId"
@@ -104,6 +115,11 @@
 </div>
 
 @code {
+    private CurrentUserAccessProfile? accessProfile;
+    private bool CanWriteAny => accessProfile?.HasPermission(HelpdeskPermissions.IncidentWrite) == true || accessProfile?.HasPermission(HelpdeskPermissions.IncidentManager) == true;
+    private bool CanCreate => CanWriteAny || accessProfile?.HasPermission(HelpdeskPermissions.IncidentUser) == true;
+    protected override async Task OnInitializedAsync() => accessProfile = CurrentUserAccessProfile.FromClaims((await AccessAuthenticationState.GetAuthenticationStateAsync()).User);
+
     [Parameter]
     [SupplyParameterFromQuery]
     public string? State { get; set; }
@@ -124,6 +140,9 @@
     private bool aiInvolvedOnly;
     private bool historicOnly;
     private string? appliedQuerySearch;
+    private IReadOnlyList<TicketTable<IncidentDto>.BulkActionOption> AvailableBulkActions =>
+        _selected.Count > 0 && _selected.All(item => accessProfile?.CanDeleteIncident(item.OrganizationId) == true)
+            ? IncidentBulkActions : IncidentBulkActions.Where(action => action.Key != "delete").ToList();
     private static readonly IReadOnlyList<TicketTable<IncidentDto>.BulkActionOption> IncidentBulkActions =
     [
         new("delete", "Delete"),
@@ -161,12 +180,6 @@
         if (!string.IsNullOrWhiteSpace(search))
             url += $"&q={Uri.EscapeDataString(search)}";
 
-        // Ensure team members are loaded (once)
-        if (teamMembers.Count == 0)
-        {
-            try { teamMembers = await HelpdeskApi.GetFromJsonAsync<List<UserDto>>("api/v1/users", token) ?? new(); }
-            catch { teamMembers = new(); }
-        }
 
         var resp = await HelpdeskApi.GetFromJsonAsync<PagedResponse<IncidentDto>>(url, token);
 
@@ -223,7 +236,7 @@
 
     private async Task ApplyBulkState()
     {
-        if (_selected.Count == 0 || _table is null) return;
+        if (_selected.Count == 0 || _table is null || _selected.Any(item => accessProfile?.CanManageIncident(item.OrganizationId) != true)) return;
         var selectedState = _table.SelectedBulkState;
         var ids = _selected.Select(x => x.Id).ToList();
         var resp = await HelpdeskApi.PostAsJsonAsync("/api/v1/incidents/bulk/state", new { Ids = ids, NewState = selectedState, Comment = (string?)null });
@@ -240,7 +253,7 @@
 
     private async Task ApplyBulkAssign()
     {
-        if (_selected.Count == 0 || _table is null) return;
+        if (_selected.Count == 0 || _table is null || _selected.Any(item => accessProfile?.CanManageIncident(item.OrganizationId) != true)) return;
         var assigneeId = _table.SelectedBulkAssigneeId;
         var ids = _selected.Select(x => x.Id).ToList();
         var resp = await HelpdeskApi.PostAsJsonAsync("/api/v1/incidents/bulk/assign", new { Ids = ids, AssignedToId = assigneeId });
@@ -264,7 +277,7 @@
 
     private async Task ApplyBulkDelete()
     {
-        if (_selected.Count == 0) return;
+        if (_selected.Count == 0 || _selected.Any(item => accessProfile?.CanDeleteIncident(item.OrganizationId) != true)) return;
         var count = _selected.Count;
         var confirm = await DialogService.ShowMessageBoxAsync(
             $"Delete {count} selected tickets?",

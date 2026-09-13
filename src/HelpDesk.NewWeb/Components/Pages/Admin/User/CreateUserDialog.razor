@@ -1,7 +1,9 @@
 @using System.ComponentModel.DataAnnotations
 @using Helpdesk.Shared.DTOs.Organization
 @inject IHttpClientFactory HttpClientFactory
-@inject IConfiguration Configuration
+@inject HelpDesk.NewWeb.Models.WebAuthenticationMode AuthenticationMode
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
 
 <MudDialog>
     <TitleContent>
@@ -11,7 +13,7 @@
         </MudText>
     </TitleContent>
     <DialogContent>
-        <MudForm Model="model" @ref="form" OnValidSubmit="Submit" Class="mt-2">
+        <MudForm Disabled="@(_created || _busy)" Model="model" @ref="form" OnValidSubmit="Submit" Class="mt-2">
             <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
             <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
             @if (SupportsLocalAccounts)
@@ -51,12 +53,16 @@
         @if (!string.IsNullOrWhiteSpace(_activationToken))
         {
             <MudAlert Severity="Severity.Warning" Class="mt-4">Copy this one-time activation token now. It cannot be displayed again.</MudAlert>
+            <MudText Typo="Typo.body2">Activation page: @Navigation.ToAbsoluteUri("activate")</MudText>
             <MudTextField Value="@_activationToken" Label="Activation token" ReadOnly="true" Variant="Variant.Outlined" FullWidth="true" Class="mt-2" />
         }
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">Create</MudButton>
+        <MudButton OnClick="Cancel">@(_created ? "Done" : "Cancel")</MudButton>
+        @if (!_created)
+        {
+            <MudButton OnClick="Submit" Disabled="_busy" Color="Color.Primary" Variant="Variant.Filled">Create</MudButton>
+        }
     </DialogActions>
 </MudDialog>
 
@@ -69,10 +75,9 @@
     private List<OrganizationDto> organizations = new();
     private string? _activationToken;
 
-    private bool SupportsLocalAccounts =>
-        string.Equals(Configuration["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(Configuration["Authentication:Mode"], "Hybrid", StringComparison.OrdinalIgnoreCase);
-
+    private bool SupportsLocalAccounts => AuthenticationMode.SupportsLocalAccounts;
+    private bool _created;
+    private bool _busy;
     protected override async Task OnInitializedAsync()
     {
         organizations = (await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations") ?? new())
@@ -83,11 +88,15 @@
 
     private async Task Submit()
     {
+        if (_created || _busy) return;
         await form.ValidateAsync();
         if (form.IsValid)
         {
             if (SupportsLocalAccounts)
             {
+                _busy = true;
+                try
+                {
                 var localAccountResponse = await HelpdeskApi.PostAsJsonAsync("api/v1/local-auth/users", new
                 {
                     displayName = model.Name,
@@ -101,8 +110,12 @@
                 {
                     var activation = await localAccountResponse.Content.ReadFromJsonAsync<LocalAccountActivationResponse>();
                     _activationToken = activation?.ActivationToken;
+                    _created = true;
                 }
-
+                else Snackbar.Add("The account could not be created. Check its email, organization and access bundle.", Severity.Error);
+                }
+                catch (HttpRequestException) { Snackbar.Add("The account service is unavailable. Please retry.", Severity.Error); }
+                finally { _busy = false; }
                 return;
             }
 
@@ -114,7 +127,11 @@
         }
     }
 
-    private void Cancel() => Dialog.Cancel();
+    private void Cancel()
+    {
+        if (_created) Dialog.Close(DialogResult.Ok(true));
+        else Dialog.Cancel();
+    }
 
     public class CreateUserModel
     {

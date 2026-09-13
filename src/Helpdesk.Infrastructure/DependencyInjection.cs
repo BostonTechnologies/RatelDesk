@@ -64,13 +64,15 @@ public static class DependencyInjection
             DatabaseProvider.PostgreSql when !string.IsNullOrWhiteSpace(legacyPostgreSqlConnectionString) => legacyPostgreSqlConnectionString,
             DatabaseProvider.PostgreSql => throw new InvalidOperationException(
                 "ConnectionStrings:HelpdeskDb is required when Database:Provider is PostgreSql."),
-            DatabaseProvider.Sqlite when !string.IsNullOrWhiteSpace(databaseOptions.Sqlite.Path) => CreateSqliteConnectionString(databaseOptions.Sqlite.Path),
+            DatabaseProvider.Sqlite when !string.IsNullOrWhiteSpace(databaseOptions.Sqlite.Path) => CreateSqliteConnectionString(databaseOptions.Sqlite),
             _ => throw new InvalidOperationException("Database:Sqlite:Path is required when Database:Provider is Sqlite.")
         };
 
         services.AddHttpContextAccessor();
         services.AddOptions<Helpdesk.Infrastructure.AiAssistant.Chat.AiAssistantChatOptions>()
             .Bind(configuration.GetSection("AiAssistantChat"))
+            .Validate(x => !x.Enabled || databaseProvider is DatabaseProvider.PostgreSql,
+                "Native AI Assistant chat requires PostgreSQL for durable session ownership. Set AiAssistantChat:Enabled=false to use SQLite with webhook AI assistance.")
             .Validate(x => x.IsValid(), "Enabled chat requires Dev instance, session hub, credential, positive limits, and an activity heartbeat shorter than the turn inactivity timeout; private HTTP requires explicit opt-in.")
             .ValidateOnStart();
         services.AddSingleton(TimeProvider.System);
@@ -138,6 +140,8 @@ public static class DependencyInjection
         services.AddScoped<ISupportNotificationRecipientResolver, SupportNotificationRecipientResolver>();
         services.AddScoped<ISupportNotificationService, SupportNotificationService>();
         services.AddScoped<ISupportNotificationBootstrapper, SupportNotificationBootstrapper>();
+        services.AddSingleton<TicketAttachmentFileStore>();
+        services.AddHostedService(sp => sp.GetRequiredService<TicketAttachmentFileStore>());
         services.AddScoped<ITicketAttachmentService, TicketAttachmentService>();
         services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();
         services.AddScoped<IInboundInlineImageResolver, InboundInlineImageResolver>();
@@ -258,17 +262,28 @@ public static class DependencyInjection
             sqlite.MigrationsAssembly(SqliteMigrationsAssembly));
     }
 
-    private static string CreateSqliteConnectionString(string configuredPath)
+    private static string CreateSqliteConnectionString(SqliteDatabaseOptions options)
     {
-        var path = Path.GetFullPath(configuredPath);
+        var path = Path.GetFullPath(options.Path);
         var directory = Path.GetDirectoryName(path);
         if (string.IsNullOrWhiteSpace(directory))
         {
             throw new InvalidOperationException("Database:Sqlite:Path must include a directory.");
         }
 
-        Directory.CreateDirectory(directory);
-        return $"Data Source={path};Cache=Shared;Foreign Keys=True";
+        if (options.CreateIfMissing)
+        {
+            Directory.CreateDirectory(directory);
+        }
+        return new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Cache = Microsoft.Data.Sqlite.SqliteCacheMode.Shared,
+            ForeignKeys = true,
+            Mode = options.CreateIfMissing
+                ? Microsoft.Data.Sqlite.SqliteOpenMode.ReadWriteCreate
+                : Microsoft.Data.Sqlite.SqliteOpenMode.ReadWrite
+        }.ToString();
     }
 
     private static void AddRepositoryRegistrations(IServiceCollection services)

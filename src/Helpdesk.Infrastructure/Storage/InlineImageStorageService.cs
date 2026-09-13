@@ -1,3 +1,4 @@
+using Helpdesk.Application.Services.Branding;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
 using Helpdesk.Application.WorkLogs;
@@ -11,7 +12,8 @@ public sealed class InlineImageStorageService(
     IHostEnvironment env,
     IOptions<StorageOptions> options,
     IImageLinkSigner imageLinkSigner,
-    ILogger<InlineImageStorageService> logger) : IInlineImageStorageService
+    ILogger<InlineImageStorageService> logger,
+    IInstanceBrandingProvider? brandingProvider = null) : IInlineImageStorageService
 {
     private readonly string _storageRoot = string.IsNullOrWhiteSpace(options.Value.RootPath)
         ? Path.Combine(env.ContentRootPath, "storage")
@@ -44,9 +46,7 @@ public sealed class InlineImageStorageService(
         var relative =
             $"/api/incidents/{Uri.EscapeDataString(safeIncidentId)}/images/{Uri.EscapeDataString(safeFilename)}?token={Uri.EscapeDataString(token)}";
 
-        return string.IsNullOrWhiteSpace(_publicApiBaseUrl)
-            ? relative
-            : $"{_publicApiBaseUrl.TrimEnd('/')}{relative}";
+        return await PublicResourceUrl.BuildAsync(relative, _publicApiBaseUrl, brandingProvider);
     }
 
     public async Task<string> SaveWorklogInlineImageAsync(
@@ -68,9 +68,7 @@ public sealed class InlineImageStorageService(
         var relative =
             $"/api/worklogs/{Uri.EscapeDataString(safeWorklogId)}/images/{Uri.EscapeDataString(safeFilename)}?token={Uri.EscapeDataString(token)}";
 
-        return string.IsNullOrWhiteSpace(_publicApiBaseUrl)
-            ? relative
-            : $"{_publicApiBaseUrl.TrimEnd('/')}{relative}";
+        return await PublicResourceUrl.BuildAsync(relative, _publicApiBaseUrl, brandingProvider);
     }
 
     private static string SanitizePathSegment(string value)
