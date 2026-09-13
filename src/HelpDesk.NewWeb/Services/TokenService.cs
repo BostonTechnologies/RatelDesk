@@ -22,7 +22,7 @@ public interface ITokenService
 
 public class TokenService : ITokenService
 {
-    private const string RefreshedAccessTokenItemKey = "Helpdesk.RefreshedAccessToken";
+    internal const string RefreshedAccessTokenItemKey = "Helpdesk.RefreshedAccessToken";
     internal const string SessionRefreshedItemKey = "Helpdesk.SessionRefreshed";
     private static readonly TimeSpan HelpdeskSessionLifetime = TimeSpan.FromHours(8);
     private static readonly TimeSpan RecentRefreshResultLifetime = TimeSpan.FromSeconds(30);
@@ -65,6 +65,11 @@ public class TokenService : ITokenService
         if (!auth.Succeeded)
             return null;
 
+        // Local sessions are authenticated by the shared API/Web data-protection
+        // cookie. They do not carry OIDC access or refresh tokens.
+        if (IsLocalSession(auth.Principal ?? ctx.User))
+            return null;
+
         var refreshed = await TryRefreshSessionAsync(ctx, auth, ctx.RequestAborted);
         if (!refreshed)
             return null;
@@ -92,6 +97,9 @@ public class TokenService : ITokenService
         }
 
         var sessionPrincipal = auth.Principal ?? ctx.User;
+        if (IsLocalSession(sessionPrincipal))
+            return true;
+
         if (IsDevelopmentOperator(sessionPrincipal, properties))
             return await RefreshDevelopmentOperatorAsync(ctx, auth);
 
@@ -254,6 +262,9 @@ public class TokenService : ITokenService
         return user.Claims.Any(c => c.Type == "auth_mode" && string.Equals(c.Value, "ai_agent", StringComparison.OrdinalIgnoreCase))
             || user.Claims.Any(c => c.Type == "identity_provider" && string.Equals(c.Value, "authentik_ai_agent", StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool IsLocalSession(ClaimsPrincipal user) =>
+        user.Claims.Any(c => c.Type == "auth_mode" && string.Equals(c.Value, "local", StringComparison.OrdinalIgnoreCase));
 
     private static string? ExtractClaim(string jwt, string claimType)
     {

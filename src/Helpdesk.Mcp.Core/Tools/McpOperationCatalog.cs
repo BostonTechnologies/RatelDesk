@@ -146,7 +146,7 @@ public static class McpOperationCatalog
         foreach (var operation in new[] { "ai_kb_settings", "ai_kb_readiness", "ai_kb_runtime_status" })
             yield return Operation("helpdesk_organizations", operation, "OrganizationRequest", "GET", $"/api/v1/organizations/{{organizationId}}/{operation.Replace('_', '-')}", false);
 
-        foreach (var resource in new[] { ("helpdesk_customers", "/api/v1/customers", "customer"), ("helpdesk_users", "/api/v1/users", "user"), ("helpdesk_roles", "/api/v1/roles", "role") })
+        foreach (var resource in new[] { ("helpdesk_customers", "/api/v1/customers", "customer"), ("helpdesk_users", "/api/v1/users", "user"), ("helpdesk_roles", "/api/v1/admin/role-definitions", "role") })
         {
             yield return Operation(resource.Item1, "list", "ListRequest", "GET", resource.Item2 + "/", false);
             yield return Operation(resource.Item1, "get", $"{resource.Item3[..1].ToUpperInvariant()}{resource.Item3[1..]}Request", "GET", $"{resource.Item2}/{{{resource.Item3}Id}}", false);
@@ -223,12 +223,15 @@ public static class McpOperationCatalog
 
     private static IEnumerable<(string Operation, string Method, string Path)> AdminOperations()
     {
-        foreach (var (resource, singular) in new[] { ("organizations", "organization"), ("customers", "customer"), ("users", "user"), ("roles", "role"), ("categories", "category"), ("services", "service") })
+        foreach (var (resource, singular) in new[] { ("organizations", "organization"), ("customers", "customer"), ("users", "user"), ("categories", "category"), ("services", "service") })
         {
             yield return ($"create_{singular}", "POST", $"/api/v1/{resource}");
             yield return ($"update_{singular}", "PUT", $"/api/v1/{resource}/{{{singular}Id}}");
             yield return ($"delete_{singular}", "DELETE", $"/api/v1/{resource}/{{{singular}Id}}");
         }
+        yield return ("create_role", "POST", "/api/v1/admin/role-definitions");
+        yield return ("update_role", "PUT", "/api/v1/admin/role-definitions/{roleId}");
+        yield return ("delete_role", "DELETE", "/api/v1/admin/role-definitions/{roleId}");
         yield return ("create_request_form", "POST", "/api/v1/request-forms");
         yield return ("create_service_request_form", "POST", "/api/v1/services/{serviceId}/forms/");
         yield return ("provision_user", "POST", "/api/v1/users/provision");

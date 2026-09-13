@@ -318,12 +318,12 @@ public sealed class RequestTaskApprovalService(
     public async Task<int> ExpireOverdueApprovalsAsync(CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
-        var tasks = await db.RequestTasks
-            .Where(x => x.Type == RequestTaskType.Approval
-                && x.Status == RequestTaskStatus.PendingApproval
-                && x.DueAt != null
-                && x.DueAt <= now)
-            .ToListAsync(ct);
+        var pending = db.RequestTasks.Where(x =>
+            x.Type == RequestTaskType.Approval && x.Status == RequestTaskStatus.PendingApproval);
+        var overdue = db.Database.IsSqlite()
+            ? pending.Where(x => EF.Property<long?>(x, "DueAtUtcTicks") <= now.UtcTicks)
+            : pending.Where(x => x.DueAt.HasValue && x.DueAt <= now);
+        var tasks = await overdue.ToListAsync(ct);
         var expired = 0;
         foreach (var task in tasks)
         {

@@ -344,14 +344,15 @@ public static class DatasetEndpoints
 
         var selfService = app.MapGroup("/api/v1/self-service/datasets")
             .WithTags("Self Service")
-            .RequireAuthorization();
+            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
 
         selfService.MapGet("/{datasetId}/options", async (
             string datasetId,
             [FromQuery] string? query,
             [FromQuery] int page,
             [FromQuery] int pageSize,
-            [FromServices] ITenantContext tenant,
+            ClaimsPrincipal user,
+            ICurrentUserAccessService accessService,
             IDataManagementService dataManagementService,
             CancellationToken token) =>
         {
@@ -361,25 +362,15 @@ public static class DatasetEndpoints
                 return Results.NotFound();
             }
 
-            var effectiveOrganizationId = !string.IsNullOrWhiteSpace(tenant.TenantId)
-                ? tenant.TenantId
-                : tenant.IsHelpdeskAdmin
-                    ? dataset.OrganizationId
-                    : null;
-
-            if (string.IsNullOrWhiteSpace(effectiveOrganizationId))
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.HasPermission(HelpdeskPermissions.SelfServiceUser, dataset.OrganizationId))
             {
-                return Results.Ok(new Helpdesk.Shared.DTOs.PagedResult<DatasetOptionDto>
-                {
-                    Page = page == 0 ? 1 : page,
-                    PageSize = pageSize == 0 ? 25 : pageSize,
-                    Total = 0
-                });
+                return Results.NotFound();
             }
 
             var options = await dataManagementService.GetOptionsAsync(
                 datasetId,
-                effectiveOrganizationId,
+                dataset.OrganizationId,
                 query,
                 page == 0 ? 1 : page,
                 pageSize == 0 ? 25 : pageSize,
@@ -410,9 +401,7 @@ public static class DatasetEndpoints
     }
 
     private static bool CanAccessOrganization(CurrentUserAccessProfile access, string? organizationId) =>
-        access.IsHelpdeskAdmin ||
-        !string.IsNullOrWhiteSpace(organizationId) &&
-        access.AllowedOrganizationIds.Contains(organizationId);
+        access.HasPermission(HelpdeskPermissions.DataManagementAdmin, organizationId);
 
     private static async Task<DatasetApiAccessCheck> CanManageDatasetApiAsync(
         string datasetId,

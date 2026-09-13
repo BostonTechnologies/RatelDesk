@@ -5,7 +5,11 @@ using Dodo.Primitives;
 
 namespace Helpdesk.Application.Dashboard;
 
-public record GetTechnicianDashboardQuery(string TechnicianId) : IRequest<TechnicianDashboardDto>;
+public record GetTechnicianDashboardQuery(
+    string TechnicianId,
+    IReadOnlySet<string> IncidentOrganizationIds,
+    IReadOnlySet<string> ChangeOrganizationIds,
+    bool IsHelpdeskAdmin) : IRequest<TechnicianDashboardDto>;
 
 public record TechnicianDashboardDto(int OpenIncidentsCount, int ResolvedTodayCount, int PendingChangesCount);
 
@@ -15,12 +19,29 @@ public class GetTechnicianDashboardQueryHandler(
 {
     public async Task<TechnicianDashboardDto> Handle(GetTechnicianDashboardQuery request, CancellationToken cancellationToken)
     {
-        var allIncidents = await incidents.GetAllAsync();
-        var open = allIncidents.Count(i => i.AssignedToId == request.TechnicianId && i.State != TicketState.Resolved);
-        var resolvedToday = allIncidents.Count(i => i.AssignedToId == request.TechnicianId && i.State == TicketState.Resolved && i.UpdatedAt?.Date == DateTime.UtcNow.Date);
+        var incidentOrganizationIds = request.IncidentOrganizationIds.ToArray();
+        var changeOrganizationIds = request.ChangeOrganizationIds.ToArray();
+        var today = DateTime.UtcNow.Date;
+        var tomorrow = today.AddDays(1);
 
-        var allChanges = await changes.GetAllAsync();
-        var pendingChanges = allChanges.Count(c => c.State != TicketState.Resolved);
+        var open = await incidents.CountAsync(incident =>
+            incident.AssignedToId == request.TechnicianId &&
+            (request.IsHelpdeskAdmin ||
+             (incident.OrganizationId != null && incidentOrganizationIds.Contains(incident.OrganizationId))) &&
+            incident.State != TicketState.Resolved,
+            cancellationToken);
+        var resolvedToday = await incidents.CountAsync(incident =>
+            incident.AssignedToId == request.TechnicianId &&
+            (request.IsHelpdeskAdmin ||
+             (incident.OrganizationId != null && incidentOrganizationIds.Contains(incident.OrganizationId))) &&
+            incident.State == TicketState.Resolved &&
+            incident.UpdatedAt >= today && incident.UpdatedAt < tomorrow,
+            cancellationToken);
+        var pendingChanges = await changes.CountAsync(change =>
+            change.State != TicketState.Resolved &&
+            (request.IsHelpdeskAdmin ||
+             (change.OrganizationId != null && changeOrganizationIds.Contains(change.OrganizationId))),
+            cancellationToken);
 
         return new TechnicianDashboardDto(open, resolvedToday, pendingChanges);
     }

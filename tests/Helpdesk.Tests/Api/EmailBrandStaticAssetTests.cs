@@ -10,7 +10,7 @@ public class EmailBrandStaticAssetTests : IClassFixture<WebApplicationFactory<Pr
 
     public EmailBrandStaticAssetTests(WebApplicationFactory<Program> factory)
     {
-        _factory = factory;
+        _factory = factory.WithWebHostBuilder(builder => builder.UseIsolatedTestStorage());
     }
 
     [Fact]

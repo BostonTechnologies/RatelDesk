@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Helpdesk.Application.Sla;
 using Helpdesk.Shared.DTOs.Sla;
 using Helpdesk.Shared.Enums;
@@ -19,11 +20,12 @@ public static class SlaReportEndpoints
             [FromQuery] TicketType? ticketType,
             [FromQuery] DateTimeOffset fromUtc,
             [FromQuery] DateTimeOffset toUtc,
-            [FromServices] ITenantContext tenantContext,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] ISlaReportingQueryService reporting,
             CancellationToken ct) =>
         {
-            var resolvedTenant = ResolveTenantScope(tenantContext, tenantId);
+            var resolvedTenant = await ResolveTenantScopeAsync(user, accessService, tenantId, ticketType, ct);
             if (!resolvedTenant.Allowed)
             {
                 return Results.Forbid();
@@ -47,11 +49,12 @@ public static class SlaReportEndpoints
             [FromQuery] TicketType? ticketType,
             [FromQuery] int page,
             [FromQuery] int pageSize,
-            [FromServices] ITenantContext tenantContext,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] ISlaReportingQueryService reporting,
             CancellationToken ct) =>
         {
-            var resolvedTenant = ResolveTenantScope(tenantContext, tenantId);
+            var resolvedTenant = await ResolveTenantScopeAsync(user, accessService, tenantId, ticketType, ct);
             if (!resolvedTenant.Allowed)
             {
                 return Results.Forbid();
@@ -77,11 +80,12 @@ public static class SlaReportEndpoints
             [FromQuery] int thresholdPercent,
             [FromQuery] int page,
             [FromQuery] int pageSize,
-            [FromServices] ITenantContext tenantContext,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] ISlaReportingQueryService reporting,
             CancellationToken ct) =>
         {
-            var resolvedTenant = ResolveTenantScope(tenantContext, tenantId);
+            var resolvedTenant = await ResolveTenantScopeAsync(user, accessService, tenantId, ticketType, ct);
             if (!resolvedTenant.Allowed)
             {
                 return Results.Forbid();
@@ -110,11 +114,12 @@ public static class SlaReportEndpoints
             [FromQuery] bool? withinResolutionSla,
             [FromQuery] int page,
             [FromQuery] int pageSize,
-            [FromServices] ITenantContext tenantContext,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] ISlaReportingQueryService reporting,
             CancellationToken ct) =>
         {
-            var resolvedTenant = ResolveTenantScope(tenantContext, tenantId);
+            var resolvedTenant = await ResolveTenantScopeAsync(user, accessService, tenantId, ticketType, ct);
             if (!resolvedTenant.Allowed)
             {
                 return Results.Forbid();
@@ -137,20 +142,44 @@ public static class SlaReportEndpoints
         .WithSummary("Gets completed tickets with SLA outcomes.");
     }
 
-    private static TenantScopeResolution ResolveTenantScope(ITenantContext tenantContext, string? requestedTenantId)
+    private static async Task<TenantScopeResolution> ResolveTenantScopeAsync(
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        string? requestedTenantId,
+        TicketType? ticketType,
+        CancellationToken ct)
     {
-        if (tenantContext.IsHelpdeskAdmin)
+        var access = await accessService.ResolveAsync(user, ct);
+        if (access.IsHelpdeskAdmin)
         {
-            return new TenantScopeResolution(true, requestedTenantId);
+            return new TenantScopeResolution(true, requestedTenantId?.Trim());
         }
 
-        if (string.IsNullOrWhiteSpace(tenantContext.TenantId))
+        var tenantId = string.IsNullOrWhiteSpace(requestedTenantId)
+            ? access.PrimaryOrganizationId
+            : requestedTenantId.Trim();
+        if (string.IsNullOrWhiteSpace(tenantId))
         {
             return new TenantScopeResolution(false, null);
         }
 
-        return new TenantScopeResolution(true, tenantContext.TenantId);
+        return new TenantScopeResolution(CanManageReportedTicketType(access, tenantId, ticketType), tenantId);
     }
+
+    private static bool CanManageReportedTicketType(
+        CurrentUserAccessProfile access,
+        string organizationId,
+        TicketType? ticketType) =>
+        ticketType switch
+        {
+            TicketType.Incident => access.CanManageIncident(organizationId),
+            TicketType.Request => access.CanManageRequest(organizationId),
+            TicketType.Change => access.CanManageChange(organizationId),
+            null => access.CanManageIncident(organizationId) &&
+                    access.CanManageRequest(organizationId) &&
+                    access.CanManageChange(organizationId),
+            _ => false
+        };
 
     private readonly record struct TenantScopeResolution(bool Allowed, string? TenantId);
 }

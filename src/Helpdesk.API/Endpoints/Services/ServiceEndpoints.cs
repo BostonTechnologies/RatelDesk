@@ -2,6 +2,8 @@
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Resources;
 using Helpdesk.Application.RequestTasks;
+using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.RequestForm;
 using Helpdesk.Shared.DTOs.Service;
@@ -20,11 +22,12 @@ public static class ServiceEndpoints
         // -------- Mixed "items" (services + forms) for explorer --------
         var itemsGroup = app.MapGroup("/api/v1/service-items")
             .WithTags("Services")
-            .RequireAuthorization();
+            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
 
         itemsGroup.MapGet("/search", async (
             [FromServices] IRepository<Service> servicesRepo,
             [FromServices] IRepository<RequestForm> formsRepo,
+            [FromServices] HelpdeskDbContext db,
             [FromServices] ITenantContext tenant,
             [FromServices] ISelfServiceAudienceService selfServiceAudienceService,
             [FromQuery] string? q,
@@ -48,12 +51,24 @@ public static class ServiceEndpoints
             if (!string.IsNullOrWhiteSpace(term))
             {
                 var like = $"%{term}%";
-                servicesQuery = servicesQuery.Where(s =>
-                    EF.Functions.ILike(s.Name, like) ||
-                    EF.Functions.ILike(s.Description, like));
-                formsQuery = formsQuery.Where(f =>
-                    EF.Functions.ILike(f.Title, like) ||
-                    EF.Functions.ILike(f.Description!, like));
+                if (db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+                {
+                    servicesQuery = servicesQuery.Where(s =>
+                        EF.Functions.ILike(s.Name, like) ||
+                        EF.Functions.ILike(s.Description, like));
+                    formsQuery = formsQuery.Where(f =>
+                        EF.Functions.ILike(f.Title, like) ||
+                        EF.Functions.ILike(f.Description!, like));
+                }
+                else
+                {
+                    servicesQuery = servicesQuery.Where(s =>
+                        EF.Functions.Like(s.Name, like) ||
+                        EF.Functions.Like(s.Description, like));
+                    formsQuery = formsQuery.Where(f =>
+                        EF.Functions.Like(f.Title, like) ||
+                        EF.Functions.Like(f.Description!, like));
+                }
             }
 
             var serviceItems = await servicesQuery.Select(s => new ServiceItemDto
@@ -165,7 +180,7 @@ public static class ServiceEndpoints
         // -------- Services CRUD + helpers --------
         var services = app.MapGroup("/api/v1/services")
             .WithTags("Services")
-            .RequireAuthorization();
+            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
 
         services.MapGet("/", async ([FromServices] IRepository<Service> repo) =>
         {
@@ -206,7 +221,10 @@ public static class ServiceEndpoints
                 return Results.Forbid();
             }
 
-            var chain = BuildBreadcrumb(current, dict);
+            var visibleServices = tenant.IsHelpdeskAdmin
+                ? all
+                : all.Where(service => IsAllowedForTenant(service.AllowedOrganizationIds, tenant.TenantId));
+            var chain = BuildBreadcrumb(current, visibleServices.ToDictionary(service => service.Id));
             return Results.Ok(chain);
         })
         .RequireAuthorization()
@@ -287,7 +305,7 @@ public static class ServiceEndpoints
 
         var formsTop = app.MapGroup("/api/v1/request-forms")
             .WithTags("Request Forms")
-            .RequireAuthorization();
+            .RequireAuthorization(HelpdeskPermissions.SelfServiceUser);
 
         formsTop.MapGet("/{id}", async (
             string id,

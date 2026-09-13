@@ -26,8 +26,12 @@ public class TicketSlaService(
     {
         var ticket = await _tickets.GetAsync(ticketId)
             ?? throw new KeyNotFoundException($"Ticket '{ticketId}' was not found.");
+        await PauseAsync(ticket, userId, reason);
+    }
 
-        var state = await _ticketSlaRepository.GetByTicketIdForUpdateAsync(ticketId);
+    public async Task PauseAsync(Ticket ticket, string userId, string reason)
+    {
+        var state = await _ticketSlaRepository.GetByTicketIdForUpdateAsync(ticket.Id);
         if (state is null)
         {
             return;
@@ -53,7 +57,7 @@ public class TicketSlaService(
         await _ticketSlaRepository.UpdateAsync(state);
         await _domainEvents.PublishAsync(
             new TicketSlaPausedDomainEvent(
-                ticketId,
+                ticket.Id,
                 ticket.OrganizationId,
                 null,
                 state.Status,
@@ -67,8 +71,12 @@ public class TicketSlaService(
     {
         var ticket = await _tickets.GetAsync(ticketId)
             ?? throw new KeyNotFoundException($"Ticket '{ticketId}' was not found.");
+        await ResumeAsync(ticket, userId);
+    }
 
-        var state = await _ticketSlaRepository.GetByTicketIdForUpdateAsync(ticketId);
+    public async Task ResumeAsync(Ticket ticket, string userId)
+    {
+        var state = await _ticketSlaRepository.GetByTicketIdForUpdateAsync(ticket.Id);
         if (state is null || state.Status != SlaStatus.Paused)
         {
             return;
@@ -82,7 +90,7 @@ public class TicketSlaService(
         await _ticketSlaRepository.UpdateAsync(state);
         await _domainEvents.PublishAsync(
             new TicketSlaResumedDomainEvent(
-                ticketId,
+                ticket.Id,
                 ticket.OrganizationId,
                 null,
                 state.Status,

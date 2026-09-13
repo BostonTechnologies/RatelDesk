@@ -9,6 +9,9 @@ public class EfRepository<T>(HelpdeskDbContext context) : IRepository<T> where T
     private readonly HelpdeskDbContext _context = context;
     public IQueryable<T> Query() => _context.Set<T>().AsNoTracking();
 
+    public Task<int> CountAsync(Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+        => Query().CountAsync(predicate, cancellationToken);
+
     public async Task<T> CreateAsync(T entity)
     {
         _context.Set<T>().Add(entity);

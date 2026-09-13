@@ -57,7 +57,7 @@ public static class RequestTaskEndpoints
             [FromQuery] bool includeTotal = true) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanManageTasks(access))
+            if (!CanReadTasks(access))
             {
                 return Results.Forbid();
             }
@@ -81,8 +81,8 @@ public static class RequestTaskEndpoints
 
             if (!access.IsHelpdeskAdmin)
             {
-                var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                if (allowedOrganizationIds.Length == 0)
+                var requestManagerOrganizationIds = RequestReaderOrganizationIds(access).ToArray();
+                if (requestManagerOrganizationIds.Length == 0)
                 {
                     return Results.Ok(new PagedResponse<RequestTaskListItemDto>
                     {
@@ -93,7 +93,7 @@ public static class RequestTaskEndpoints
                     });
                 }
 
-                query = query.Where(x => x.Task.OrganizationId != null && allowedOrganizationIds.Contains(x.Task.OrganizationId));
+                query = query.Where(x => x.Task.OrganizationId != null && requestManagerOrganizationIds.Contains(x.Task.OrganizationId));
             }
 
             if (shouldFilterAssignedToMe)
@@ -153,12 +153,9 @@ public static class RequestTaskEndpoints
             if (!string.IsNullOrWhiteSpace(q))
             {
                 var like = $"%{q.Trim()}%";
-                query = query.Where(x =>
-                    EF.Functions.ILike(x.Task.Title, like) ||
-                    EF.Functions.ILike(x.Task.Description, like) ||
-                    EF.Functions.ILike(x.Request.Title, like) ||
-                    EF.Functions.ILike(x.Request.Description, like) ||
-                    EF.Functions.ILike(x.Request.TrackingId, like));
+                query = db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? query.Where(x => EF.Functions.ILike(x.Task.Title, like) || EF.Functions.ILike(x.Task.Description, like) || EF.Functions.ILike(x.Request.Title, like) || EF.Functions.ILike(x.Request.Description, like) || EF.Functions.ILike(x.Request.TrackingId, like))
+                    : query.Where(x => EF.Functions.Like(x.Task.Title, like) || EF.Functions.Like(x.Task.Description, like) || EF.Functions.Like(x.Request.Title, like) || EF.Functions.Like(x.Request.Description, like) || EF.Functions.Like(x.Request.TrackingId, like));
             }
 
             var totalCount = includeTotal ? await query.CountAsync(token) : 0;
@@ -182,6 +179,7 @@ public static class RequestTaskEndpoints
                     {
                         Id = x.Task.Id,
                         RequestId = x.Task.RequestId,
+                        OrganizationId = x.Task.OrganizationId,
                         RequestTrackingId = x.Request.TrackingId,
                         RequestTitle = x.Request.Title,
                         Name = x.Task.Name,
@@ -244,7 +242,7 @@ public static class RequestTaskEndpoints
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanManageTasks(access))
+            if (!CanReadTasks(access))
             {
                 return Results.Forbid();
             }
@@ -255,22 +253,41 @@ public static class RequestTaskEndpoints
                 return Results.Problem("Task not found", statusCode: 404);
             }
 
-            return CanAccessOrganization(access, task.OrganizationId)
+            return CanReadOrganization(access, task.OrganizationId)
                 ? Results.Ok(task)
                 : Results.Forbid();
         });
 
         group.MapPost("/", async (
             [FromBody] CreateRequestTaskDto dto,
+            [FromServices] HelpdeskDbContext db,
             [FromServices] IRequestSender sender,
             [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanManageTasks(access) || !CanAccessOrganization(access, dto.OrganizationId))
+            if (!CanManageTasks(access))
             {
                 return Results.Forbid();
+            }
+
+            var parent = await db.Requests.AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(request => request.Id == dto.RequestId)
+                .Select(request => new { request.OrganizationId, request.CustomerId })
+                .FirstOrDefaultAsync(token);
+            if (parent is null || !CanAccessOrganization(access, parent.OrganizationId))
+            {
+                return Results.NotFound();
+            }
+
+            if ((!string.IsNullOrWhiteSpace(dto.OrganizationId) &&
+                 !string.Equals(dto.OrganizationId, parent.OrganizationId, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(dto.CustomerId) &&
+                 !string.Equals(dto.CustomerId, parent.CustomerId, StringComparison.OrdinalIgnoreCase)))
+            {
+                return Results.BadRequest("Request-task organization and customer must match the parent request.");
             }
 
             var command = new CreateRequestTaskCommand(
@@ -278,8 +295,8 @@ public static class RequestTaskEndpoints
                 dto.Description,
                 dto.RequestId,
                 dto.Priority,
-                dto.CustomerId,
-                dto.OrganizationId,
+                parent.CustomerId,
+                parent.OrganizationId,
                 dto.LinkedAssetIds,
                 dto.Attachments,
                 dto.DueDate);
@@ -292,6 +309,7 @@ public static class RequestTaskEndpoints
             [FromBody] RequestTask task,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<RequestTask> repo,
+            [FromServices] IRepository<User> users,
             [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
@@ -302,22 +320,43 @@ public static class RequestTaskEndpoints
                 return Results.Forbid();
             }
 
-            var existingOrgId = await db.RequestTasks.AsNoTracking()
+            var existing = await db.RequestTasks.AsNoTracking()
                 .Where(x => x.Id == id)
-                .Select(x => x.OrganizationId)
                 .FirstOrDefaultAsync(token);
-            if (existingOrgId is null)
+            if (existing is null)
             {
                 return Results.Problem("Task not found", statusCode: 404);
             }
 
-            if (!CanAccessOrganization(access, existingOrgId) || !CanAccessOrganization(access, task.OrganizationId))
+            if (!CanAccessOrganization(access, existing.OrganizationId))
             {
                 return Results.Forbid();
             }
 
-            task.Id = id;
-            var updated = await repo.UpdateAsync(task);
+            if (!string.Equals(task.OrganizationId, existing.OrganizationId, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(task.RequestId, existing.RequestId, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(task.CustomerId, existing.CustomerId, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest("Request-task organization, customer, and parent request cannot be changed.");
+            }
+
+            var assignmentValidation = await ValidateAssigneeAsync(users, existing.OrganizationId, task.AssignedToId);
+            if (assignmentValidation is not null)
+            {
+                return assignmentValidation;
+            }
+
+            // Full-object input must never overwrite workflow status, task type, approvals,
+            // automation bindings, or execution results. Those have dedicated state transitions.
+            existing.Title = task.Title;
+            existing.Description = task.Description;
+            existing.Priority = task.Priority;
+            existing.AssignedToId = task.AssignedToId;
+            existing.LinkedAssetIds = task.LinkedAssetIds;
+            existing.Attachments = task.Attachments;
+            existing.DueDate = task.DueDate;
+            existing.UpdatedAt = DateTime.UtcNow;
+            var updated = await repo.UpdateAsync(existing);
             return updated is null
                 ? Results.Problem("Task not found", statusCode: 404)
                 : Results.Ok(updated);
@@ -327,6 +366,7 @@ public static class RequestTaskEndpoints
             [FromRoute] string id,
             [FromBody] UpdateRequestTaskDto dto,
             [FromServices] IRepository<RequestTask> repo,
+            [FromServices] IRepository<User> users,
             [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
@@ -363,6 +403,15 @@ public static class RequestTaskEndpoints
                 return Results.BadRequest("clearDueDate cannot be combined with dueDate.");
             }
 
+            if (!string.IsNullOrWhiteSpace(dto.AssignedToId))
+            {
+                var assignmentValidation = await ValidateAssigneeAsync(users, existing.OrganizationId, dto.AssignedToId);
+                if (assignmentValidation is not null)
+                {
+                    return assignmentValidation;
+                }
+            }
+
             if (dto.Title is not null)
             {
                 if (string.IsNullOrWhiteSpace(dto.Title)) return Results.BadRequest("Title cannot be empty.");
@@ -397,7 +446,7 @@ public static class RequestTaskEndpoints
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanManageTasks(access))
+            if (!access.IsHelpdeskAdmin && !access.HasPermission(HelpdeskPermissions.RequestDelete) && !access.HasPermission(HelpdeskPermissions.RequestManager))
             {
                 return Results.Forbid();
             }
@@ -411,7 +460,7 @@ public static class RequestTaskEndpoints
                 return Results.Problem("Task not found", statusCode: 404);
             }
 
-            if (!CanAccessOrganization(access, organizationId))
+            if (!access.CanDeleteRequest(organizationId))
             {
                 return Results.Forbid();
             }
@@ -537,10 +586,15 @@ public static class RequestTaskEndpoints
 
         group.MapPost("/{id}/retry", async (
             [FromRoute] string id,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
             [FromServices] IRequestTaskLifecycleService lifecycleService,
             [FromServices] IWorkflowEngine workflowEngine,
             CancellationToken token) =>
         {
+            var access = await accessService.ResolveAsync(user, token);
+            if (!await CanAccessTaskAsync(db, access, id, token)) return Results.Forbid();
             RequestTask task;
             try
             {
@@ -561,8 +615,7 @@ public static class RequestTaskEndpoints
             }
 
             return Results.NoContent();
-        })
-        .RequireAuthorization("HelpdeskAdmin");
+        });
 
         group.MapPost("/bulk/start", async (
             [FromBody] BulkRequestTaskActionDto dto,
@@ -575,7 +628,7 @@ public static class RequestTaskEndpoints
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanManageTasks(access))
+            if (!CanManageTasks(access) && !access.HasPermission(HelpdeskPermissions.RequestExecute))
             {
                 return Results.Forbid();
             }
@@ -592,7 +645,7 @@ public static class RequestTaskEndpoints
             foreach (var id in ids)
             {
                 var task = await repo.GetAsync(id);
-                if (task is null)
+                if (task is null || !CanTransitionTask(access, task))
                 {
                     continue;
                 }
@@ -632,7 +685,7 @@ public static class RequestTaskEndpoints
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanManageTasks(access))
+            if (!CanManageTasks(access) && !access.HasPermission(HelpdeskPermissions.RequestExecute))
             {
                 return Results.Forbid();
             }
@@ -649,7 +702,7 @@ public static class RequestTaskEndpoints
             foreach (var id in ids)
             {
                 var task = await repo.GetAsync(id);
-                if (task is null
+                if (task is null || !CanTransitionTask(access, task)
                     || task.Type != RequestTaskType.Manual
                     || task.Status != RequestTaskStatus.InProgress)
                 {
@@ -685,10 +738,12 @@ public static class RequestTaskEndpoints
             [FromServices] IRequestTaskLifecycleService lifecycleService,
             [FromServices] IWorkflowEngine workflowEngine,
             ClaimsPrincipal user,
-            [FromServices] ITenantContext tenant,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
             CancellationToken token) =>
         {
-            if (!IsHelpdeskAdmin(user, tenant))
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.IsHelpdeskAdmin && !access.HasPermission(HelpdeskPermissions.RequestExecute) && !access.HasPermission(HelpdeskPermissions.RequestManager))
             {
                 return Results.Forbid();
             }
@@ -703,6 +758,7 @@ public static class RequestTaskEndpoints
             var touchedRequestIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var id in ids)
             {
+                if (!await CanAccessTaskAsync(db, access, id, token)) continue;
                 RequestTask task;
                 try
                 {
@@ -726,8 +782,7 @@ public static class RequestTaskEndpoints
             }
 
             return Results.Ok(new { updated });
-        })
-        .RequireAuthorization("HelpdeskAdmin");
+        });
     }
 
     private static async Task<Dictionary<string, RequestTaskBindingStateProjection>> LoadAutomationBindingStatesAsync(
@@ -784,15 +839,43 @@ public static class RequestTaskEndpoints
         return correlationContext.GetCorrelationId() ?? $"corr-{Guid.NewGuid():N}";
     }
 
+    private static bool CanReadTasks(CurrentUserAccessProfile access) =>
+        CanManageTasks(access) || access.HasPermission(HelpdeskPermissions.RequestRead);
+
+    private static bool CanReadOrganization(CurrentUserAccessProfile access, string? organizationId) =>
+        access.IsHelpdeskAdmin || organizationId is not null && RequestReaderOrganizationIds(access).Contains(organizationId);
+
+    private static IReadOnlySet<string> RequestReaderOrganizationIds(CurrentUserAccessProfile access) =>
+        access.OrganizationIdsForAny(HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestManager);
+
     private static bool CanManageTasks(CurrentUserAccessProfile access) =>
-        access.IsHelpdeskAdmin
-        || access.HasPermission(HelpdeskPermissions.IncidentManager)
-        || access.HasPermission(HelpdeskPermissions.RequestManager)
-        || access.HasPermission(HelpdeskPermissions.ChangeManager);
+        access.IsHelpdeskAdmin || access.HasPermission(HelpdeskPermissions.RequestWrite) || access.HasPermission(HelpdeskPermissions.RequestManager);
 
     private static bool CanAccessOrganization(CurrentUserAccessProfile access, string? organizationId) =>
         access.IsHelpdeskAdmin
-        || (!string.IsNullOrWhiteSpace(organizationId) && access.AllowedOrganizationIds.Contains(organizationId));
+        || (!string.IsNullOrWhiteSpace(organizationId) && RequestManagerOrganizationIds(access).Contains(organizationId));
+
+    private static async Task<IResult?> ValidateAssigneeAsync(
+        IRepository<User> users,
+        string? organizationId,
+        string? assignedToId)
+    {
+        if (string.IsNullOrWhiteSpace(assignedToId))
+        {
+            return null;
+        }
+
+        var assignee = await users.GetAsync(assignedToId);
+        if (assignee is null || !string.Equals(assignee.OrganizationId, organizationId, StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest("Assigned user must belong to the request-task organization.");
+        }
+
+        return null;
+    }
+
+    private static IReadOnlySet<string> RequestManagerOrganizationIds(CurrentUserAccessProfile access) =>
+        access.OrganizationIdsForAny(HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestManager);
 
     private static async Task<bool> CanAccessTaskAsync(
         HelpdeskDbContext db,
@@ -800,18 +883,17 @@ public static class RequestTaskEndpoints
         string taskId,
         CancellationToken token)
     {
-        if (!CanManageTasks(access))
-        {
-            return false;
-        }
-
-        var organizationId = await db.RequestTasks.AsNoTracking()
-            .Where(x => x.Id == taskId)
-            .Select(x => x.OrganizationId)
-            .FirstOrDefaultAsync(token);
-
-        return organizationId is not null && CanAccessOrganization(access, organizationId);
+        var task = await db.RequestTasks.AsNoTracking().SingleOrDefaultAsync(candidate => candidate.Id == taskId, token);
+        return task is not null && CanTransitionTask(access, task);
     }
+
+    private static bool CanTransitionTask(CurrentUserAccessProfile access, RequestTask task) => task.Type switch
+    {
+        RequestTaskType.Manual => access.CanManageRequest(task.OrganizationId),
+        RequestTaskType.Automation => access.CanExecuteRequest(task.OrganizationId),
+        // Approval tasks are decided by their designated approver using the signed review flow.
+        _ => false
+    };
 
     private static async Task<List<string>> FilterVisibleTaskIdsAsync(
         HelpdeskDbContext db,
@@ -827,13 +909,13 @@ public static class RequestTaskEndpoints
         var query = db.RequestTasks.AsNoTracking().Where(x => ids.Contains(x.Id));
         if (!access.IsHelpdeskAdmin)
         {
-            var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-            if (allowedOrganizationIds.Length == 0)
+            var requestManagerOrganizationIds = access.OrganizationIdsForAny(HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestExecute, HelpdeskPermissions.RequestManager).ToArray();
+            if (requestManagerOrganizationIds.Length == 0)
             {
                 return new List<string>();
             }
 
-            query = query.Where(x => x.OrganizationId != null && allowedOrganizationIds.Contains(x.OrganizationId));
+            query = query.Where(x => x.OrganizationId != null && requestManagerOrganizationIds.Contains(x.OrganizationId));
         }
 
         return await query.Select(x => x.Id).ToListAsync(token);

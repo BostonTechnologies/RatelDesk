@@ -32,6 +32,10 @@ public static class TicketEndpoints
             .WithTags("Tickets")
             .RequireAuthorization();
 
+        var ticketAiFeedbackGroup = app.MapGroup("/api/v1/tickets/{id:guid}")
+            .WithTags("Tickets")
+            .RequireAuthorization();
+
         var ticketCountGroup = app.MapGroup("/api/v1/{ticketType}/{ticketId}")
             .WithTags("Tickets")
             .RequireAuthorization();
@@ -39,15 +43,21 @@ public static class TicketEndpoints
         ticketCountGroup.MapGet("/timeline/count", async (
             [FromRoute] string ticketType,
             [FromRoute] string ticketId,
-            [FromServices] HelpdeskDbContext dbContext) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext dbContext,
+            CancellationToken ct) =>
         {
-            if (!IsSupportedTicketType(ticketType))
-                return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
+            var authorizationFailure = await AuthorizeTicketViewAsync(ticketType, ticketId, context.User, accessService, dbContext, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
 
             var count = await dbContext.TicketTimelineEvents
                 .AsNoTracking()
                 .Where(x => x.TicketId == ticketId)
-                .CountAsync();
+                .CountAsync(ct);
 
             return Results.Ok(count);
         });
@@ -55,15 +65,21 @@ public static class TicketEndpoints
         ticketCountGroup.MapGet("/attachments/count", async (
             [FromRoute] string ticketType,
             [FromRoute] string ticketId,
-            [FromServices] HelpdeskDbContext dbContext) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext dbContext,
+            CancellationToken ct) =>
         {
-            if (!IsSupportedTicketType(ticketType))
-                return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
+            var authorizationFailure = await AuthorizeTicketViewAsync(ticketType, ticketId, context.User, accessService, dbContext, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
 
             var count = await dbContext.Attachments
                 .AsNoTracking()
                 .Where(x => x.TicketId == ticketId)
-                .CountAsync();
+                .CountAsync(ct);
 
             return Results.Ok(count);
         });
@@ -71,10 +87,16 @@ public static class TicketEndpoints
         ticketCountGroup.MapGet("/listeners/count", async (
             [FromRoute] string ticketType,
             [FromRoute] string ticketId,
-            [FromServices] HelpdeskDbContext dbContext) =>
+            HttpContext context,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext dbContext,
+            CancellationToken ct) =>
         {
-            if (!IsSupportedTicketType(ticketType))
-                return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
+            var authorizationFailure = await AuthorizeTicketViewAsync(ticketType, ticketId, context.User, accessService, dbContext, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
 
             var count = ticketType.ToLowerInvariant() switch
             {
@@ -82,17 +104,17 @@ public static class TicketEndpoints
                     .AsNoTracking()
                     .Where(x => x.Id == ticketId)
                     .Select(x => (x.RequesterEmail != null ? 1 : 0) + x.CcRecipients.Count)
-                    .SingleOrDefaultAsync(),
+                    .SingleOrDefaultAsync(ct),
                 "requests" => await dbContext.Requests
                     .AsNoTracking()
                     .Where(x => x.Id == ticketId)
                     .Select(x => (x.RequesterEmail != null ? 1 : 0) + x.CcRecipients.Count)
-                    .SingleOrDefaultAsync(),
+                    .SingleOrDefaultAsync(ct),
                 "changes" => await dbContext.Changes
                     .AsNoTracking()
                     .Where(x => x.Id == ticketId)
                     .Select(x => (x.RequesterEmail != null ? 1 : 0) + x.CcRecipients.Count)
-                    .SingleOrDefaultAsync(),
+                    .SingleOrDefaultAsync(ct),
                 _ => 0
             };
 
@@ -101,9 +123,22 @@ public static class TicketEndpoints
 
         MapTicketCustomerEndpoint(ticketCountGroup);
 
-        group.MapPost("/{ticketId}/mark-as-seen", async ([FromRoute] string ticketId, [FromServices] IRequestSender sender, ClaimsPrincipal user) =>
+        group.MapPost("/{ticketId}/mark-as-seen", async (
+            [FromRoute] string ticketId,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] IRequestSender sender,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
             {
-                await sender.Send(new MarkTicketAsSeenCommand(ticketId));
+                var authorizationFailure = await AuthorizeTicketViewAsync("incidents", ticketId, context.User, accessService, db, ct);
+                if (authorizationFailure is not null)
+                {
+                    return authorizationFailure;
+                }
+
+                await sender.Send(new MarkTicketAsSeenCommand(ticketId), ct);
                 return Results.NoContent();
             })
         .WithName("MarkTicketAsSeen")
@@ -112,21 +147,24 @@ public static class TicketEndpoints
 
         group.MapPost("/{id:guid}/suggest-knowledge", async (
             Guid id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
             IAiSuggestionQueue queue,
             HelpdeskDbContext db,
             CancellationToken ct) =>
         {
-            var exists = await db.Tickets.AsNoTracking().AnyAsync(t => t.Id == id.ToString(), ct);
-            if (!exists) return Results.NotFound();
+            var ticketId = id.ToString();
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, context.User, accessService, db, ct);
+            if (authorizationFailure is not null) return authorizationFailure;
 
-            var orgId = await db.Tickets.Where(t => t.Id == id.ToString()).Select(t => t.OrganizationId).FirstAsync(ct);
+            var orgId = await db.Tickets.Where(t => t.Id == ticketId).Select(t => t.OrganizationId).FirstAsync(ct);
             var org = await db.OrganizationAiKbSettings.AsNoTracking()
                         .FirstOrDefaultAsync(o => o.OrganizationId == orgId, ct);
 
             if (org is null || org.EnableAiSearch == false)
                 return Results.StatusCode(StatusCodes.Status204NoContent);
 
-            await queue.QueueAsync(id.ToString(), ct);
+            await queue.QueueAsync(ticketId, ct);
             return Results.Accepted($"/api/v1/tickets/{id}/suggest-knowledge");
         })
         .WithSummary("Queue knowledge suggestions for a ticket")
@@ -134,9 +172,13 @@ public static class TicketEndpoints
 
         group.MapGet("/{id:guid}/suggest-knowledge", async (
             Guid id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketViewAsync("incidents", id.ToString(), context.User, accessService, db, ct);
+            if (authorizationFailure is not null) return authorizationFailure;
             var row = await db.TicketAiSuggestions.AsNoTracking().FirstOrDefaultAsync(x => x.TicketId == id.ToString(), ct);
             if (row is null) return Results.NoContent();
 
@@ -146,20 +188,19 @@ public static class TicketEndpoints
 
         group.MapGet("/{id:guid}/ai-feedback", async (
             Guid id,
+            ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var exists = await db.Tickets.AsNoTracking().AnyAsync(x => x.Id == ticketId, ct);
-            if (!exists)
-            {
-                return Results.NotFound();
-            }
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
+            if (authorizationFailure is not null) return authorizationFailure;
 
             var items = await db.TicketAiFeedback
                 .AsNoTracking()
                 .Where(x => x.TicketId == ticketId)
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => new TicketAiFeedbackDto
                 {
                     Id = x.Id,
@@ -181,20 +222,19 @@ public static class TicketEndpoints
 
         group.MapGet("/{id:guid}/ai-audit", async (
             Guid id,
+            ICurrentUserAccessService accessService,
             HelpdeskDbContext db,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var exists = await db.Tickets.AsNoTracking().AnyAsync(x => x.Id == ticketId, ct);
-            if (!exists)
-            {
-                return Results.NotFound();
-            }
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
+            if (authorizationFailure is not null) return authorizationFailure;
 
             var items = await db.AiOperationAuditRecords
                 .AsNoTracking()
                 .Where(x => x.SubjectId == ticketId)
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => new TicketAiAuditEntryDto
                 {
                     Id = x.Id,
@@ -214,128 +254,23 @@ public static class TicketEndpoints
         .WithSummary("List AI audit activity for a ticket")
         .WithDescription("Returns persisted AI operation audit records for the ticket, including generation, approval, and automation actions.");
 
-        group.MapPost("/{id:guid}/ai-feedback", async (
-            Guid id,
-            [FromBody] SubmitTicketAiFeedbackDto dto,
-            HelpdeskDbContext db,
-            IRequestSender sender,
-            ClaimsPrincipal user,
-            CancellationToken ct) =>
-        {
-            var ticketId = id.ToString();
-            var exists = await db.Tickets.AsNoTracking().AnyAsync(x => x.Id == ticketId, ct);
-            if (!exists)
-            {
-                return Results.NotFound();
-            }
-
-            var feedbackType = dto.FeedbackType?.Trim().ToLowerInvariant();
-            var feedbackValue = dto.FeedbackValue?.Trim().ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(feedbackType) || string.IsNullOrWhiteSpace(feedbackValue))
-            {
-                return Results.BadRequest("FeedbackType and FeedbackValue are required.");
-            }
-
-            if (feedbackType is not ("suggestion" or "automation"))
-            {
-                return Results.BadRequest("FeedbackType must be 'suggestion' or 'automation'.");
-            }
-
-            if (feedbackType == "suggestion" && string.IsNullOrWhiteSpace(dto.ArticleId))
-            {
-                return Results.BadRequest("ArticleId is required for suggestion feedback.");
-            }
-
-            if (feedbackType == "automation" && string.IsNullOrWhiteSpace(dto.RequestId))
-            {
-                return Results.BadRequest("RequestId is required for automation feedback.");
-            }
-
-            var entry = new TicketAiFeedback
-            {
-                TicketId = ticketId,
-                FeedbackType = feedbackType,
-                FeedbackValue = feedbackValue,
-                ArticleId = string.IsNullOrWhiteSpace(dto.ArticleId) ? null : dto.ArticleId.Trim(),
-                RequestId = string.IsNullOrWhiteSpace(dto.RequestId) ? null : dto.RequestId.Trim(),
-                Notes = string.IsNullOrWhiteSpace(dto.Notes) ? null : dto.Notes.Trim(),
-                CreatedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier),
-                CreatedByName = user.Identity?.Name
-            };
-
-            db.TicketAiFeedback.Add(entry);
-            await db.SaveChangesAsync(ct);
-
-            var techId = user.FindFirstValue(ClaimTypes.NameIdentifier);
-            var techName = user.Identity?.Name;
-
-            string feedbackNote;
-            if (feedbackType == "suggestion")
-            {
-                var articleTitle = string.IsNullOrWhiteSpace(entry.ArticleId)
-                    ? null
-                    : await db.KnowledgeBaseArticles
-                        .AsNoTracking()
-                        .Where(x => x.Id.ToString() == entry.ArticleId)
-                        .Select(x => x.Title)
-                        .FirstOrDefaultAsync(ct);
-
-                feedbackNote = string.IsNullOrWhiteSpace(articleTitle)
-                    ? $"Recorded AI suggestion feedback: {feedbackValue.Replace('_', ' ')}."
-                    : $"Recorded AI suggestion feedback: {feedbackValue.Replace('_', ' ')} for KB article '{articleTitle}'.";
-            }
-            else
-            {
-                var requestTrackingId = string.IsNullOrWhiteSpace(entry.RequestId)
-                    ? null
-                    : await db.Requests
-                        .AsNoTracking()
-                        .Where(x => x.Id == entry.RequestId)
-                        .Select(x => x.TrackingId)
-                        .FirstOrDefaultAsync(ct);
-
-                feedbackNote = string.IsNullOrWhiteSpace(requestTrackingId)
-                    ? $"Recorded AI automation outcome: {feedbackValue.Replace('_', ' ')}."
-                    : $"Recorded AI automation outcome: {feedbackValue.Replace('_', ' ')} for request {requestTrackingId}.";
-            }
-
-            if (!string.IsNullOrWhiteSpace(entry.Notes))
-            {
-                feedbackNote = $"{feedbackNote} Notes: {entry.Notes}";
-            }
-
-            await sender.Send(
-                new CreateWorkLogCommand(
-                    ticketId,
-                    0,
-                    feedbackNote,
-                    techId,
-                    techName,
-                    NotifyCustomer: false),
-                ct);
-
-            return Results.Ok(new TicketAiFeedbackDto
-            {
-                Id = entry.Id,
-                FeedbackType = entry.FeedbackType,
-                FeedbackValue = entry.FeedbackValue,
-                ArticleId = entry.ArticleId,
-                RequestId = entry.RequestId,
-                Notes = entry.Notes,
-                CreatedByUserId = entry.CreatedByUserId,
-                CreatedByName = entry.CreatedByName,
-                CreatedAt = entry.CreatedAt
-            });
-        })
-        .WithSummary("Submit AI feedback for a ticket")
-        .WithDescription("Persists operator feedback for AI KB suggestions or automation outcomes on the ticket.");
+        MapTicketAiFeedbackEndpoint(ticketAiFeedbackGroup);
 
         group.MapGet("/{id:guid}/requester-reply-draft", async (
             Guid id,
             IRepository<Ticket> tickets,
             IRequesterReplyDraftService requesterReplyDraftService,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is null)
             {
@@ -356,9 +291,16 @@ public static class TicketEndpoints
             IRequesterReplyDraftService requesterReplyDraftService,
             IAiOperationAuditService aiAudit,
             IRequestSender sender,
+            ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is null)
             {
@@ -448,9 +390,16 @@ public static class TicketEndpoints
             IWorkflowEngine workflowEngine,
             IAiOperationAuditService aiAudit,
             IRequestSender sender,
+            ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is not Incident incident)
             {
@@ -571,8 +520,16 @@ public static class TicketEndpoints
             IRepository<Ticket> tickets,
             IRequestFormSchemaParser requestFormSchemaParser,
             IAutomationBindingPayloadContractService automationPayloadContractService,
+            ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is not Incident incident)
             {
@@ -620,13 +577,15 @@ public static class TicketEndpoints
         group.MapGet("/{id:guid}/automation-approvals", async (
             Guid id,
             HelpdeskDbContext db,
+            ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
             CancellationToken ct) =>
         {
             var ticketId = id.ToString();
-            var ticketExists = await db.Tickets.AsNoTracking().AnyAsync(x => x.Id == ticketId, ct);
-            if (!ticketExists)
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
+            if (authorizationFailure is not null)
             {
-                return Results.NotFound();
+                return authorizationFailure;
             }
 
             var runs = await db.Requests
@@ -688,10 +647,17 @@ public static class TicketEndpoints
             Guid id,
             IRepository<Ticket> tickets,
             IKnowledgeBuilderService kbService,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            ClaimsPrincipal user,
             CancellationToken token,
             bool regenerate = false) =>
         {
-            Console.WriteLine($"Looking up ticket with ID: {id}");
+            var authorizationFailure = await AuthorizeTicketManageAsync(id.ToString(), user, accessService, db, token);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
 
             var ticket = await tickets.GetAsync(id.ToString());
             if (ticket is null)
@@ -708,6 +674,137 @@ public static class TicketEndpoints
         .WithDescription("Generates or regenerates a knowledge base article draft from a resolved ticket.");
     }
 
+    internal static RouteHandlerBuilder MapTicketAiFeedbackEndpoint(RouteGroupBuilder ticketGroup)
+    {
+        return ticketGroup.MapPost("/ai-feedback", async (
+            [FromRoute] Guid id,
+            [FromBody] SubmitTicketAiFeedbackDto dto,
+            HelpdeskDbContext db,
+            ICurrentUserAccessService accessService,
+            IRequestSender sender,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
+        {
+            var ticketId = id.ToString();
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticketId, user, accessService, db, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
+            }
+
+            var feedbackType = dto.FeedbackType?.Trim().ToLowerInvariant();
+            var feedbackValue = dto.FeedbackValue?.Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(feedbackType) || string.IsNullOrWhiteSpace(feedbackValue))
+            {
+                return Results.BadRequest("FeedbackType and FeedbackValue are required.");
+            }
+
+            if (feedbackType is not ("suggestion" or "automation"))
+            {
+                return Results.BadRequest("FeedbackType must be 'suggestion' or 'automation'.");
+            }
+
+            if (feedbackType == "suggestion" && string.IsNullOrWhiteSpace(dto.ArticleId))
+            {
+                return Results.BadRequest("ArticleId is required for suggestion feedback.");
+            }
+
+            if (feedbackType == "automation" && string.IsNullOrWhiteSpace(dto.RequestId))
+            {
+                return Results.BadRequest("RequestId is required for automation feedback.");
+            }
+
+            var ticketOrganizationId = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
+                .Where(ticket => ticket.Id == ticketId)
+                .Select(ticket => ticket.OrganizationId)
+                .FirstOrDefaultAsync(ct);
+            if (ticketOrganizationId is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (feedbackType == "automation")
+            {
+                var requestOrganizationId = await db.Requests.IgnoreQueryFilters().AsNoTracking()
+                    .Where(request => request.Id == dto.RequestId)
+                    .Select(request => request.OrganizationId)
+                    .FirstOrDefaultAsync(ct);
+                if (!string.Equals(ticketOrganizationId, requestOrganizationId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.BadRequest("Automation feedback must reference a request in the ticket organization.");
+                }
+            }
+
+            var entry = new TicketAiFeedback
+            {
+                TicketId = ticketId,
+                FeedbackType = feedbackType,
+                FeedbackValue = feedbackValue,
+                ArticleId = string.IsNullOrWhiteSpace(dto.ArticleId) ? null : dto.ArticleId.Trim(),
+                RequestId = string.IsNullOrWhiteSpace(dto.RequestId) ? null : dto.RequestId.Trim(),
+                Notes = string.IsNullOrWhiteSpace(dto.Notes) ? null : dto.Notes.Trim(),
+                CreatedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier),
+                CreatedByName = user.Identity?.Name
+            };
+
+            db.TicketAiFeedback.Add(entry);
+            await db.SaveChangesAsync(ct);
+
+            var techId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+            var techName = user.Identity?.Name;
+            string feedbackNote;
+            if (feedbackType == "suggestion")
+            {
+                var articleTitle = string.IsNullOrWhiteSpace(entry.ArticleId)
+                    ? null
+                    : await db.KnowledgeBaseArticles
+                        .AsNoTracking()
+                        .Where(x => x.Id.ToString() == entry.ArticleId)
+                        .Select(x => x.Title)
+                        .FirstOrDefaultAsync(ct);
+                feedbackNote = string.IsNullOrWhiteSpace(articleTitle)
+                    ? $"Recorded AI suggestion feedback: {feedbackValue.Replace('_', ' ')}."
+                    : $"Recorded AI suggestion feedback: {feedbackValue.Replace('_', ' ')} for KB article '{articleTitle}'.";
+            }
+            else
+            {
+                var requestTrackingId = string.IsNullOrWhiteSpace(entry.RequestId)
+                    ? null
+                    : await db.Requests.AsNoTracking()
+                        .Where(x => x.Id == entry.RequestId && x.OrganizationId == ticketOrganizationId)
+                        .Select(x => x.TrackingId)
+                        .FirstOrDefaultAsync(ct);
+                feedbackNote = string.IsNullOrWhiteSpace(requestTrackingId)
+                    ? $"Recorded AI automation outcome: {feedbackValue.Replace('_', ' ')}."
+                    : $"Recorded AI automation outcome: {feedbackValue.Replace('_', ' ')} for request {requestTrackingId}.";
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.Notes))
+            {
+                feedbackNote = $"{feedbackNote} Notes: {entry.Notes}";
+            }
+
+            await sender.Send(
+                new CreateWorkLogCommand(ticketId, 0, feedbackNote, techId, techName, NotifyCustomer: false),
+                ct);
+
+            return Results.Ok(new TicketAiFeedbackDto
+            {
+                Id = entry.Id,
+                FeedbackType = entry.FeedbackType,
+                FeedbackValue = entry.FeedbackValue,
+                ArticleId = entry.ArticleId,
+                RequestId = entry.RequestId,
+                Notes = entry.Notes,
+                CreatedByUserId = entry.CreatedByUserId,
+                CreatedByName = entry.CreatedByName,
+                CreatedAt = entry.CreatedAt
+            });
+        })
+        .WithSummary("Submit AI feedback for a ticket")
+        .WithDescription("Persists operator feedback for AI KB suggestions and automation outcomes.");
+    }
+
     public static RouteHandlerBuilder MapTicketCustomerEndpoint(RouteGroupBuilder ticketGroup)
     {
         return ticketGroup.MapPost("/customer", async (
@@ -718,17 +815,20 @@ public static class TicketEndpoints
             [FromServices] IRepository<TicketRequest> requests,
             [FromServices] IRepository<Change> changes,
             [FromServices] IRepository<Customer> customers,
-            ClaimsPrincipal user) =>
+            ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
+            CancellationToken ct) =>
         {
-            if (!IsTechnicianOrAdmin(user))
-            {
-                return Results.Forbid();
-            }
-
             var ticket = await GetTicketAsync(ticketType, ticketId, incidents, requests, changes);
             if (ticket is null)
             {
                 return Results.Problem("Ticket not found", statusCode: 404);
+            }
+
+            var authorizationFailure = await AuthorizeTicketManageAsync(ticket, user, accessService, ct);
+            if (authorizationFailure is not null)
+            {
+                return authorizationFailure;
             }
 
             if (!string.IsNullOrWhiteSpace(ticket.CustomerId))
@@ -770,13 +870,76 @@ public static class TicketEndpoints
         string.Equals(ticketType, "requests", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(ticketType, "changes", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsTechnicianOrAdmin(ClaimsPrincipal user) =>
-        user.IsInRole("HelpdeskAdmin") ||
-        user.IsInRole("Technician") ||
-        user.Claims.Any(c =>
-            (c.Type == ClaimTypes.Role || c.Type == "roles") &&
-            (string.Equals(c.Value, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(c.Value, "Technician", StringComparison.OrdinalIgnoreCase)));
+    internal static async Task<IResult?> AuthorizeTicketViewAsync(
+        string ticketType,
+        string ticketId,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        HelpdeskDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (!IsSupportedTicketType(ticketType))
+        {
+            return Results.BadRequest("Unsupported ticketType. Use incidents, requests, or changes.");
+        }
+
+        var ticket = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return Results.NotFound();
+        }
+
+        var customer = !string.IsNullOrWhiteSpace(ticket.CustomerId)
+            ? await db.Customers.AsNoTracking()
+                .Where(candidate => candidate.Id == ticket.CustomerId)
+                .Select(candidate => new { candidate.Id, candidate.Email })
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+        var access = await accessService.ResolveAsync(user, cancellationToken);
+        var canView = ticket switch
+        {
+            Incident => access.CanViewIncident(ticket.OrganizationId, customer?.Id ?? ticket.CustomerId, customer?.Email ?? ticket.RequesterEmail),
+            TicketRequest => access.CanViewRequest(ticket.OrganizationId, customer?.Id ?? ticket.CustomerId, customer?.Email ?? ticket.RequesterEmail),
+            Change => access.CanViewChange(ticket.OrganizationId, customer?.Id ?? ticket.CustomerId, customer?.Email ?? ticket.RequesterEmail),
+            _ => false
+        };
+        return canView ? null : Results.Forbid();
+    }
+
+    internal static async Task<IResult?> AuthorizeTicketManageAsync(
+        string ticketId,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        HelpdeskDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var ticket = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return Results.NotFound();
+        }
+
+        return await AuthorizeTicketManageAsync(ticket, user, accessService, cancellationToken);
+    }
+
+    private static async Task<IResult?> AuthorizeTicketManageAsync(
+        Ticket ticket,
+        ClaimsPrincipal user,
+        ICurrentUserAccessService accessService,
+        CancellationToken cancellationToken)
+    {
+        var access = await accessService.ResolveAsync(user, cancellationToken);
+        var canManage = ticket switch
+        {
+            Incident => access.CanManageIncident(ticket.OrganizationId),
+            TicketRequest => access.CanManageRequest(ticket.OrganizationId),
+            Change => access.CanManageChange(ticket.OrganizationId),
+            _ => false
+        };
+        return canManage ? null : Results.Forbid();
+    }
 
     private static async Task<Ticket?> GetTicketAsync(
         string ticketType,

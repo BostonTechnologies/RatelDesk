@@ -39,14 +39,18 @@ public sealed class ChatPostgresFixture : IAsyncLifetime
     public HelpdeskDbContext Context(ITenantContext tenant) => new(new DbContextOptionsBuilder<HelpdeskDbContext>().UseNpgsql(container.GetConnectionString(), x => x.UseVector()).Options, tenant, new HttpContextAccessor());
     public AiAssistantChatStore Store(HelpdeskDbContext db, string organization = "org", TimeProvider? timeProvider = null)
     {
-        var tenant = Substitute.For<ITenantContext>(); tenant.TenantId.Returns(organization);
         var correlation = Substitute.For<ICorrelationContext>(); correlation.GetCorrelationId().Returns("test-chat");
-        return new(db, tenant, Substitute.For<IDomainEventPublisher>(), correlation, Microsoft.Extensions.Logging.Abstractions.NullLogger<AiAssistantChatStore>.Instance, timeProvider);
+        return new(db, Substitute.For<IDomainEventPublisher>(), correlation, Microsoft.Extensions.Logging.Abstractions.NullLogger<AiAssistantChatStore>.Instance, timeProvider);
     }
-    public async Task<(string Ticket, Guid Conversation)> CreateAsync()
+    public async Task<(string Ticket, Guid Conversation)> CreateAsync(string organization = "org")
     {
-        await using var db = Context();
-        var ticket = new Incident { Id = Guid.NewGuid().ToString(), Title = "Test", OrganizationId = "org", TrackingId = Guid.NewGuid().ToString() };
+        await using var db = Context(organization);
+        if (!await db.Organizations.IgnoreQueryFilters().AnyAsync(item => item.Id == organization))
+        {
+            db.Organizations.Add(new Organization { Id = organization, Name = $"Test organization {organization}" });
+            await db.SaveChangesAsync();
+        }
+        var ticket = new Incident { Id = Guid.NewGuid().ToString(), Title = "Test", OrganizationId = organization, TrackingId = Guid.NewGuid().ToString() };
         db.Add(ticket); await db.SaveChangesAsync();
         var snapshot = await Store(db).LoadAsync("incidents", ticket.Id, null, 0, "operator", default);
         return (ticket.Id, snapshot.ConversationId);
@@ -423,7 +427,7 @@ public sealed class ChatPostgresTests(ChatPostgresFixture fixture) : IClassFixtu
     }
 
     [Fact]
-    public async Task CursorReplaySurvivesFreshContextAndRejectsCrossTenant()
+    public async Task CursorReplaySurvivesFreshContextWithAuthorizationEnforcedByTheEndpoint()
     {
         var (ticket, conversation) = await fixture.CreateAsync();
         await using (var db = fixture.Context()) await fixture.Store(db).AcceptMessageAsync("incidents", ticket, new(conversation, Guid.NewGuid(), "Hello"), "operator", default);
@@ -434,6 +438,7 @@ public sealed class ChatPostgresTests(ChatPostgresFixture fixture) : IClassFixtu
             await Assert.ThrowsAsync<ArgumentException>(() => fixture.Store(db).LoadAsync("incidents", ticket, conversation, 100, "operator", default));
         }
         await using var other = fixture.Context("other");
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => fixture.Store(other, "other").LoadAsync("incidents", ticket, conversation, 0, "other-operator", default));
+        var replay = await fixture.Store(other, "other").LoadAsync("incidents", ticket, conversation, 0, "other-operator", default);
+        Assert.Equal(conversation, replay.ConversationId);
     }
 }

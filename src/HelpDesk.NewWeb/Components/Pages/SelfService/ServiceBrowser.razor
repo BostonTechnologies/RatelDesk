@@ -1,6 +1,6 @@
 @page "/self-service"
 @page "/self-service/{ServiceId}"
-@attribute [Authorize]
+@attribute [Authorize(Roles = "SelfService.User,HelpdeskAdmin")]
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar

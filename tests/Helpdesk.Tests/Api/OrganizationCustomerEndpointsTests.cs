@@ -27,6 +27,7 @@ public class OrganizationCustomerEndpointsTests : IClassFixture<WebApplicationFa
 
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
 

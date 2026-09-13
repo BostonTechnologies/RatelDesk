@@ -37,6 +37,7 @@ public class KbEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
 
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Production");
             builder.UseEnvironment("Production");
 

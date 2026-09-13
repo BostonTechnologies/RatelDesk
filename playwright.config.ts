@@ -1,8 +1,12 @@
 import { defineConfig } from '@playwright/test';
 
+const testIgnore = process.env.HELPDESK_E2E_RUN_SETUP_WIZARD === 'true'
+  ? '**/ai-assistant-chat.spec.ts'
+  : ['**/ai-assistant-chat.spec.ts', '**/setup.spec.ts'];
+
 export default defineConfig({
   testDir: './tests/ux',
-  testIgnore: '**/ai-assistant-chat.spec.ts',
+  testIgnore,
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,

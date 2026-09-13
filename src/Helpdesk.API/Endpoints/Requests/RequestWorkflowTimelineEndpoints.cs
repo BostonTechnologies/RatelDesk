@@ -27,11 +27,11 @@ public static class RequestWorkflowTimelineEndpoints
         app.MapGet("/api/v1/requests/{requestId}/workflow-timeline", async (
             [FromRoute] string requestId,
             [FromServices] HelpdeskDbContext db,
-            [FromServices] ITenantContext tenant,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             [FromQuery] int? page,
             [FromQuery] int? pageSize,
-            [FromQuery] bool includePayload,
+            [FromQuery] bool? includePayload,
             [FromQuery] string? correlationId,
             [FromQuery] string? categories,
             [FromQuery] DateTimeOffset? sinceUtc,
@@ -42,12 +42,7 @@ public static class RequestWorkflowTimelineEndpoints
                 return Results.BadRequest("Invalid request id.");
             }
 
-            if (!IsTechnicianOrAdmin(user, tenant))
-            {
-                return Results.Forbid();
-            }
-
-            var request = await db.Requests.AsNoTracking()
+            var request = await db.Requests.IgnoreQueryFilters().AsNoTracking()
                 .Where(r => r.Id == requestId)
                 .Select(r => new { r.Id, r.OrganizationId, r.TrackingId })
                 .FirstOrDefaultAsync(ct);
@@ -57,9 +52,8 @@ public static class RequestWorkflowTimelineEndpoints
                 return Results.Problem("Request not found", statusCode: 404);
             }
 
-            if (!tenant.IsHelpdeskAdmin
-                && !string.IsNullOrWhiteSpace(tenant.TenantId)
-                && !string.Equals(request.OrganizationId, tenant.TenantId, StringComparison.OrdinalIgnoreCase))
+            var access = await accessService.ResolveAsync(user, ct);
+            if (!access.CanManageRequest(request.OrganizationId))
             {
                 return Results.Forbid();
             }
@@ -69,7 +63,7 @@ public static class RequestWorkflowTimelineEndpoints
             var skip = (safePage - 1) * safePageSize;
             var categoryFilters = ParseCsv(categories);
 
-            var query = db.Notifications.AsNoTracking()
+            var query = db.Notifications.IgnoreQueryFilters().AsNoTracking()
                 .Where(n => n.Category != null && EF.Functions.Like(n.Category, "DomainEvent%"))
                 .Where(n => EF.Functions.Like(n.Message, $"%\"requestId\":\"{requestId}\"%"));
 
@@ -110,7 +104,7 @@ public static class RequestWorkflowTimelineEndpoints
                 })
                 .ToListAsync(ct);
 
-            var canViewPayload = includePayload && tenant.IsHelpdeskAdmin;
+            var canViewPayload = includePayload == true && access.IsHelpdeskAdmin;
             var items = new List<WorkflowTimelineItemDto>(notifications.Count);
             foreach (var notification in notifications)
             {
@@ -313,19 +307,6 @@ public static class RequestWorkflowTimelineEndpoints
     private static string? TryGetIdentifier(JsonElement root, string propertyName)
     {
         return TryGetString(root, propertyName);
-    }
-
-    private static bool IsTechnicianOrAdmin(ClaimsPrincipal user, ITenantContext tenant)
-    {
-        if (tenant.IsHelpdeskAdmin || user.IsInRole("Technician"))
-        {
-            return true;
-        }
-
-        return user.Claims.Any(c =>
-            (c.Type == ClaimTypes.Role || c.Type == "roles")
-            && (string.Equals(c.Value, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(c.Value, "Technician", StringComparison.OrdinalIgnoreCase)));
     }
 
     private sealed class WorkflowEventPayload

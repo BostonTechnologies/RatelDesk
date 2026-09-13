@@ -4,7 +4,7 @@
 
 <div @onclick:stopPropagation="true">
 
-    <MudMenu Dense="true"
+    <MudMenu Dense="true" Disabled="@ReadOnly"
              AnchorOrigin="Origin.CenterCenter"
              TransformOrigin="Origin.CenterCenter">
 
@@ -31,7 +31,7 @@
                 Unassigned
             </MudMenuItem>
 
-            @foreach (var user in TeamMembers)
+            @foreach (var user in availableUsers)
             {
                 <MudMenuItem OnClick="@(async () => await Assign(user.Id))">
                     @user.Name (@user.Email)
@@ -46,6 +46,18 @@
 
 @code {
 
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public string? OrganizationId { get; set; }
+    private List<UserDto> availableUsers = new();
+    private string? loadedOrganizationId;
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ReadOnly || string.IsNullOrWhiteSpace(OrganizationId) || loadedOrganizationId == OrganizationId) return;
+        loadedOrganizationId = OrganizationId;
+        try { availableUsers = await Api.GetFromJsonAsync<List<UserDto>>($"api/v1/ticketing/assignees?module={TicketType.TrimEnd('s')}&organizationId={Uri.EscapeDataString(OrganizationId)}") ?? new(); }
+        catch (HttpRequestException) { availableUsers = new(); }
+    }
+
     [Parameter] public string TicketId { get; set; } = default!;
     [Parameter] public string TicketType { get; set; } = default!;
     [Parameter] public string? AssignedToId { get; set; }
@@ -56,24 +68,21 @@
 
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
 
-    private UserDto? User => TeamMembers.FirstOrDefault(x => x.Id == AssignedToId);
+    private UserDto? User => availableUsers.Concat(TeamMembers).FirstOrDefault(x => x.Id == AssignedToId);
 
     private string Tooltip =>
         User is null
-        ? "Unassigned"
+        ? (string.IsNullOrWhiteSpace(AssignedToId) ? "Unassigned" : "Assigned team member")
         : $"{User.Name} ({User.Email})";
 
     private async Task Assign(string? newUserId)
     {
+        if (ReadOnly) return;
         try
         {
-            var resp = await Api.PostAsJsonAsync(
-                $"api/v1/{TicketType}/bulk/assign",
-                new
-                {
-                    Ids = new[] { TicketId },
-                    AssignedToId = newUserId
-                });
+            using var resp = string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase)
+                ? await Api.PutAsJsonAsync($"api/v1/incidents/{TicketId}", new { AssignedToId = newUserId ?? string.Empty })
+                : await Api.PostAsJsonAsync($"api/v1/{TicketType}/bulk/assign", new { Ids = new[] { TicketId }, AssignedToId = newUserId });
 
             if (!resp.IsSuccessStatusCode)
             {

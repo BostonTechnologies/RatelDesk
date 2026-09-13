@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -8,7 +9,9 @@ using Helpdesk.API.Endpoints.Changes;
 using Helpdesk.API.Endpoints.Incidents;
 using Helpdesk.API.Endpoints.Requests;
 using Helpdesk.API.Endpoints.RequestTasks;
+using Helpdesk.API.Endpoints.WorkLogs;
 using Helpdesk.Application.Events;
+using Helpdesk.Application.Messaging;
 using Helpdesk.Application.Services.Changes;
 using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Services.Notifications;
@@ -19,6 +22,7 @@ using Helpdesk.Application.Timeline;
 using Helpdesk.Application.WorkLogs;
 using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.Change;
 using Helpdesk.Shared.DTOs.Incident;
@@ -40,7 +44,7 @@ using System.Threading.Channels;
 
 namespace Helpdesk.Tests.Api;
 
-public sealed class LiveHistoryFilteringEndpointsTests
+public sealed partial class LiveHistoryFilteringEndpointsTests
 {
     [Fact]
     public async Task Requests_DefaultsToLiveAndHistoricOnlyReturnsResolved()
@@ -507,8 +511,29 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
         await harness.SeedAsync(db =>
         {
-            db.Incidents.Add(new Incident { Id = "inc-quick-state", TrackingId = "INC-QUICK", Title = "Quick incident", State = TicketState.New });
-            db.Requests.Add(new Request { Id = "req-quick-state", TrackingId = "REQ-QUICK", Title = "Quick request", State = TicketState.New });
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Technician organization" },
+                new Organization { Id = "org-2", Name = "Foreign organization" });
+            db.Users.Add(new User
+            {
+                Id = "admin-1",
+                Name = "Technician One",
+                Email = "technician@example.com",
+                OrganizationId = "org-1",
+                Role = "Technician"
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = "admin-1",
+                OrganizationId = "org-1",
+                RoleKey = ScopedRoleCatalog.Technician
+            });
+            db.Incidents.AddRange(
+                new Incident { Id = "inc-quick-state", TrackingId = "INC-QUICK", Title = "Quick incident", State = TicketState.New, OrganizationId = "org-1" },
+                new Incident { Id = "inc-quick-state-foreign", TrackingId = "INC-QUICK-FOREIGN", Title = "Foreign quick incident", State = TicketState.New, OrganizationId = "org-2" });
+            db.Requests.AddRange(
+                new Request { Id = "req-quick-state", TrackingId = "REQ-QUICK", Title = "Quick request", State = TicketState.New, OrganizationId = "org-1" },
+                new Request { Id = "req-quick-state-foreign", TrackingId = "REQ-QUICK-FOREIGN", Title = "Foreign quick request", State = TicketState.New, OrganizationId = "org-2" });
         });
         harness.UseRole("Technician");
 
@@ -518,13 +543,23 @@ public sealed class LiveHistoryFilteringEndpointsTests
         var requestResponse = await harness.Client.PostAsJsonAsync(
             "/api/v1/requests/req-quick-state/state",
             new { NewState = TicketState.OnHold });
+        var foreignIncidentResponse = await harness.Client.PostAsJsonAsync(
+            "/api/v1/incidents/inc-quick-state-foreign/state",
+            new { NewState = TicketState.InProgress });
+        var foreignRequestResponse = await harness.Client.PostAsJsonAsync(
+            "/api/v1/requests/req-quick-state-foreign/state",
+            new { NewState = TicketState.OnHold });
 
         incidentResponse.EnsureSuccessStatusCode();
         requestResponse.EnsureSuccessStatusCode();
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignIncidentResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignRequestResponse.StatusCode);
         await harness.WithDbAsync(async db =>
         {
             Assert.Equal(TicketState.InProgress, (await db.Incidents.FindAsync("inc-quick-state"))!.State);
             Assert.Equal(TicketState.OnHold, (await db.Requests.FindAsync("req-quick-state"))!.State);
+            Assert.Equal(TicketState.New, (await db.Incidents.FindAsync("inc-quick-state-foreign"))!.State);
+            Assert.Equal(TicketState.New, (await db.Requests.FindAsync("req-quick-state-foreign"))!.State);
         });
     }
 
@@ -535,6 +570,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await harness.SeedAsync(db =>
         {
             db.Organizations.Add(new Organization { Id = "org-quick-approved", Name = "Example Organization" });
+            AddTechnicianChangeManagerAccess(db, "org-quick-approved");
             db.Changes.Add(new Change
             {
                 Id = "chg-quick-approved",
@@ -564,6 +600,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await harness.SeedAsync(db =>
         {
             db.Organizations.Add(new Organization { Id = "org-quick-block", Name = "Example Organization" });
+            AddTechnicianChangeManagerAccess(db, "org-quick-block");
             db.Changes.Add(new Change
             {
                 Id = "chg-quick-block",
@@ -591,6 +628,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await harness.SeedAsync(db =>
         {
             db.Organizations.Add(new Organization { Id = "org-quick-draft", Name = "Example Organization" });
+            AddTechnicianChangeManagerAccess(db, "org-quick-draft");
             db.Changes.Add(new Change
             {
                 Id = "chg-quick-draft",
@@ -639,6 +677,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await harness.SeedAsync(db =>
         {
             db.Organizations.Add(new Organization { Id = "org-quick-implemented", Name = "Example Organization" });
+            AddTechnicianChangeManagerAccess(db, "org-quick-implemented");
             db.Changes.Add(new Change
             {
                 Id = "chg-quick-implemented",
@@ -674,6 +713,40 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task QuickChangeLifecycle_RequiresScopedManagerAccess()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.Add(new Organization { Id = "org-1", Name = "Organization One" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Changes.Add(new Change
+            {
+                Id = "chg-self-service-lifecycle",
+                TrackingId = "CHG-SELF-LIFECYCLE",
+                Title = "Self-service change",
+                OrganizationId = "org-1",
+                State = TicketState.New,
+                Priority = TicketPriority.Low,
+                LifecycleState = ChangeLifecycleState.ApprovedForImplementation
+            });
+        });
+        harness.UseRole("SelfService");
+
+        var response = await harness.Client.PostAsJsonAsync(
+            "/api/v1/changes/chg-self-service-lifecycle/lifecycle",
+            new { LifecycleState = ChangeLifecycleState.ImplementationInProgress });
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+        await harness.WithDbAsync(async db =>
+        {
+            var change = await db.Changes.FindAsync("chg-self-service-lifecycle");
+            Assert.Equal(ChangeLifecycleState.ApprovedForImplementation, change!.LifecycleState);
+        });
+    }
+
+    [Fact]
     public async Task RequestTasks_DefaultsToActionableStatusesAndHistoricOnlyReturnsCompletedAndSkipped()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
@@ -705,6 +778,23 @@ public sealed class LiveHistoryFilteringEndpointsTests
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
         await harness.SeedAsync(db =>
         {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Allowed tenant" },
+                new Organization { Id = "org-2", Name = "Other tenant" });
+            db.Customers.Add(new Customer
+            {
+                Id = "customer-request-manager",
+                Name = "Request manager",
+                Email = "operator@example.test",
+                OrganizationId = "org-1"
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-request-manager",
+                OidcIssuer = "https://id.example.test",
+                OidcSubject = "operator",
+                InviteStatus = CustomerInviteStatus.Active
+            });
             db.Requests.AddRange(
                 new Request { Id = "req-1", TrackingId = "REQ-1", Title = "Tenant request", State = TicketState.InProgress, OrganizationId = "org-1" },
                 new Request { Id = "req-2", TrackingId = "REQ-2", Title = "Other tenant request", State = TicketState.InProgress, OrganizationId = "org-2" });
@@ -728,6 +818,116 @@ public sealed class LiveHistoryFilteringEndpointsTests
 
         var item = Assert.Single(response!.Items);
         Assert.Equal("task-tenant", item.Id);
+    }
+
+    [Fact]
+    public async Task RequestTasks_CreateDoesNotLinkAnAccessibleTenantToAnotherTenantsRequest()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Allowed tenant" },
+                new Organization { Id = "org-2", Name = "Other tenant" });
+            db.Customers.Add(new Customer
+            {
+                Id = "customer-request-manager",
+                Name = "Request manager",
+                Email = "operator@example.test",
+                OrganizationId = "org-1"
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-request-manager",
+                OidcIssuer = "https://id.example.test",
+                OidcSubject = "operator",
+                InviteStatus = CustomerInviteStatus.Active
+            });
+            db.Requests.Add(new Request
+            {
+                Id = "req-other",
+                TrackingId = "REQ-OTHER",
+                Title = "Other tenant request",
+                State = TicketState.InProgress,
+                OrganizationId = "org-2"
+            });
+        });
+        harness.UseRole("Request.Manager");
+
+        var response = await harness.Client.PostAsJsonAsync("/api/v1/request-tasks", new
+        {
+            Title = "Cross-tenant task",
+            Description = "Must not be created",
+            RequestId = "req-other",
+            OrganizationId = "org-1"
+        });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        await harness.WithDbAsync(db =>
+        {
+            Assert.Empty(db.RequestTasks);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task RequestTasks_PutDoesNotChangeTheAuthorizedParentRequest()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Allowed tenant" },
+                new Organization { Id = "org-2", Name = "Other tenant" });
+            db.Customers.Add(new Customer
+            {
+                Id = "customer-request-manager",
+                Name = "Request manager",
+                Email = "operator@example.test",
+                OrganizationId = "org-1"
+            });
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-request-manager",
+                OidcIssuer = "https://id.example.test",
+                OidcSubject = "operator",
+                InviteStatus = CustomerInviteStatus.Active
+            });
+            db.Requests.AddRange(
+                new Request { Id = "req-allowed", TrackingId = "REQ-ALLOWED", Title = "Allowed request", State = TicketState.InProgress, OrganizationId = "org-1" },
+                new Request { Id = "req-other", TrackingId = "REQ-OTHER", Title = "Other tenant request", State = TicketState.InProgress, OrganizationId = "org-2" });
+            db.RequestTasks.Add(new RequestTask
+            {
+                Id = "task-allowed",
+                TrackingId = "TASK-ALLOWED",
+                Title = "Allowed task",
+                RequestId = "req-allowed",
+                OrganizationId = "org-1",
+                Status = RequestTaskStatus.Pending,
+                Type = RequestTaskType.Manual,
+                State = TicketState.New
+            });
+        });
+        harness.UseRole("Request.Manager");
+
+        var response = await harness.Client.PutAsJsonAsync("/api/v1/request-tasks/task-allowed", new RequestTask
+        {
+            Id = "task-allowed",
+            TrackingId = "TASK-ALLOWED",
+            Title = "Allowed task",
+            RequestId = "req-other",
+            OrganizationId = "org-1",
+            Status = RequestTaskStatus.Pending,
+            Type = RequestTaskType.Manual,
+            State = TicketState.New
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await harness.WithDbAsync(db =>
+        {
+            Assert.Equal("req-allowed", db.RequestTasks.Single(task => task.Id == "task-allowed").RequestId);
+            return Task.CompletedTask;
+        });
     }
 
     [Fact]
@@ -1067,6 +1267,237 @@ public sealed class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
+    public async Task IncidentRelations_HideRelatedIncidentsOutsideSelfServiceScope()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.Add(new Organization { Id = "org-1", Name = "Organization One" });
+            db.Users.Add(new User
+            {
+                Id = "self-service-1",
+                Name = "Self-service user",
+                Email = "self-service@example.com",
+                OrganizationId = "org-1",
+                Role = "User"
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = "self-service-1",
+                OrganizationId = "org-1",
+                RoleKey = ScopedRoleCatalog.SelfServiceUser
+            });
+            AddSelfServiceCustomerAccess(db);
+        });
+        await SeedRelationIncidentsAsync(harness, "self-service@example.com", SelfServiceCustomerId);
+        await harness.SeedAsync(db => db.TicketRelations.Add(new TicketRelation
+        {
+            SourceTicketId = "inc-source",
+            TargetTicketId = "inc-target",
+            RelationType = TicketRelationType.RelatedTo,
+            CreatedByUserId = "admin-1",
+            CreatedByUserName = "Admin One"
+        }));
+        harness.UseRole("SelfService");
+
+        var ownRelations = await GetRelationsAsync(harness.Client, "/api/v1/incidents/inc-source/relations");
+        var foreignRelations = await harness.Client.GetAsync("/api/v1/incidents/inc-target/relations");
+
+        Assert.Empty(ownRelations);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignRelations.StatusCode);
+    }
+
+    [Fact]
+    public async Task IncidentUpdate_RequiresScopedIncidentManagerAccess()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.Add(new Organization { Id = "org-1", Name = "Organization One" });
+            db.Users.Add(new User
+            {
+                Id = "self-service-1",
+                Name = "Self-service user",
+                Email = "self-service@example.com",
+                OrganizationId = "org-1",
+                Role = "User"
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = "self-service-1",
+                OrganizationId = "org-1",
+                RoleKey = ScopedRoleCatalog.SelfServiceUser
+            });
+            db.Incidents.Add(new Incident
+            {
+                Id = "inc-self-service-update",
+                TrackingId = "INC-SELF-UPDATE",
+                Title = "Self-service incident",
+                OrganizationId = "org-1",
+                RequesterEmail = "self-service@example.com",
+                State = TicketState.New,
+                Priority = TicketPriority.Low
+            });
+        });
+        harness.UseRole("SelfService");
+
+        var response = await harness.Client.PutAsJsonAsync(
+            "/api/v1/incidents/inc-self-service-update",
+            new UpdateIncidentDto { State = TicketState.Resolved });
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+        await harness.WithDbAsync(async db =>
+        {
+            Assert.Equal(TicketState.New, (await db.Incidents.FindAsync("inc-self-service-update"))!.State);
+        });
+    }
+
+    [Fact]
+    public async Task IncidentDetail_ResolvesScopedAccessFromPersistedGrants()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Organization One" },
+                new Organization { Id = "org-2", Name = "Organization Two" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            AddSelfServiceCustomerAccess(db);
+            db.Incidents.AddRange(
+                new Incident { Id = "inc-self-service-detail", TrackingId = "INC-SELF-DETAIL", Title = "Self-service incident", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
+                new Incident { Id = "inc-foreign-detail", TrackingId = "INC-FOREIGN-DETAIL", Title = "Foreign incident", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+        });
+        harness.UseRole("SelfService");
+
+        var own = await harness.Client.GetAsync("/api/v1/incidents/inc-self-service-detail");
+        var foreign = await harness.Client.GetAsync("/api/v1/incidents/inc-foreign-detail");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, own.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreign.StatusCode);
+    }
+
+    [Fact]
+    public async Task TicketLists_ResolveScopedAccessFromPersistedGrants()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Organization One" },
+                new Organization { Id = "org-2", Name = "Organization Two" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            AddSelfServiceCustomerAccess(db);
+            db.Incidents.AddRange(
+                new Incident { Id = "inc-list-own", TrackingId = "INC-LIST-OWN", Title = "Own incident", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
+                new Incident { Id = "inc-list-foreign", TrackingId = "INC-LIST-FOREIGN", Title = "Foreign incident", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+            db.Requests.AddRange(
+                new Request { Id = "req-list-own", TrackingId = "REQ-LIST-OWN", Title = "Own request", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
+                new Request { Id = "req-list-foreign", TrackingId = "REQ-LIST-FOREIGN", Title = "Foreign request", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+            db.Changes.AddRange(
+                new Change { Id = "chg-list-own", TrackingId = "CHG-LIST-OWN", Title = "Own change", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
+                new Change { Id = "chg-list-foreign", TrackingId = "CHG-LIST-FOREIGN", Title = "Foreign change", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+        });
+        harness.UseRole("SelfService");
+
+        var incidents = await harness.Client.GetFromJsonAsync<PagedResponse<IncidentDto>>("/api/v1/incidents?page=1&pageSize=20");
+        var requests = await harness.Client.GetFromJsonAsync<PagedResponse<RequestDto>>("/api/v1/requests?page=1&pageSize=20");
+        var changes = await harness.Client.GetFromJsonAsync<PagedResponse<ChangeDto>>("/api/v1/changes?page=1&pageSize=20");
+
+        Assert.Equal(["INC-LIST-OWN"], incidents!.Items.Select(item => item.TrackingId));
+        Assert.Equal(["REQ-LIST-OWN"], requests!.Items.Select(item => item.TrackingId));
+        // SelfServiceUser deliberately contains Incident.User and Request.User,
+        // not Change.User. The old assertion depended on a list-query leak that
+        // accepted unrelated organization membership as a change permission.
+        Assert.Empty(changes!.Items);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden,
+            (await harness.Client.GetAsync("/api/v1/changes/chg-list-own")).StatusCode);
+
+        await harness.SeedAsync(db =>
+        {
+            db.Roles.Add(new Role
+            {
+                Key = "custom.own-change-reader", Name = "Own change access", Scope = RoleScopeKind.Tenant,
+                OwnerOrganizationId = "org-1", Permissions = [new RolePermission { Permission = HelpdeskPermissions.ChangeUser }]
+            });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = "self-service-1", OrganizationId = "org-1", RoleKey = "custom.own-change-reader"
+            });
+        });
+        changes = await harness.Client.GetFromJsonAsync<PagedResponse<ChangeDto>>("/api/v1/changes?page=1&pageSize=20");
+        Assert.Equal(["CHG-LIST-OWN"], changes!.Items.Select(item => item.TrackingId));
+        Assert.Equal(System.Net.HttpStatusCode.OK,
+            (await harness.Client.GetAsync("/api/v1/changes/chg-list-own")).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden,
+            (await harness.Client.GetAsync("/api/v1/changes/chg-list-foreign")).StatusCode);
+    }
+
+    [Fact]
+    public async Task RequestAndChangeMutations_RequireScopedManagerAccess()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.Add(new Organization { Id = "org-1", Name = "Organization One" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            db.Requests.Add(new Request { Id = "req-self-service-update", TrackingId = "REQ-SELF-UPDATE", Title = "Self-service request", OrganizationId = "org-1", RequesterEmail = "self-service@example.com", State = TicketState.New, Priority = TicketPriority.Low });
+            db.Changes.Add(new Change { Id = "chg-self-service-update", TrackingId = "CHG-SELF-UPDATE", Title = "Self-service change", OrganizationId = "org-1", RequesterEmail = "self-service@example.com", State = TicketState.New, Priority = TicketPriority.Low });
+        });
+        harness.UseRole("SelfService");
+
+        var requestUpdate = await harness.Client.PutAsJsonAsync("/api/v1/requests/req-self-service-update", new UpdateRequestDto { State = TicketState.Resolved });
+        var changeUpdate = await harness.Client.PutAsJsonAsync("/api/v1/changes/chg-self-service-update", new UpdateChangeDto { State = TicketState.Resolved, Priority = TicketPriority.Low });
+        var changeDelete = await harness.Client.DeleteAsync("/api/v1/changes/chg-self-service-update");
+        var runReview = await harness.Client.PostAsJsonAsync("/api/v1/changes/chg-self-service-update/ai-review", new { });
+        var acknowledgeReview = await harness.Client.PostAsJsonAsync("/api/v1/changes/chg-self-service-update/ai-review/acknowledge", new { });
+
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, requestUpdate.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeUpdate.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeDelete.StatusCode);
+        Assert.True(runReview.StatusCode == System.Net.HttpStatusCode.Forbidden, await runReview.Content.ReadAsStringAsync());
+        Assert.True(acknowledgeReview.StatusCode == System.Net.HttpStatusCode.Forbidden, await acknowledgeReview.Content.ReadAsStringAsync());
+        await harness.WithDbAsync(async db =>
+        {
+            Assert.Equal(TicketState.New, (await db.Requests.FindAsync("req-self-service-update"))!.State);
+            Assert.Equal(TicketState.New, (await db.Changes.FindAsync("chg-self-service-update"))!.State);
+        });
+    }
+
+    [Fact]
+    public async Task RequestTaskAndAiAuditEndpoints_RespectRequestScope()
+    {
+        await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
+        await harness.SeedAsync(db =>
+        {
+            db.Organizations.AddRange(
+                new Organization { Id = "org-1", Name = "Organization One" },
+                new Organization { Id = "org-2", Name = "Organization Two" });
+            db.Users.Add(new User { Id = "self-service-1", Name = "Self-service user", Email = "self-service@example.com", OrganizationId = "org-1", Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "self-service-1", OrganizationId = "org-1", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+            AddSelfServiceCustomerAccess(db);
+            db.Requests.AddRange(
+                new Request { Id = "req-self-service-tasks", TrackingId = "REQ-SELF-TASKS", Title = "Self-service request", OrganizationId = "org-1", CustomerId = SelfServiceCustomerId, RequesterEmail = "self-service@example.com" },
+                new Request { Id = "req-foreign-tasks", TrackingId = "REQ-FOREIGN-TASKS", Title = "Foreign request", OrganizationId = "org-2", RequesterEmail = "foreign@example.com" });
+        });
+        harness.UseRole("SelfService");
+
+        var ownTasks = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/tasks");
+        var foreignTasks = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks/tasks");
+        var ownAiAudit = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/ai-audit");
+        var ownRequest = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks");
+        var foreignRequest = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, ownTasks.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignTasks.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, ownAiAudit.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.OK, ownRequest.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignRequest.StatusCode);
+    }
+
+    [Fact]
     public async Task IncidentRelations_DeleteRemovesExistingLink()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
@@ -1091,7 +1522,31 @@ public sealed class LiveHistoryFilteringEndpointsTests
         });
     }
 
-    private static async Task SeedRelationIncidentsAsync(LiveHistoryFilteringHarness harness)
+    private const string SelfServiceCustomerId = "customer-self-service-1";
+
+    private static void AddSelfServiceCustomerAccess(HelpdeskDbContext db)
+    {
+        db.Customers.Add(new Customer
+        {
+            Id = SelfServiceCustomerId,
+            Name = "Self-service customer",
+            Email = "self-service@example.com",
+            OrganizationId = "org-1"
+        });
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = SelfServiceCustomerId,
+            AuthProviderType = "Local",
+            LocalAccountId = "self-service-1",
+            InviteStatus = CustomerInviteStatus.Active,
+            InviteAcceptedAtUtc = DateTimeOffset.UtcNow
+        });
+    }
+
+    private static async Task SeedRelationIncidentsAsync(
+        LiveHistoryFilteringHarness harness,
+        string sourceRequesterEmail = "source-requester@example.com",
+        string? sourceCustomerId = null)
     {
         await harness.SeedAsync(db =>
         {
@@ -1104,7 +1559,8 @@ public sealed class LiveHistoryFilteringEndpointsTests
                     State = TicketState.InProgress,
                     Priority = TicketPriority.Medium,
                     OrganizationId = "org-1",
-                    RequesterEmail = "source-requester@example.com",
+                    CustomerId = sourceCustomerId,
+                    RequesterEmail = sourceRequesterEmail,
                     CcRecipients = ["source-cc@example.com", "existing@example.com", "TARGET-REQUESTER@example.com"]
                 },
                 new Incident
@@ -1169,6 +1625,24 @@ public sealed class LiveHistoryFilteringEndpointsTests
         OrganizationId = "org-1"
     };
 
+    private static void AddTechnicianChangeManagerAccess(HelpdeskDbContext db, string organizationId)
+    {
+        db.Users.Add(new User
+        {
+            Id = "admin-1",
+            Name = "Technician One",
+            Email = "technician@example.com",
+            OrganizationId = organizationId,
+            Role = "Technician"
+        });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+        {
+            UserId = "admin-1",
+            OrganizationId = organizationId,
+            RoleKey = ScopedRoleCatalog.Technician
+        });
+    }
+
     private sealed class LiveHistoryFilteringHarness : IAsyncDisposable
     {
         private readonly SqliteConnection connection;
@@ -1185,7 +1659,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
         public HttpClient Client { get; }
         public CapturingDomainEventPublisher DomainEvents { get; }
 
-        public static async Task<LiveHistoryFilteringHarness> CreateAsync()
+        public static async Task<LiveHistoryFilteringHarness> CreateAsync(CurrentUserAccessProfile? accessProfile = null, Helpdesk.Application.RequestTasks.IRequestTaskLifecycleService? lifecycleService = null)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -1201,9 +1675,14 @@ public sealed class LiveHistoryFilteringEndpointsTests
             builder.Services.AddScoped<IRepository<Incident>, EfRepository<Incident>>();
             builder.Services.AddScoped<IRepository<Request>, EfRepository<Request>>();
             builder.Services.AddScoped<IRepository<RequestTask>, EfRepository<RequestTask>>();
+            builder.Services.AddScoped<IRepository<User>, EfRepository<User>>();
             builder.Services.AddScoped<IRepository<Change>, EfRepository<Change>>();
             builder.Services.AddScoped<IRepository<KnowledgeBaseArticle>, EfRepository<KnowledgeBaseArticle>>();
             builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
+            if (accessProfile is not null)
+            {
+                builder.Services.AddSingleton<ICurrentUserAccessService>(new FixedTicketAccessService(accessProfile));
+            }
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("org-1", "admin-1", isHelpdeskAdmin: true));
             builder.Services.AddSingleton<CapturingDomainEventPublisher>();
             builder.Services.AddSingleton<IDomainEventPublisher>(sp => sp.GetRequiredService<CapturingDomainEventPublisher>());
@@ -1211,6 +1690,12 @@ public sealed class LiveHistoryFilteringEndpointsTests
             builder.Services.AddSingleton<IPublicTicketLinkSigner, TestPublicTicketLinkSigner>();
             builder.Services.AddSingleton<IImageLinkSigner, TestImageLinkSigner>();
             builder.Services.AddSingleton<ITimelineEventBus, TestTimelineEventBus>();
+            builder.Services.AddSingleton<IRequestSender, FailFastRequestSender>();
+            if (lifecycleService is not null)
+            {
+                builder.Services.AddSingleton(lifecycleService);
+                builder.Services.AddSingleton(NSubstitute.Substitute.For<Helpdesk.Application.Workflow.IWorkflowEngine>());
+            }
             builder.Services.AddSingleton<Helpdesk.Application.Services.Tickets.ITicketRefGeneratorService, Helpdesk.Application.Services.Tickets.TicketRefGeneratorService>();
             builder.Services.AddSingleton<IChangeReviewService, TestChangeReviewService>();
             builder.Services.AddSingleton<ITicketNotificationService, NoopTicketNotificationService>();
@@ -1250,37 +1735,37 @@ public sealed class LiveHistoryFilteringEndpointsTests
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Incident.User", "Incident.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Incident.User", "Incident.Read", "Incident.Write", "Incident.Delete", "Incident.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("IncidentManager", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Incident.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Incident.Write", "Incident.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("RequestAccess", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Request.User", "Request.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Request.User", "Request.Read", "Request.Write", "Request.Delete", "Request.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("RequestManager", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Request.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Request.Write", "Request.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("ChangeAccess", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Change.User", "Change.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Change.User", "Change.Read", "Change.Write", "Change.Delete", "Change.Approve", "Change.Manager", "HelpdeskAdmin");
                 });
                 options.AddPolicy("ChangeManager", policy =>
                 {
                     policy.AddAuthenticationSchemes("Test");
                     policy.RequireAuthenticatedUser();
-                    policy.RequireRole("Change.Manager", "HelpdeskAdmin");
+                    policy.RequireRole("Change.Write", "Change.Manager", "HelpdeskAdmin");
                 });
             });
 
@@ -1291,6 +1776,7 @@ public sealed class LiveHistoryFilteringEndpointsTests
             app.MapRequestEndpoints();
             app.MapChangeEndpoints();
             app.MapRequestTaskEndpoints();
+            app.MapWorkLogEndpoints();
 
             using (var scope = app.Services.CreateScope())
             {
@@ -1365,7 +1851,9 @@ public sealed class LiveHistoryFilteringEndpointsTests
     private sealed class NoopTicketSlaService : ITicketSlaService
     {
         public Task PauseAsync(string ticketId, string userId, string reason) => Task.CompletedTask;
+        public Task PauseAsync(Ticket ticket, string userId, string reason) => Task.CompletedTask;
         public Task ResumeAsync(string ticketId, string userId) => Task.CompletedTask;
+        public Task ResumeAsync(Ticket ticket, string userId) => Task.CompletedTask;
         public Task AutoResumeIfDueAsync(string ticketId) => Task.CompletedTask;
     }
 
@@ -1543,6 +2031,12 @@ public sealed class LiveHistoryFilteringEndpointsTests
         public ValueTask PublishAsync(TicketTimelineEventDto evt) => ValueTask.CompletedTask;
     }
 
+    private sealed class FailFastRequestSender : IRequestSender
+    {
+        public Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException($"Unexpected request dispatch in this test harness: {request.GetType().Name}");
+    }
+
     private sealed class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
     {
         public TestAuthHandler(
@@ -1561,17 +2055,33 @@ public sealed class LiveHistoryFilteringEndpointsTests
                 role = header.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? role;
             }
 
+            var isSelfService = string.Equals(role, "SelfService", StringComparison.OrdinalIgnoreCase);
             var claims = new List<Claim>
             {
-                new Claim(ClaimTypes.NameIdentifier, "admin-1"),
-                new Claim(ClaimTypes.Name, "Admin One"),
+                new Claim(ClaimTypes.NameIdentifier, isSelfService ? "self-service-1" : "admin-1"),
+                new Claim(ClaimTypes.Name, isSelfService ? "Self-service user" : "Admin One"),
+                new Claim("iss", "https://id.example.test"),
+                new Claim("sub", "operator"),
                 new Claim("organization_id", "org-1"),
-                new Claim(ClaimTypes.Role, role),
-                new Claim("roles", role)
+                new Claim(ClaimTypes.Role, isSelfService ? HelpdeskPermissions.IncidentUser : role),
+                new Claim("roles", isSelfService ? HelpdeskPermissions.IncidentUser : role)
             };
+
+            if (isSelfService)
+            {
+                claims.Add(new Claim(ClaimTypes.Email, "self-service@example.com"));
+                claims.Add(new Claim("auth_mode", "local"));
+                foreach (var selfServiceRole in new[] { HelpdeskPermissions.RequestUser, HelpdeskPermissions.ChangeUser })
+                {
+                    claims.Add(new Claim(ClaimTypes.Role, selfServiceRole));
+                    claims.Add(new Claim("roles", selfServiceRole));
+                }
+            }
 
             if (string.Equals(role, "Technician", StringComparison.OrdinalIgnoreCase))
             {
+                claims.Add(new Claim("auth_mode", "local"));
+                claims.Add(new Claim(ClaimTypes.Email, "technician@example.com"));
                 foreach (var managerRole in new[] { "Incident.Manager", "Request.Manager", "Change.Manager" })
                 {
                     claims.Add(new Claim(ClaimTypes.Role, managerRole));

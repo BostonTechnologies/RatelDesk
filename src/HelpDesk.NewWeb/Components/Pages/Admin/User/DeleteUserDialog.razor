@@ -1,28 +1,59 @@
 
 @inject IHttpClientFactory HttpClientFactory
+@inject HelpDesk.NewWeb.Models.WebAuthenticationMode AuthenticationMode
 <MudDialog>
     <DialogContent>
-        <MudText Typo="Typo.body1">Are you sure you want to delete @User.Name?</MudText>
+        @if (error is not null) { <MudAlert Severity="Severity.Error">@error</MudAlert> }
+        <MudText Typo="Typo.body1">Are you sure you want to @ActionName @User.Name?</MudText>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton OnClick="Delete" Color="Color.Error" Variant="Variant.Filled">Delete</MudButton>
+        <MudButton OnClick="Delete" Color="Color.Error" Variant="Variant.Filled">@ActionName</MudButton>
     </DialogActions>
 </MudDialog>
 
 @code {
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
+    private bool SupportsLocalAccounts => AuthenticationMode.SupportsLocalAccounts;
+    private string? error;
+    private bool? isLocalAccountEnabled;
+    private string ActionName => isLocalAccountEnabled switch
+    {
+        true => "Disable",
+        false => "Enable",
+        _ => "Delete"
+    };
     [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
     [Parameter] public Helpdesk.Shared.DTOs.User.UserDto User { get; set; } = default!;
 
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SupportsLocalAccounts)
+        {
+            return;
+        }
+
+        var response = await HelpdeskApi.GetAsync($"api/v1/local-auth/users/{User.Id}/status");
+        if (response.IsSuccessStatusCode)
+        {
+            isLocalAccountEnabled = (await response.Content.ReadFromJsonAsync<LocalAccountStatusResponse>())?.IsEnabled;
+        }
+    }
+
     private async Task Delete()
     {
-        var response = await HelpdeskApi.DeleteAsync($"api/v1/users/{User.Id}");
+        var response = isLocalAccountEnabled is { } enabled
+            ? await HelpdeskApi.PostAsync($"api/v1/local-auth/users/{User.Id}/{(enabled ? "disable" : "enable")}", content: null)
+            : await HelpdeskApi.DeleteAsync($"api/v1/users/{User.Id}");
+
         if (response.IsSuccessStatusCode)
         {
             Dialog.Close(DialogResult.Ok(true));
         }
+        else error = "The account could not be changed. The last enabled administrator must remain active. Use Manage local account for local credentials.";
     }
 
     private void Cancel() => Dialog.Cancel();
+
+    private sealed record LocalAccountStatusResponse(bool IsEnabled);
 }

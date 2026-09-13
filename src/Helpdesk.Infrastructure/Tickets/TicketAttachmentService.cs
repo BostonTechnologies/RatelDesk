@@ -1,26 +1,23 @@
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.DTOs.Attachment;
 using Helpdesk.Shared.Models;
-using Microsoft.Extensions.Hosting;
+using Helpdesk.Infrastructure.Storage;
 
 namespace Helpdesk.Application.Services.Tickets;
 
-public class TicketAttachmentService(HelpdeskDbContext db, IHostEnvironment env) : ITicketAttachmentService
+public class TicketAttachmentService(HelpdeskDbContext db, TicketAttachmentFileStore fileStore) : ITicketAttachmentService
 {
     private readonly HelpdeskDbContext _db = db;
-    private readonly IHostEnvironment _env = env;
+    private readonly TicketAttachmentFileStore _fileStore = fileStore;
 
     public async Task<IEnumerable<AttachmentDto>> SaveAsync(string ticketId, IEnumerable<AttachmentUpload> uploads, string? uploadedById, CancellationToken token)
     {
-        var uploadPath = Path.Combine(_env.ContentRootPath, "wwwroot", "attachments");
-        Directory.CreateDirectory(uploadPath);
-
         var results = new List<AttachmentDto>();
 
         foreach (var upload in uploads)
         {
             var uniqueName = $"{Guid.NewGuid()}{Path.GetExtension(upload.FileName)}";
-            var filePath = Path.Combine(uploadPath, uniqueName);
+            var filePath = _fileStore.GetWritePath(uniqueName);
             await File.WriteAllBytesAsync(filePath, upload.Content, token);
 
             var entity = new Attachment

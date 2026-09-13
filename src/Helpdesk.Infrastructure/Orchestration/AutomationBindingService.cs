@@ -33,10 +33,15 @@ public sealed class AutomationBindingService(
             query = query.Where(x => x.RequestFormId == normalizedRequestFormId);
         }
 
-        var bindings = await query
+        // SQLite cannot translate ordering by DateTimeOffset. Request-form ordering remains
+        // server-side; creation-time ordering is applied after materialization so this service
+        // works with both the supported SQLite and PostgreSQL deployments.
+        var bindings = (await query
             .OrderBy(x => x.RequestFormId)
+            .ToListAsync(cancellationToken))
+            .OrderBy(x => x.RequestFormId, StringComparer.Ordinal)
             .ThenBy(x => x.CreatedAtUtc)
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         if (bindings.Count == 0)
         {

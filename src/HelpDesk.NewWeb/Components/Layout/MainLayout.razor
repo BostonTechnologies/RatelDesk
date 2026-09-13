@@ -3,6 +3,7 @@
 @inject IJSRuntime JS
 @inject IHttpClientFactory HttpClientFactory
 @inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
+@inject IConfiguration Configuration
 
 <PageTitle>@_branding.ApplicationName</PageTitle>
 <HeadContent><link rel="icon" href="@_branding.FaviconUrl" /></HeadContent>
@@ -64,6 +65,11 @@
                         <MudMenuItem OnClick="OpenEmailSettings">Email Settings</MudMenuItem>
                         <MudMenuItem OnClick="OpenAiSettings">AI / Model Settings</MudMenuItem>
                         <MudDivider />
+                        @if (SupportsLocalAccounts)
+                        {
+                            <MudMenuItem Href="/account/change-password">Change passphrase</MudMenuItem>
+                            <MudMenuItem Href="/account/authenticator">Authenticator app</MudMenuItem>
+                        }
                         <MudMenuItem Href="/logout">Logout</MudMenuItem>
                     </MudMenu>
                 </div>
@@ -88,6 +94,11 @@
                         <MudMenuItem OnClick="OpenEmailSettings" Icon="@Icons.Material.Filled.Email">Email Settings</MudMenuItem>
                         <MudMenuItem OnClick="OpenAiSettings" Icon="@Icons.Material.Filled.Psychology">AI / Model Settings</MudMenuItem>
                         <MudDivider />
+                        @if (SupportsLocalAccounts)
+                        {
+                            <MudMenuItem Href="/account/change-password" Icon="@Icons.Material.Filled.Password">Change passphrase</MudMenuItem>
+                            <MudMenuItem Href="/account/authenticator" Icon="@Icons.Material.Filled.Security">Authenticator app</MudMenuItem>
+                        }
                         <MudMenuItem Href="/logout" Icon="@Icons.Material.Filled.Logout">Logout</MudMenuItem>
                     </MudMenu>
                 </div>
@@ -123,7 +134,13 @@
     <span class="dismiss">🗙</span>
 </div>
 
+<AuthorizeView><Authorized><SessionAccessMonitor /></Authorized></AuthorizeView>
+
 @code {
+    private bool SupportsLocalAccounts =>
+        string.Equals(Configuration["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Configuration["Authentication:Mode"], "Hybrid", StringComparison.OrdinalIgnoreCase);
+
     [Inject] private IDialogService DialogService { get; set; } = default!;
     private bool _drawerOpen = true;
     private bool searchOpen;

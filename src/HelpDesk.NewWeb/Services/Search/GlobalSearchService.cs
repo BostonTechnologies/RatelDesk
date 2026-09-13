@@ -301,11 +301,11 @@ public sealed class GlobalSearchService : IGlobalSearchService
     {
         var isAdmin = HasRole(user, "HelpdeskAdmin");
         var hasWorkspaceAccess = HasAnyRole(user,
-            "Incident.User",
+            "Incident.User", "Incident.Read", "Incident.Write",
             "Incident.Manager",
-            "Request.User",
+            "Request.User", "Request.Read", "Request.Write",
             "Request.Manager",
-            "Change.User",
+            "Change.User", "Change.Read", "Change.Write",
             "Change.Manager",
             "Technician");
         return GetAllowedSections(user)
@@ -372,10 +372,10 @@ public sealed class GlobalSearchService : IGlobalSearchService
         HasRole(user, "HelpdeskAdmin") ||
         sectionKey switch
         {
-            "incidents" => HasAnyRole(user, "Incident.User", "Incident.Manager", "Technician"),
-            "requests" => HasAnyRole(user, "Request.User", "Request.Manager", "Technician"),
-            "changes" => HasAnyRole(user, "Change.User", "Change.Manager", "Technician"),
-            "tasks" => HasAnyRole(user, "Request.Manager", "Technician"),
+            "incidents" => HasAnyRole(user, "Incident.User", "Incident.Read", "Incident.Write", "Incident.Manager", "Technician"),
+            "requests" => HasAnyRole(user, "Request.User", "Request.Read", "Request.Write", "Request.Manager", "Technician"),
+            "changes" => HasAnyRole(user, "Change.User", "Change.Read", "Change.Write", "Change.Manager", "Technician"),
+            "tasks" => HasAnyRole(user, "Request.Read", "Request.Write", "Request.Manager", "Technician"),
             _ => false
         };
 

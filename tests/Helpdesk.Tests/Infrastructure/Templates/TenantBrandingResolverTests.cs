@@ -11,6 +11,22 @@ namespace Helpdesk.Tests.Infrastructure.Templates;
 public class TenantBrandingResolverTests
 {
     [Fact]
+    public async Task ResolveAsync_UsesPersistedInstanceUrlForDefaultAndTenantLogoLinks()
+    {
+        var repo = Substitute.For<IRepository<TenantBranding>>();
+        repo.GetAllAsync().Returns(new[] { new TenantBranding { TenantId = 1, LogoUrl = "/api/tenants/1/branding/logo/logo.png?token=expired" } });
+        var branding = Substitute.For<Helpdesk.Application.Services.Branding.IInstanceBrandingProvider>();
+        branding.GetEffectiveAsync(Arg.Any<CancellationToken>()).Returns(new Helpdesk.Application.Services.Branding.InstanceBrandingSnapshot(
+            "Desk", "", "https://desk.example.test", "", "", "", "", "", "", "", ""));
+        var resolver = new TenantBrandingResolver(repo, new TestImageLinkSigner(), new ConfigurationBuilder().Build(), branding);
+        var defaults = await resolver.ResolveAsync(null);
+        var tenant = await resolver.ResolveAsync("1");
+        Assert.Contains("https://desk.example.test/email-brand/rateldesk-email-wordmark.png", defaults.LogoHtml);
+        Assert.Contains("https://desk.example.test/api/tenants/1/branding/logo/logo.png?token=", tenant.LogoHtml);
+        Assert.DoesNotContain("token=expired", tenant.LogoHtml);
+    }
+
+    [Fact]
     public async Task ResolveAsync_ReturnsDefaults_WhenTenantBrandingMissing()
     {
         var repo = Substitute.For<IRepository<TenantBranding>>();

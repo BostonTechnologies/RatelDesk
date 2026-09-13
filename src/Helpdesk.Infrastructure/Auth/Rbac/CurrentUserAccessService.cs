@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Models;
@@ -7,8 +8,22 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Helpdesk.Infrastructure.Auth.Rbac;
 
-public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUserAccessService
+public sealed class CurrentUserAccessService : ICurrentUserAccessService
 {
+    private readonly HelpdeskDbContext _db;
+    private readonly RatelDeskIdentityDbContext? _identityDb;
+
+    public CurrentUserAccessService(HelpdeskDbContext db)
+        : this(db, null)
+    {
+    }
+
+    public CurrentUserAccessService(HelpdeskDbContext db, RatelDeskIdentityDbContext? identityDb)
+    {
+        _db = db;
+        _identityDb = identityDb;
+    }
+
     public async Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
     {
         if (user.Identity?.IsAuthenticated != true)
@@ -16,10 +31,34 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
             return Empty(false);
         }
 
-        var groups = ClaimValues(user, "groups", ClaimTypes.Role, "roles").ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var localAccountId = IsLocalAccount(user)
+            ? user.FindFirstValue(ClaimTypes.NameIdentifier)
+            : null;
+        ApplicationUser? localAccount = null;
+        if (_identityDb is not null && !string.IsNullOrWhiteSpace(localAccountId))
+        {
+            localAccount = await _identityDb.Users.AsNoTracking()
+                .SingleOrDefaultAsync(account => account.Id == localAccountId, ct);
+            if (localAccount?.IsEnabled != true)
+            {
+                return Empty(true);
+            }
+        }
+
+        // Local role claims are an authorization projection, never a source of
+        // grants. OIDC groups remain an explicit, independent provider source.
+        var groups = string.IsNullOrWhiteSpace(localAccountId)
+            ? ClaimValues(user, user.HasClaim("permission_scope_mode", "scoped")
+                    ? ["groups", "provider_role"]
+                    : ["groups", "provider_role", ClaimTypes.Role, "roles"])
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var bundles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var isAdmin = IsAdmin(user, groups);
+        var scopedPermissionGrants = new HashSet<ScopedPermissionGrant>();
+        var isAdmin = localAccount?.IsInstanceAdministrator == true ||
+                      groups.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
+                      groups.Contains(AuthentikRbacGroups.HelpdeskAdmin);
 
         if (isAdmin)
         {
@@ -28,7 +67,6 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         }
 
         AddDirectPermissionClaims(groups, permissions);
-
         if (groups.Contains(AuthentikRbacGroups.ClientAdmin) || groups.Contains(HelpdeskPermissions.DataManagementAdmin))
         {
             bundles.Add(HelpdeskRoleBundles.DataManagementAdmin);
@@ -49,20 +87,31 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         var subject = FirstClaim(user, "sub");
         var authentikUserId = FirstClaim(user, "authentik_user_id", "ak_user_id");
 
-        var link = await FindCustomerAuthLinkAsync(issuer, subject, authentikUserId, email, ct);
+        var link = await FindCustomerAuthLinkAsync(localAccountId, issuer, subject, authentikUserId, ct);
         Customer? customer = null;
         Organization? organization = null;
         if (link is not null)
         {
-            customer = await db.Customers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == link.CustomerId, ct);
+            customer = await _db.Customers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == link.CustomerId, ct);
             if (customer?.IsEnabled == true)
             {
-                organization = await db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == customer.OrganizationId, ct);
+                organization = await _db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == customer.OrganizationId, ct);
             }
         }
 
         var hasActiveCustomer = customer?.IsEnabled == true && organization?.IsEnabled == true;
-        if (hasActiveCustomer)
+        var domainUserId = localAccountId ?? link?.DomainUserId;
+        var domainUser = string.IsNullOrWhiteSpace(domainUserId)
+            ? null
+            : await _db.Users.AsNoTracking().FirstOrDefaultAsync(domainUser => domainUser.Id == domainUserId, ct);
+        var domainUserOrganization = domainUser is null || string.IsNullOrWhiteSpace(domainUser.OrganizationId)
+            ? null
+            : await _db.Organizations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == domainUser.OrganizationId, ct);
+        var hasActiveDomainUser = domainUser is not null;
+        // A missing DomainUserId marks a legacy external customer link. Once
+        // linked to an application-managed user, only persisted assignments
+        // supply its application roles, including the zero-assignment case.
+        if (hasActiveCustomer && string.IsNullOrWhiteSpace(localAccountId) && string.IsNullOrWhiteSpace(link!.DomainUserId))
         {
             bundles.Add(HelpdeskRoleBundles.User);
             foreach (var permission in HelpdeskPermissions.UserBundle)
@@ -79,8 +128,56 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
                 }
             }
         }
+        var providerPermissions = permissions.ToArray();
+        if (hasActiveDomainUser)
+        {
+            var assignments = await (
+                    from assignment in _db.ScopedRoleAssignments.AsNoTracking()
+                    join assignmentOrganization in _db.Organizations.AsNoTracking()
+                        on assignment.OrganizationId equals assignmentOrganization.Id
+                    where assignment.UserId == domainUser!.Id && assignmentOrganization.IsEnabled
+                    select assignment)
+                .ToListAsync(ct);
 
-        var primaryOrganizationId = hasActiveCustomer ? customer!.OrganizationId : FirstClaim(user, "organization_id", "tenant_id");
+            var assignedRoleKeys = assignments
+                .Select(assignment => assignment.RoleKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var rolePermissions = await _db.Roles.AsNoTracking()
+                .Where(role => assignedRoleKeys.Contains(role.Key) && role.Scope != RoleScopeKind.Instance)
+                .Select(role => new
+                {
+                    role.Key,
+                    role.OwnerOrganizationId,
+                    Permissions = role.Permissions.Select(permission => permission.Permission).ToArray()
+                })
+                .ToDictionaryAsync(role => role.Key, StringComparer.OrdinalIgnoreCase, ct);
+            foreach (var assignment in assignments)
+            {
+                if (rolePermissions.TryGetValue(assignment.RoleKey, out var persistedRole) &&
+                    persistedRole.OwnerOrganizationId is not null &&
+                    !string.Equals(persistedRole.OwnerOrganizationId, assignment.OrganizationId, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var assignedPermissions = persistedRole is not null
+                    ? (IReadOnlyList<string>)persistedRole.Permissions
+                    : ScopedRoleCatalog.PermissionsFor(assignment.RoleKey);
+                foreach (var permission in assignedPermissions)
+                {
+                    permissions.Add(permission);
+                    scopedPermissionGrants.Add(new ScopedPermissionGrant(permission, assignment.OrganizationId));
+                }
+            }
+
+        }
+
+        var primaryOrganizationId = hasActiveCustomer
+            ? customer!.OrganizationId
+            : domainUserOrganization?.IsEnabled == true
+                ? domainUser!.OrganizationId
+                : null;
         var allowedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var managedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -88,11 +185,15 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
         {
             allowedOrganizations.Add(primaryOrganizationId);
         }
+        foreach (var grant in scopedPermissionGrants)
+        {
+            allowedOrganizations.Add(grant.OrganizationId);
+        }
 
         var isTechnical = bundles.Contains(HelpdeskRoleBundles.Technical);
         if (isTechnical && !string.IsNullOrWhiteSpace(primaryOrganizationId))
         {
-            var managed = await db.Organizations.AsNoTracking()
+            var managed = await _db.Organizations.AsNoTracking()
                 .Where(x => x.State == Helpdesk.Shared.Models.EntityState.Enabled && x.ItSupportOrganizationId == primaryOrganizationId)
                 .Select(x => x.Id)
                 .ToListAsync(ct);
@@ -104,70 +205,77 @@ public sealed class CurrentUserAccessService(HelpdeskDbContext db) : ICurrentUse
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(localAccountId))
+        {
+            // Membership alone is not permission. A local account with no
+            // assignments must remain without access after all later logins.
+            allowedOrganizations.IntersectWith(scopedPermissionGrants.Select(grant => grant.OrganizationId));
+        }
+        else
+        {
+            var providerOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(primaryOrganizationId)) providerOrganizations.Add(primaryOrganizationId);
+            providerOrganizations.UnionWith(managedOrganizations);
+            foreach (var organizationId in providerOrganizations)
+            foreach (var permission in providerPermissions)
+                scopedPermissionGrants.Add(new ScopedPermissionGrant(permission, organizationId));
+        }
+
         return new CurrentUserAccessProfile(
             IsAuthenticated: true,
             Name: user.Identity?.Name ?? FirstClaim(user, "name", "preferred_username") ?? email,
             Email: email,
             PrimaryOrganizationId: primaryOrganizationId,
-            PrimaryOrganizationName: organization?.Name,
+            PrimaryOrganizationName: organization?.Name ?? domainUserOrganization?.Name,
             CustomerId: hasActiveCustomer ? customer!.Id : null,
             IsHelpdeskAdmin: isAdmin,
             RoleBundles: bundles,
             Permissions: permissions,
             AllowedOrganizationIds: allowedOrganizations,
-            ManagedOrganizationIds: managedOrganizations);
+            ManagedOrganizationIds: managedOrganizations)
+        {
+            UsesScopedPermissions = true,
+            ScopedPermissionGrants = scopedPermissionGrants
+        };
     }
 
     private async Task<CustomerAuthLink?> FindCustomerAuthLinkAsync(
+        string? localAccountId,
         string? issuer,
         string? subject,
         string? authentikUserId,
-        string? email,
         CancellationToken ct)
     {
+        if (!string.IsNullOrWhiteSpace(localAccountId))
+        {
+            var link = await _db.CustomerAuthLinks.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.LocalAccountId == localAccountId, ct);
+            if (link is not null) return link;
+        }
+
         if (!string.IsNullOrWhiteSpace(issuer) && !string.IsNullOrWhiteSpace(subject))
         {
-            var link = await db.CustomerAuthLinks.AsNoTracking()
+            var link = await _db.CustomerAuthLinks.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.OidcIssuer == issuer && x.OidcSubject == subject, ct);
             if (link is not null) return link;
         }
 
         if (!string.IsNullOrWhiteSpace(authentikUserId))
         {
-            var link = await db.CustomerAuthLinks.AsNoTracking()
+            var link = await _db.CustomerAuthLinks.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.AuthentikUserId == authentikUserId, ct);
             if (link is not null) return link;
-        }
-
-        if (!string.IsNullOrWhiteSpace(email))
-        {
-            var matches = await db.CustomerAuthLinks.AsNoTracking()
-                .Where(x => x.AuthentikEmail == email && x.InviteStatus == CustomerInviteStatus.Active)
-                .ToListAsync(ct);
-            if (matches.Count == 1) return matches[0];
         }
 
         return null;
     }
 
-    private static bool IsAdmin(ClaimsPrincipal user, HashSet<string> groups) =>
-        user.IsInRole(HelpdeskPermissions.HelpdeskAdmin) ||
-        groups.Contains(HelpdeskPermissions.HelpdeskAdmin) ||
-        groups.Contains(AuthentikRbacGroups.HelpdeskAdmin);
+    private static bool IsLocalAccount(ClaimsPrincipal user) =>
+        string.Equals(user.FindFirstValue("auth_mode"), "local", StringComparison.OrdinalIgnoreCase);
 
     private static void AddDirectPermissionClaims(HashSet<string> groups, HashSet<string> permissions)
     {
-        foreach (var permission in new[]
-                 {
-                     HelpdeskPermissions.SelfServiceUser,
-                     HelpdeskPermissions.IncidentUser,
-                     HelpdeskPermissions.IncidentManager,
-                     HelpdeskPermissions.RequestUser,
-                     HelpdeskPermissions.RequestManager,
-                     HelpdeskPermissions.ChangeUser,
-                     HelpdeskPermissions.ChangeManager,
-                     HelpdeskPermissions.DataManagementAdmin
-                 })
+        foreach (var permission in HelpdeskPermissions.AssignablePermissions)
         {
             if (groups.Contains(permission))
             {

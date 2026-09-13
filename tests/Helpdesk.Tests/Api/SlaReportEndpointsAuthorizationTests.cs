@@ -7,10 +7,13 @@ using Helpdesk.Application.Sla;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.Sla;
 using Helpdesk.Shared.Enums;
+using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,7 +22,7 @@ namespace Helpdesk.Tests.Api;
 public class SlaReportEndpointsAuthorizationTests
 {
     [Fact]
-    public async Task NonAdmin_QueryingOtherTenant_IsForcedToOwnTenant()
+    public async Task NonAdmin_QueryingAnUngrantedTenant_IsForbidden()
     {
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Production");
         Environment.SetEnvironmentVariable("RUN_MIGRATIONS", "false");
@@ -33,8 +36,27 @@ public class SlaReportEndpointsAuthorizationTests
         var to = Uri.EscapeDataString(DateTimeOffset.UtcNow.ToString("O"));
         var response = await client.GetAsync($"/api/v1/reports/sla/compliance?tenantId=tenant-b&fromUtc={from}&toUtc={to}");
 
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Null(fake.LastComplianceTenantId);
+    }
+
+    [Fact]
+    public async Task ScopedManager_CanQueryAnExplicitlyGrantedTenant()
+    {
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Production");
+        Environment.SetEnvironmentVariable("RUN_MIGRATIONS", "false");
+
+        var fake = new FakeReportingService();
+        using var factory = CreateFactory(fake);
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "ScopedTechnician");
+
+        var from = Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(-7).ToString("O"));
+        var to = Uri.EscapeDataString(DateTimeOffset.UtcNow.ToString("O"));
+        var response = await client.GetAsync($"/api/v1/reports/sla/compliance?tenantId=tenant-b&ticketType={(int)TicketType.Request}&fromUtc={from}&toUtc={to}");
+
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("tenant-a", fake.LastComplianceTenantId);
+        Assert.Equal("tenant-b", fake.LastComplianceTenantId);
     }
 
     [Fact]
@@ -58,12 +80,15 @@ public class SlaReportEndpointsAuthorizationTests
     {
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Production");
             builder.UseEnvironment("Production");
 
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<ISlaReportingQueryService>(fake);
+                services.RemoveAll<ICurrentUserAccessService>();
+                services.AddSingleton<ICurrentUserAccessService, SlaReportTestAccessService>();
                 services.AddAuthentication(o =>
                 {
                     o.DefaultAuthenticateScheme = "Test";
@@ -119,6 +144,8 @@ public class SlaReportEndpointsAuthorizationTests
             var auth = Request.Headers.Authorization.ToString();
             var role = auth.Contains("HelpdeskAdmin", StringComparison.OrdinalIgnoreCase)
                 ? "HelpdeskAdmin"
+                : auth.Contains("ScopedTechnician", StringComparison.OrdinalIgnoreCase)
+                    ? "ScopedTechnician"
                 : "Technician";
 
             var claims = new List<Claim>
@@ -129,13 +156,60 @@ public class SlaReportEndpointsAuthorizationTests
 
             if (!string.Equals(role, "HelpdeskAdmin", StringComparison.OrdinalIgnoreCase))
             {
-                claims.Add(new Claim("organization_id", "tenant-a"));
+                claims.Add(new Claim("sla_test_tenant", "tenant-a"));
             }
 
             var identity = new ClaimsIdentity(claims, "Test");
             var principal = new ClaimsPrincipal(identity);
             var ticket = new AuthenticationTicket(principal, "Test");
             return Task.FromResult(AuthenticateResult.Success(ticket));
+        }
+    }
+
+    private sealed class SlaReportTestAccessService : ICurrentUserAccessService
+    {
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
+        {
+            var roles = user.FindAll(ClaimTypes.Role)
+                .Select(claim => claim.Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var isAdmin = roles.Contains(HelpdeskPermissions.HelpdeskAdmin);
+            var organizationId = user.FindFirst("sla_test_tenant")?.Value;
+            var isScopedTechnician = roles.Contains("ScopedTechnician");
+            var permissions = roles.Contains("Technician") || isScopedTechnician
+                ? HelpdeskPermissions.TechnicalBundle.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var scopedGrants = isScopedTechnician
+                ? HelpdeskPermissions.TechnicalBundle
+                    .Select(permission => new ScopedPermissionGrant(permission, "tenant-b"))
+                    .ToHashSet()
+                : new HashSet<ScopedPermissionGrant>();
+            var allowedOrganizations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(organizationId))
+            {
+                allowedOrganizations.Add(organizationId);
+            }
+            if (isScopedTechnician)
+            {
+                allowedOrganizations.Add("tenant-b");
+            }
+
+            var profile = new CurrentUserAccessProfile(
+                true,
+                user.Identity?.Name,
+                null,
+                organizationId,
+                null,
+                null,
+                isAdmin,
+                roles,
+                permissions,
+                allowedOrganizations,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+            {
+                ScopedPermissionGrants = scopedGrants
+            };
+            return Task.FromResult(profile);
         }
     }
 }

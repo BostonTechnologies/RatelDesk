@@ -46,6 +46,7 @@ public static class IncidentEndpoints
 
         group.MapGet("/", async (
             [FromServices] HelpdeskDbContext db,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             int page = 1,
             int pageSize = 10,
@@ -75,22 +76,20 @@ public static class IncidentEndpoints
                     CustomerEmail = c != null ? c.Email : null
                 };
 
-            var access = CurrentUserAccessProfile.FromClaims(user);
+            var access = await accessService.ResolveAsync(user);
             if (!access.IsHelpdeskAdmin)
             {
-                var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                if (access.HasPermission(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentManager))
-                {
-                    query = query.Where(x => allowedOrganizationIds.Contains(x.Incident.OrganizationId));
-                }
-                else
-                {
-                    query = query.Where(x =>
-                        allowedOrganizationIds.Contains(x.Incident.OrganizationId) &&
-                        ((!string.IsNullOrWhiteSpace(access.CustomerId) && x.CustomerId == access.CustomerId) ||
-                         (!string.IsNullOrWhiteSpace(access.Email) &&
-                          (x.Incident.RequesterEmail == access.Email || x.CustomerEmail == access.Email))));
-                }
+                var tenantReadOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentRead)
+                    .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentWrite))
+                    .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentManager))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var ownOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentUser).ToArray();
+                query = query.Where(x =>
+                    tenantReadOrganizationIds.Contains(x.Incident.OrganizationId) ||
+                    (ownOrganizationIds.Contains(x.Incident.OrganizationId) &&
+                     !string.IsNullOrWhiteSpace(access.CustomerId) &&
+                     x.CustomerId == access.CustomerId));
             }
 
             if (!string.IsNullOrWhiteSpace(organizationId))
@@ -141,14 +140,23 @@ public static class IncidentEndpoints
             if (!string.IsNullOrWhiteSpace(q))
             {
                 var like = $"%{q.Trim()}%";
-                query = query.Where(x =>
-                    EF.Functions.ILike(x.Incident.Title, like) ||
-                    EF.Functions.ILike(x.Incident.Description, like) ||
-                    EF.Functions.ILike(x.Incident.TrackingId, like) ||
-                    EF.Functions.ILike(x.OrgName!, like) ||
-                    EF.Functions.ILike(x.CustomerName!, like) ||
-                    EF.Functions.ILike(x.Incident.RequesterEmail!, like) ||
-                    EF.Functions.ILike(x.CustomerEmail!, like));
+                query = db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? query.Where(x =>
+                        EF.Functions.ILike(x.Incident.Title, like) ||
+                        EF.Functions.ILike(x.Incident.Description, like) ||
+                        EF.Functions.ILike(x.Incident.TrackingId, like) ||
+                        EF.Functions.ILike(x.OrgName!, like) ||
+                        EF.Functions.ILike(x.CustomerName!, like) ||
+                        EF.Functions.ILike(x.Incident.RequesterEmail!, like) ||
+                        EF.Functions.ILike(x.CustomerEmail!, like))
+                    : query.Where(x =>
+                        EF.Functions.Like(x.Incident.Title, like) ||
+                        EF.Functions.Like(x.Incident.Description, like) ||
+                        EF.Functions.Like(x.Incident.TrackingId, like) ||
+                        EF.Functions.Like(x.OrgName!, like) ||
+                        EF.Functions.Like(x.CustomerName!, like) ||
+                        EF.Functions.Like(x.Incident.RequesterEmail!, like) ||
+                        EF.Functions.Like(x.CustomerEmail!, like));
             }
 
             var totalCount = includeTotal ? await query.CountAsync() : 0;
@@ -275,11 +283,31 @@ public static class IncidentEndpoints
             [FromServices] IDomainEventPublisher domainEvents,
             [FromServices] ICorrelationContext correlationContext,
             [FromServices] ILoggerFactory loggerFactory,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
             var incident = await repo.GetAsync(id);
             if (incident == null) return Results.Problem("Incident not found", statusCode: 404);
+
+            var customer = !string.IsNullOrWhiteSpace(incident.CustomerId)
+                ? await db.Customers
+                    .AsNoTracking()
+                    .Where(x => x.Id == incident.CustomerId)
+                    .Select(x => new { x.Id, x.Name, x.Email, x.OrganizationId })
+                    .FirstOrDefaultAsync()
+                : null;
+            var organizationName = await db.Organizations
+                .AsNoTracking()
+                .Where(x => x.Id == (customer != null ? customer.OrganizationId : incident.OrganizationId))
+                .Select(x => x.Name)
+                .FirstOrDefaultAsync();
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanViewIncident(incident.OrganizationId, customer?.Id ?? incident.CustomerId, customer?.Email ?? incident.RequesterEmail))
+            {
+                return Results.Forbid();
+            }
 
             var categoryIds = await db.IncidentCategoryLinks
                 .Where(x => x.IncidentId == incident.Id)
@@ -312,25 +340,6 @@ public static class IncidentEndpoints
             var lastAiActivityAt = aiActivityDates.Count == 0
                 ? null
                 : (DateTimeOffset?)aiActivityDates.Max();
-            var customer = !string.IsNullOrWhiteSpace(incident.CustomerId)
-                ? await db.Customers
-                    .AsNoTracking()
-                    .Where(x => x.Id == incident.CustomerId)
-                    .Select(x => new { x.Id, x.Name, x.Email, x.OrganizationId })
-                    .FirstOrDefaultAsync()
-                : null;
-            var organizationName = await db.Organizations
-                .AsNoTracking()
-                .Where(x => x.Id == (customer != null ? customer.OrganizationId : incident.OrganizationId))
-                .Select(x => x.Name)
-                .FirstOrDefaultAsync();
-
-            var access = CurrentUserAccessProfile.FromClaims(user);
-            if (!access.CanViewIncident(incident.OrganizationId, customer?.Id ?? incident.CustomerId, customer?.Email ?? incident.RequesterEmail))
-            {
-                return Results.Forbid();
-            }
-
             var incidentDto = new IncidentDto
             {
                 OrganizationId = incident.OrganizationId,
@@ -366,6 +375,7 @@ public static class IncidentEndpoints
             [FromServices] ITicketNotificationService ticketNotificationService,
             [FromServices] IHtmlSanitizerService sanitizer,
             [FromServices] IHtmlToPlainTextConverter plainTextConverter,
+            [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
@@ -387,8 +397,8 @@ public static class IncidentEndpoints
             }
 
             var customer = customerValidation.Customer!;
-            var access = CurrentUserAccessProfile.FromClaims(user);
-            if (!access.CanViewIncident(dto.OrganizationId, customer.Id, customer.Email))
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanCreateIncident(dto.OrganizationId, customer.Id, customer.Email))
             {
                 return Results.Forbid();
             }
@@ -470,6 +480,8 @@ public static class IncidentEndpoints
         group.MapPut("/{id}", async (
             [FromRoute] string id,
             [FromBody] UpdateIncidentDto dto,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Incident> repo,
             [FromServices] IBackgroundJobQueue jobs,
@@ -490,6 +502,12 @@ public static class IncidentEndpoints
             if (existingIncident is null)
             {
                 return Results.Problem("Incident not found", statusCode: 404);
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageIncident(existingIncident.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             var previousState = existingIncident.State;
@@ -682,11 +700,14 @@ public static class IncidentEndpoints
             };
 
             return Results.Ok(resultDto);
-        });
+        })
+        .RequireAuthorization("IncidentManager");
 
 
         group.MapGet("/{id}/relations", async (
             [FromRoute] string id,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             CancellationToken token) =>
         {
@@ -694,6 +715,21 @@ public static class IncidentEndpoints
             if (incident is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            var viewedIncidentCustomer = !string.IsNullOrWhiteSpace(incident.CustomerId)
+                ? await db.Customers.AsNoTracking()
+                    .Where(customer => customer.Id == incident.CustomerId)
+                    .Select(customer => new { customer.Id, customer.Email })
+                    .FirstOrDefaultAsync(token)
+                : null;
+            if (!access.CanViewIncident(
+                    incident.OrganizationId,
+                    viewedIncidentCustomer?.Id ?? incident.CustomerId,
+                    viewedIncidentCustomer?.Email ?? incident.RequesterEmail))
+            {
+                return Results.Forbid();
             }
 
             var relations = await db.TicketRelations
@@ -712,9 +748,32 @@ public static class IncidentEndpoints
                 .AsNoTracking()
                 .Where(x => ticketIds.Contains(x.Id))
                 .ToDictionaryAsync(x => x.Id, token);
+            var customerIds = tickets.Values
+                .Select(ticket => ticket.CustomerId)
+                .Where(customerId => !string.IsNullOrWhiteSpace(customerId))
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var customerEmails = await db.Customers
+                .AsNoTracking()
+                .Where(customer => customerIds.Contains(customer.Id))
+                .ToDictionaryAsync(customer => customer.Id, customer => customer.Email, token);
+
+            bool CanView(Incident candidate)
+            {
+                var customerEmail = !string.IsNullOrWhiteSpace(candidate.CustomerId) &&
+                                    customerEmails.TryGetValue(candidate.CustomerId, out var email)
+                    ? email
+                    : candidate.RequesterEmail;
+                return access.CanViewIncident(candidate.OrganizationId, candidate.CustomerId, customerEmail);
+            }
 
             return Results.Ok(relations
-                .Where(x => tickets.ContainsKey(x.SourceTicketId) && tickets.ContainsKey(x.TargetTicketId))
+                .Where(x =>
+                    tickets.TryGetValue(x.SourceTicketId, out var source) &&
+                    tickets.TryGetValue(x.TargetTicketId, out var target) &&
+                    CanView(source) &&
+                    CanView(target))
                 .Select(x => ToRelationDto(x, tickets[x.SourceTicketId], tickets[x.TargetTicketId], incident.Id))
                 .ToList());
         })
@@ -728,6 +787,7 @@ public static class IncidentEndpoints
             [FromRoute] string id,
             [FromBody] CreateTicketRelationDto dto,
             ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] IDomainEventPublisher domainEvents,
@@ -771,6 +831,12 @@ public static class IncidentEndpoints
             if (!string.Equals(source.OrganizationId, target.OrganizationId, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.BadRequest("Related incidents must belong to the same organization.");
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageIncident(source.OrganizationId) || !access.CanManageIncident(target.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             var exists = await db.TicketRelations.AnyAsync(x =>
@@ -847,6 +913,8 @@ public static class IncidentEndpoints
         group.MapDelete("/{id}/relations/{relationId:guid}", async (
             [FromRoute] string id,
             [FromRoute] Guid relationId,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             CancellationToken token) =>
         {
@@ -864,6 +932,18 @@ public static class IncidentEndpoints
                 return Results.NotFound();
             }
 
+            var otherIncidentId = string.Equals(relation.SourceTicketId, incident.Id, StringComparison.OrdinalIgnoreCase)
+                ? relation.TargetTicketId
+                : relation.SourceTicketId;
+            var otherIncident = await ResolveIncidentAsync(db, otherIncidentId, false, token);
+            if (otherIncident is null) return Results.NotFound();
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageIncident(incident.OrganizationId) || !access.CanManageIncident(otherIncident.OrganizationId))
+            {
+                return Results.Forbid();
+            }
+
             db.TicketRelations.Remove(relation);
             await db.SaveChangesAsync(token);
             return Results.NoContent();
@@ -876,13 +956,25 @@ public static class IncidentEndpoints
 
         group.MapPost("/bulk/state", async (
             [FromBody] BulkStateChangeRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Incident> repo,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] ITicketNotificationService ticketNotificationService,
             CancellationToken token) =>
         {
-            if (req.Ids is null || req.Ids.Count == 0) return Results.BadRequest("No ids");
-            var incidents = (await repo.GetAllAsync()).Where(i => req.Ids.Contains(i.Id)).ToList();
+            var ids = (req.Ids ?? []).Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (ids.Length is 0 or > 500) return Results.BadRequest("Select between 1 and 500 tickets.");
+            if (!Enum.IsDefined(req.NewState)) return Results.BadRequest("Invalid ticket state.");
+            var incidents = (await repo.GetAllAsync()).Where(ticket => ids.Contains(ticket.Id, StringComparer.OrdinalIgnoreCase)).ToList();
+            var access = await accessService.ResolveAsync(user, token);
+            if (incidents.Any(ticket => !access.CanManageIncident(ticket.OrganizationId))) return Results.Forbid();
+            if (incidents.Count != ids.Length) return Results.NotFound();
+            await using var transaction = db.Database.IsRelational()
+                ? await db.Database.BeginTransactionAsync(token)
+                : null;
             var resolvedTransitions = new List<Incident>();
             foreach (var inc in incidents)
             {
@@ -903,13 +995,14 @@ public static class IncidentEndpoints
                     await ticketSlaCompletionService.HandleTicketClosedAsync(inc.Id, "bulk", DateTimeOffset.UtcNow);
                 }
             }
+            if (transaction is not null) await transaction.CommitAsync(token);
             foreach (var inc in resolvedTransitions)
             {
                 await SendResolvedNotificationAsync(inc, ticketNotificationService, token);
             }
             return Results.Ok(new { updated = incidents.Count });
         })
-        .RequireAuthorization("HelpdeskAdmin")
+        .RequireAuthorization("IncidentManager")
         .WithName("BulkUpdateIncidentState")
         .WithSummary("Bulk update incident state")
         .WithDescription("Updates the state of multiple incidents in one request.")
@@ -917,13 +1010,21 @@ public static class IncidentEndpoints
 
         group.MapPost("/bulk/assign", async (
             [FromBody] BulkAssignRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Incident> repo,
             [FromServices] ISupportNotificationService supportNotificationService,
             [FromServices] ISupportAccessService supportAccessService,
             CancellationToken token) =>
         {
-            if (req.Ids is null || req.Ids.Count == 0) return Results.BadRequest("No ids");
-            var incidents = (await repo.GetAllAsync()).Where(i => req.Ids.Contains(i.Id)).ToList();
+            var ids = (req.Ids ?? []).Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (ids.Length is 0 or > 500) return Results.BadRequest("Select between 1 and 500 tickets.");
+            var incidents = (await repo.GetAllAsync()).Where(ticket => ids.Contains(ticket.Id, StringComparer.OrdinalIgnoreCase)).ToList();
+            var access = await accessService.ResolveAsync(user, token);
+            if (incidents.Any(ticket => !access.CanManageIncident(ticket.OrganizationId))) return Results.Forbid();
+            if (incidents.Count != ids.Length) return Results.NotFound();
             if (!string.IsNullOrWhiteSpace(req.AssignedToId))
             {
                 foreach (var inc in incidents)
@@ -940,11 +1041,14 @@ public static class IncidentEndpoints
                 }
             }
 
+            await using var transaction = db.Database.IsRelational()
+                ? await db.Database.BeginTransactionAsync(token)
+                : null;
             var changedAssignments = new List<(Incident Incident, string? PreviousAssignedToId)>();
             foreach (var inc in incidents)
             {
                 var previousAssignedToId = inc.AssignedToId;
-                inc.AssignedToId = req.AssignedToId;
+                inc.AssignedToId = string.IsNullOrWhiteSpace(req.AssignedToId) ? null : req.AssignedToId.Trim();
                 inc.UpdatedAt = DateTime.UtcNow;
                 await repo.UpdateAsync(inc);
                 if (!string.Equals(previousAssignedToId, inc.AssignedToId, StringComparison.OrdinalIgnoreCase) &&
@@ -953,6 +1057,7 @@ public static class IncidentEndpoints
                     changedAssignments.Add((inc, previousAssignedToId));
                 }
             }
+            if (transaction is not null) await transaction.CommitAsync(token);
             foreach (var (incident, previousAssignedToId) in changedAssignments)
             {
                 await SendAssignmentNotificationSafelyAsync(
@@ -964,7 +1069,7 @@ public static class IncidentEndpoints
             }
             return Results.Ok(new { updated = incidents.Count });
         })
-        .RequireAuthorization("HelpdeskAdmin")
+        .RequireAuthorization("IncidentManager")
         .WithName("BulkAssignIncidents")
         .WithSummary("Bulk assign incidents to a user")
         .WithDescription("Assigns the selected incidents to the specified team member.")
@@ -972,10 +1077,18 @@ public static class IncidentEndpoints
 
         group.MapPost("/bulk/delete", async (
             [FromBody] BulkIncidentIdsRequest req,
-            [FromServices] IRepository<Incident> repo) =>
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] IRepository<Incident> repo,
+            CancellationToken cancellationToken) =>
         {
             var ids = NormalizeBulkIds(req.Ids);
             if (ids.Count == 0) return Results.BadRequest("No ids");
+
+            var idSet = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var incidents = (await repo.GetAllAsync()).Where(incident => idSet.Contains(incident.Id)).ToList();
+            var access = await accessService.ResolveAsync(user, cancellationToken);
+            if (incidents.Any(incident => !access.CanDeleteIncident(incident.OrganizationId))) return Results.Forbid();
 
             var deleted = 0;
             var missing = 0;
@@ -993,7 +1106,7 @@ public static class IncidentEndpoints
 
             return Results.Ok(new { deleted, missing });
         })
-        .RequireAuthorization("IncidentManager")
+        .RequireAuthorization("IncidentAccess")
         .WithName("BulkDeleteIncidents")
         .WithSummary("Bulk delete incidents")
         .WithDescription("Deletes selected incidents without notifying requesters.")
@@ -1001,14 +1114,19 @@ public static class IncidentEndpoints
 
         group.MapPost("/bulk/marketing-spam", async (
             [FromBody] BulkIncidentIdsRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] IRepository<Incident> repo,
-            [FromServices] ITicketSlaCompletionService ticketSlaCompletionService) =>
+            [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
+            CancellationToken cancellationToken) =>
         {
             var ids = NormalizeBulkIds(req.Ids);
             if (ids.Count == 0) return Results.BadRequest("No ids");
 
             var idSet = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var incidents = (await repo.GetAllAsync()).Where(i => idSet.Contains(i.Id)).ToList();
+            var access = await accessService.ResolveAsync(user, cancellationToken);
+            if (incidents.Any(incident => !access.CanManageIncident(incident.OrganizationId))) return Results.Forbid();
             var now = DateTimeOffset.UtcNow;
 
             foreach (var inc in incidents)
@@ -1037,6 +1155,8 @@ public static class IncidentEndpoints
         staffGroup.MapPost("/{id}/state", async (
             [FromRoute] string id,
             [FromBody] QuickStateChangeRequest req,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] IRepository<Incident> repo,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] ITicketNotificationService ticketNotificationService,
@@ -1046,6 +1166,12 @@ public static class IncidentEndpoints
             if (incident is null)
             {
                 return Results.NotFound();
+            }
+
+            var access = await accessService.ResolveAsync(user, token);
+            if (!access.CanManageIncident(incident.OrganizationId))
+            {
+                return Results.Forbid();
             }
 
             var previousState = incident.State;
@@ -1112,10 +1238,23 @@ public static class IncidentEndpoints
         .WithDescription("Returns sanitized HTML and a text snippet for an incident.")
         .WithTags("Incidents");
 
-        group.MapDelete("/{id}", async ([FromRoute] string id, [FromServices] IRepository<Incident> repo) =>
-            await repo.DeleteAsync(id)
+        group.MapDelete("/{id}", async (
+            [FromRoute] string id,
+            ClaimsPrincipal user,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] IRepository<Incident> repo,
+            CancellationToken cancellationToken) =>
+        {
+            var incident = await repo.GetAsync(id);
+            if (incident is null) return Results.Problem("Incident not found", statusCode: 404);
+
+            var access = await accessService.ResolveAsync(user, cancellationToken);
+            if (!access.CanDeleteIncident(incident.OrganizationId)) return Results.Forbid();
+
+            return await repo.DeleteAsync(id)
                 ? Results.NoContent()
-                : Results.Problem("Incident not found", statusCode: 404));
+                : Results.Problem("Incident not found", statusCode: 404);
+        });
 
         app.MapGet("/api/incidents/{incidentId}/images/{filename}", (
             [FromRoute] string incidentId,

@@ -43,7 +43,9 @@ public static class WorkflowOpsEndpoints
                 access,
                 page,
                 pageSize,
-                query => query.Where(t => t.Status == RequestTaskStatus.InProgress && t.DueAt.HasValue && t.DueAt < now),
+                query => db.Database.IsSqlite()
+                    ? query.Where(t => t.Status == RequestTaskStatus.InProgress && EF.Property<long?>(t, "DueAtUtcTicks") < now.UtcTicks)
+                    : query.Where(t => t.Status == RequestTaskStatus.InProgress && t.DueAt.HasValue && t.DueAt < now),
                 ct));
         });
 
@@ -152,10 +154,10 @@ public static class WorkflowOpsEndpoints
 
             if (!access.IsHelpdeskAdmin)
             {
-                var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                notifications = allowedOrganizationIds.Length == 0
+                var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+                notifications = requestManagerOrganizationIds.Length == 0
                     ? notifications.Where(_ => false)
-                    : notifications.Where(n => n.TenantId != null && allowedOrganizationIds.Contains(n.TenantId));
+                    : notifications.Where(n => n.TenantId != null && requestManagerOrganizationIds.Contains(n.TenantId));
             }
 
             var totalCount = await notifications.CountAsync(ct);
@@ -205,10 +207,10 @@ public static class WorkflowOpsEndpoints
 
             if (!access.IsHelpdeskAdmin)
             {
-                var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                bindings = allowedOrganizationIds.Length == 0
+                var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+                bindings = requestManagerOrganizationIds.Length == 0
                     ? bindings.Where(_ => false)
-                    : bindings.Where(b => allowedOrganizationIds.Contains(b.OrganizationId));
+                    : bindings.Where(b => requestManagerOrganizationIds.Contains(b.OrganizationId));
             }
 
             var query =
@@ -218,6 +220,7 @@ public static class WorkflowOpsEndpoints
                 from service in serviceGroup.DefaultIfEmpty()
                 select new
                 {
+                    Binding = binding,
                     binding.Id,
                     binding.RequestFormId,
                     RequestFormTitle = requestForm.Title,
@@ -236,9 +239,12 @@ public static class WorkflowOpsEndpoints
                 };
 
             var totalCount = await query.CountAsync(ct);
-            var items = await query
-                .OrderByDescending(x => x.SyncState)
-                .ThenByDescending(x => x.UpdatedAtUtc)
+            var ordered = query.OrderByDescending(x => x.SyncState);
+            ordered = db.Database.IsSqlite()
+                ? ordered.ThenByDescending(x => EF.Property<long>(x.Binding, "UpdatedAtUtcSortTicks"))
+                : ordered.ThenByDescending(x => x.UpdatedAtUtc);
+            var items = await ordered
+                .ThenBy(x => x.Id)
                 .Skip(skip)
                 .Take(safePageSize)
                 .ToListAsync(ct);
@@ -286,11 +292,17 @@ public static class WorkflowOpsEndpoints
 
             var inProgressCount = await tenantFilter.CountAsync(t => t.Status == RequestTaskStatus.InProgress, ct);
             var failedCount = await tenantFilter.CountAsync(t => t.Status == RequestTaskStatus.Failed, ct);
-            var overdueCount = await tenantFilter.CountAsync(t =>
-                t.Status == RequestTaskStatus.InProgress
-                && t.DueAt.HasValue
-                && t.DueAt < DateTimeOffset.UtcNow,
-                ct);
+            var now = DateTimeOffset.UtcNow;
+            var overdueCount = db.Database.IsSqlite()
+                ? await tenantFilter.CountAsync(t =>
+                    t.Status == RequestTaskStatus.InProgress
+                    && EF.Property<long?>(t, "DueAtUtcTicks") < now.UtcTicks,
+                    ct)
+                : await tenantFilter.CountAsync(t =>
+                    t.Status == RequestTaskStatus.InProgress
+                    && t.DueAt.HasValue
+                    && t.DueAt < now,
+                    ct);
 
             var escalationsTotal = await notificationFilter.CountAsync(n => n.Title == "DomainEvent.RequestTask.Escalated", ct);
             var retryScheduledTotal = await notificationFilter.CountAsync(n => n.Title == "DomainEvent.RequestTask.RetryScheduled", ct);
@@ -363,8 +375,15 @@ public static class WorkflowOpsEndpoints
         var skip = (safePage - 1) * safePageSize;
 
         var tasksQuery = ApplyAllowedOrganizationFilter(db.RequestTasks.AsNoTracking(), access);
-
+        var isSqlite = db.Database.IsSqlite();
         tasksQuery = filter(tasksQuery);
+        if (isSqlite)
+        {
+            tasksQuery = tasksQuery
+                .OrderByDescending(task => EF.Property<long?>(task, "NextRetryAtUtcTicks") ?? EF.Property<long?>(task, "DueAtUtcTicks") ?? long.MinValue)
+                .ThenBy(task => task.RequestId)
+                .ThenBy(task => task.Id);
+        }
 
         var query =
             from task in tasksQuery
@@ -390,16 +409,21 @@ public static class WorkflowOpsEndpoints
                 RetryCount = task.RetryCount
             };
 
-        var totalCount = await query.CountAsync(ct);
-        var items = await query
-            .OrderByDescending(t => t.NextRetryAt ?? t.DueAt ?? DateTimeOffset.MinValue)
-            .ThenBy(t => t.RequestTrackingId)
-            .ThenBy(t => t.TaskId)
-            //.OrderByDescending(t => t.NextRetryAt ?? t.DueAt ?? DateTimeOffset.MinValue)
-            //.ThenBy(t => t.TaskName)
-            .Skip(skip)
-            .Take(safePageSize)
-            .ToListAsync(ct);
+        int totalCount;
+        List<TaskOpsRowDto> items;
+        totalCount = await query.CountAsync(ct);
+        items = isSqlite
+            ? await query
+                .Skip(skip)
+                .Take(safePageSize)
+                .ToListAsync(ct)
+            : await query
+                .OrderByDescending(t => t.NextRetryAt ?? t.DueAt ?? DateTimeOffset.MinValue)
+                .ThenBy(t => t.RequestTrackingId)
+                .ThenBy(t => t.TaskId)
+                .Skip(skip)
+                .Take(safePageSize)
+                .ToListAsync(ct);
 
         return new PagedResponse<TaskOpsRowDto>
         {
@@ -411,10 +435,10 @@ public static class WorkflowOpsEndpoints
     }
 
     private static bool CanManageWorkflowOps(CurrentUserAccessProfile access) =>
-        access.IsHelpdeskAdmin
-        || access.HasPermission(HelpdeskPermissions.IncidentManager)
-        || access.HasPermission(HelpdeskPermissions.RequestManager)
-        || access.HasPermission(HelpdeskPermissions.ChangeManager);
+        access.IsHelpdeskAdmin || access.HasPermission(HelpdeskPermissions.RequestRead) || access.HasPermission(HelpdeskPermissions.RequestWrite) || access.HasPermission(HelpdeskPermissions.RequestManager);
+
+    private static IReadOnlySet<string> RequestManagerOrganizationIds(CurrentUserAccessProfile access) =>
+        access.OrganizationIdsForAny(HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.RequestManager);
 
     private static IQueryable<RequestTask> ApplyAllowedOrganizationFilter(
         IQueryable<RequestTask> query,
@@ -425,10 +449,10 @@ public static class WorkflowOpsEndpoints
             return query;
         }
 
-        var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-        return allowedOrganizationIds.Length == 0
+        var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+        return requestManagerOrganizationIds.Length == 0
             ? query.Where(_ => false)
-            : query.Where(t => t.OrganizationId != null && allowedOrganizationIds.Contains(t.OrganizationId));
+            : query.Where(t => t.OrganizationId != null && requestManagerOrganizationIds.Contains(t.OrganizationId));
     }
 
     private static IQueryable<NotificationEntity> ApplyAllowedNotificationFilter(
@@ -440,10 +464,10 @@ public static class WorkflowOpsEndpoints
             return query;
         }
 
-        var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-        return allowedOrganizationIds.Length == 0
+        var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+        return requestManagerOrganizationIds.Length == 0
             ? query.Where(_ => false)
-            : query.Where(n => n.TenantId != null && allowedOrganizationIds.Contains(n.TenantId));
+            : query.Where(n => n.TenantId != null && requestManagerOrganizationIds.Contains(n.TenantId));
     }
 
     private static IQueryable<AutomationBinding> ApplyAllowedAutomationBindingFilter(
@@ -455,10 +479,10 @@ public static class WorkflowOpsEndpoints
             return query;
         }
 
-        var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-        return allowedOrganizationIds.Length == 0
+        var requestManagerOrganizationIds = RequestManagerOrganizationIds(access).ToArray();
+        return requestManagerOrganizationIds.Length == 0
             ? query.Where(_ => false)
-            : query.Where(b => allowedOrganizationIds.Contains(b.OrganizationId));
+            : query.Where(b => requestManagerOrganizationIds.Contains(b.OrganizationId));
     }
 
     private static OrchestrationCallbackRejectionOpsDto MapOrchestrationCallbackRejection(dynamic notification)

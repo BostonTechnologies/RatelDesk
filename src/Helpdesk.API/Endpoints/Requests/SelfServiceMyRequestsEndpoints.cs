@@ -37,6 +37,7 @@ public static class SelfServiceMyRequestsEndpoints
         [FromServices] HelpdeskDbContext db,
         [FromServices] ISelfServiceAudienceService selfServiceAudienceService,
         [FromServices] ITenantContext tenant,
+        [FromServices] ICurrentUserAccessService accessService,
         [FromServices] IDomainEventPublisher domainEvents,
         [FromServices] ICorrelationContext correlationContext,
         [FromQuery] int? page,
@@ -46,9 +47,10 @@ public static class SelfServiceMyRequestsEndpoints
     {
         var resolvedPage = Math.Max(page ?? 1, 1);
         var resolvedPageSize = Math.Clamp(pageSize ?? 10, 1, 100);
-        var isAdmin = user.IsInRole("HelpdeskAdmin");
+        var access = await accessService.ResolveAsync(user, token);
+        var isAdmin = access.IsHelpdeskAdmin;
         var isTestUser = await selfServiceAudienceService.IsTestUserAsync(token);
-        var currentCustomer = isAdmin ? null : await ResolveCurrentCustomerAsync(db, user, tenant, token);
+        var currentCustomer = isAdmin ? null : await ResolveCurrentCustomerAsync(db, access.CustomerId, token);
         var currentCustomerId = currentCustomer?.Id;
         if (!isAdmin && string.IsNullOrWhiteSpace(currentCustomerId))
         {
@@ -61,7 +63,7 @@ public static class SelfServiceMyRequestsEndpoints
             });
         }
 
-        var effectiveOrganizationId = await ResolveEffectiveOrganizationIdAsync(db, tenant, currentCustomer, token);
+        var effectiveOrganizationId = currentCustomer?.OrganizationId;
 
         var accessibleForms = BuildAccessibleRequestFormsQuery(
             db,
@@ -144,11 +146,12 @@ public static class SelfServiceMyRequestsEndpoints
         [FromServices] HelpdeskDbContext db,
         [FromServices] ISelfServiceAudienceService selfServiceAudienceService,
         [FromServices] ITenantContext tenant,
+        [FromServices] ICurrentUserAccessService accessService,
         [FromServices] IDomainEventPublisher domainEvents,
         [FromServices] ICorrelationContext correlationContext,
         CancellationToken token)
     {
-        var request = await GetOwnedRequestAsync(user, db, selfServiceAudienceService, tenant, id, token);
+        var request = await GetOwnedRequestAsync(user, db, selfServiceAudienceService, accessService, id, token);
         if (request is null)
         {
             return Results.NotFound();
@@ -185,10 +188,10 @@ public static class SelfServiceMyRequestsEndpoints
         [FromRoute] string id,
         [FromServices] HelpdeskDbContext db,
         [FromServices] ISelfServiceAudienceService selfServiceAudienceService,
-        [FromServices] ITenantContext tenant,
+        [FromServices] ICurrentUserAccessService accessService,
         CancellationToken token)
     {
-        var request = await GetOwnedRequestAsync(user, db, selfServiceAudienceService, tenant, id, token);
+        var request = await GetOwnedRequestAsync(user, db, selfServiceAudienceService, accessService, id, token);
         if (request is null)
         {
             return Results.NotFound();
@@ -255,20 +258,21 @@ public static class SelfServiceMyRequestsEndpoints
         ClaimsPrincipal user,
         HelpdeskDbContext db,
         ISelfServiceAudienceService selfServiceAudienceService,
-        ITenantContext tenant,
+        ICurrentUserAccessService accessService,
         string requestId,
         CancellationToken token)
     {
-        var isAdmin = user.IsInRole("HelpdeskAdmin");
+        var access = await accessService.ResolveAsync(user, token);
+        var isAdmin = access.IsHelpdeskAdmin;
         var isTestUser = await selfServiceAudienceService.IsTestUserAsync(token);
-        var currentCustomer = isAdmin ? null : await ResolveCurrentCustomerAsync(db, user, tenant, token);
+        var currentCustomer = isAdmin ? null : await ResolveCurrentCustomerAsync(db, access.CustomerId, token);
         var currentCustomerId = currentCustomer?.Id;
         if (!isAdmin && string.IsNullOrWhiteSpace(currentCustomerId))
         {
             return null;
         }
 
-        var effectiveOrganizationId = await ResolveEffectiveOrganizationIdAsync(db, tenant, currentCustomer, token);
+        var effectiveOrganizationId = currentCustomer?.OrganizationId;
         var accessibleForms = BuildAccessibleRequestFormsQuery(
             db,
             selfServiceAudienceService,
@@ -329,81 +333,20 @@ public static class SelfServiceMyRequestsEndpoints
             .Where(f => f.ReleaseStatus == RequestFormReleaseStatus.Production || isTestUser);
     }
 
-    private static async Task<string?> ResolveEffectiveOrganizationIdAsync(
-        HelpdeskDbContext db,
-        ITenantContext tenant,
-        Customer? currentCustomer,
-        CancellationToken token)
-    {
-        if (!string.IsNullOrWhiteSpace(currentCustomer?.OrganizationId))
-        {
-            return currentCustomer.OrganizationId;
-        }
-
-        if (!string.IsNullOrWhiteSpace(tenant.TenantId))
-        {
-            return tenant.TenantId;
-        }
-
-        if (string.IsNullOrWhiteSpace(tenant.UserId))
-        {
-            return null;
-        }
-
-        return await db.Users.AsNoTracking()
-            .Where(x => x.Id == tenant.UserId)
-            .Select(x => x.OrganizationId)
-            .FirstOrDefaultAsync(token);
-    }
-
     private static async Task<Customer?> ResolveCurrentCustomerAsync(
         HelpdeskDbContext db,
-        ClaimsPrincipal user,
-        ITenantContext tenant,
+        string? customerId,
         CancellationToken token)
     {
-        var email = ResolveUserEmail(user, tenant);
-        if (string.IsNullOrWhiteSpace(email))
+        if (string.IsNullOrWhiteSpace(customerId))
         {
             return null;
         }
 
-        var normalizedEmail = email.Trim().ToLowerInvariant();
         return await db.Customers
             .IgnoreQueryFilters()
             .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Email.ToLower() == normalizedEmail, token);
-    }
-
-    private static string? ResolveUserEmail(ClaimsPrincipal user, ITenantContext tenant)
-    {
-        var identityName = user.Identity?.Name;
-        return FirstNonEmpty(
-            user.FindFirstValue(ClaimTypes.Email),
-            user.FindFirstValue("email"),
-            user.FindFirstValue("preferred_username"),
-            user.FindFirstValue("upn"),
-            user.FindFirstValue("unique_name"),
-            LooksLikeEmail(identityName) ? identityName : null,
-            LooksLikeEmail(tenant.UserId) ? tenant.UserId : null);
-    }
-
-    private static bool LooksLikeEmail(string? value)
-    {
-        return !string.IsNullOrWhiteSpace(value) && value.Contains('@', StringComparison.Ordinal);
-    }
-
-    private static string? FirstNonEmpty(params string?[] values)
-    {
-        foreach (var value in values)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                return value.Trim();
-            }
-        }
-
-        return null;
+            .FirstOrDefaultAsync(x => x.Id == customerId && x.State == Helpdesk.Shared.Models.EntityState.Enabled, token);
     }
 
     private static string GetCorrelationId(ICorrelationContext correlation)

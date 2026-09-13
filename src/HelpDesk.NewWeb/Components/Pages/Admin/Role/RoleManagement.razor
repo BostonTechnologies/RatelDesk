@@ -1,86 +1,256 @@
 @page "/admin/roles"
-@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Tenant.Roles.Assign,HelpdeskAdmin")]
+@using System.Net.Http.Json
+@using Helpdesk.Shared.Models
 @inject IHttpClientFactory HttpClientFactory
-@inject IDialogService DialogService
-@using Helpdesk.Shared.DTOs.Role
 
-<PageTitle>Role Management</PageTitle>
+<PageTitle>Roles & Permissions</PageTitle>
 
 <MudPaper Class="pa-4">
-    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-        <MudText Typo="Typo.h5">Role Management</MudText>
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudStack Spacing="0">
+            <MudText Typo="Typo.h5">Roles & Permissions</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">Permissions apply only in the organization shown on each assignment.</MudText>
+        </MudStack>
         <MudSpacer />
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenCreateDialog">Create</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="StartCreate">Create custom role</MudButton>
     </MudStack>
-    <MudSimpleTable Dense="true">
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var role in roles)
-            {
-                <tr>
-                    <td>@role.Name</td>
-                    <td>
-                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" OnClick="() => OpenEditDialog(role)" />
-                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="() => OpenDeleteDialog(role)" />
-                    </td>
-                </tr>
-            }
-        </tbody>
-    </MudSimpleTable>
+
+    @if (!string.IsNullOrWhiteSpace(error))
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@error</MudAlert>
+    }
+
+    @if (showEditor)
+    {
+        <MudPaper Outlined="true" Class="pa-4 mb-4">
+            <MudText Typo="Typo.h6" Class="mb-3">@(editingRole is null ? "Create custom role" : "Edit custom role")</MudText>
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="draftName" Label="Role name" Required="true" Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string" @bind-Value="draftOwnerOrganizationId" Label="Owning organization" Required="true" Disabled="@(editingRole is not null)">
+                        @foreach (var organization in organizations)
+                        {
+                            <MudSelectItem Value="@organization.Id">@organization.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect T="string" Label="Permissions" MultiSelection="true" SelectedValues="@draftPermissions" SelectedValuesChanged="OnPermissionsChanged" Required="true">
+                        @foreach (var permission in PermissionOptions)
+                        {
+                            <MudSelectItem Value="@permission.Key">@permission.Label</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Writer permissions require their matching reader permission.</MudText>
+                </MudItem>
+            </MudGrid>
+            <MudStack Row="true" Justify="Justify.FlexEnd" Class="mt-3">
+                <MudButton OnClick="CancelEdit">Cancel</MudButton>
+                <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="saving" OnClick="SaveAsync">@(saving ? "Saving…" : "Save role")</MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+
+    @if (loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else
+    {
+        <MudTable Items="roles" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Role</MudTh>
+                <MudTh>Scope / owner</MudTh>
+                <MudTh>Permissions</MudTh>
+                <MudTh>Assignments</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Role">
+                    <MudStack Spacing="0">
+                        <MudText>@context.Name</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Key</MudText>
+                        @if (context.IsProtected)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info">Built-in protected</MudChip>
+                        }
+                    </MudStack>
+                </MudTd>
+                <MudTd DataLabel="Scope / owner">
+                    <MudText>@ScopeLabel(context.Scope)</MudText>
+                    @if (!string.IsNullOrWhiteSpace(context.OwnerOrganizationId))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@OrganizationLabel(context.OwnerOrganizationId)</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Permissions">
+                    @foreach (var permission in context.Permissions)
+                    {
+                        <MudChip T="string" Size="Size.Small" Class="mr-1 mb-1">@PermissionLabel(permission)</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Assignments">@context.AssignmentCount</MudTd>
+                <MudTd>
+                    @if (!context.IsProtected)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Title="Edit role" Color="Color.Primary" OnClick="() => StartEdit(context)" />
+                        <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Title="Clone role" Color="Color.Primary" OnClick="() => StartClone(context)" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Title="Delete role" Color="Color.Error" Disabled="@(context.AssignmentCount > 0)" OnClick="() => DeleteAsync(context)" />
+                    }
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent><MudText Class="pa-4">No role definitions are available.</MudText></NoRecordsContent>
+        </MudTable>
+    }
 </MudPaper>
 
 @code {
+    private static readonly IReadOnlyList<PermissionOption> PermissionOptions =
+    [
+        new("SelfService.User", "Self-service access"),
+        new("Incident.User", "Incidents: reader"),
+        new("Incident.Manager", "Incidents: writer"),
+        new("Request.User", "Requests: reader"),
+        new("Request.Manager", "Requests: writer"),
+        new("Change.User", "Changes: reader"),
+        new("Change.Manager", "Changes: writer"),
+        new("DataManagement.Admin", "Data management")
+    ];
+
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
-    private List<RoleDto> roles = new();
+    private List<RoleDefinition> roles = [];
+    private List<TenantOrganization> organizations = [];
+    private bool loading = true;
+    private bool saving;
+    private bool showEditor;
+    private string? error;
+    private RoleDefinition? editingRole;
+    private string draftName = string.Empty;
+    private string? draftOwnerOrganizationId;
+    private HashSet<string> draftPermissions = new(StringComparer.OrdinalIgnoreCase);
 
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadRoles();
-    }
+    protected override async Task OnInitializedAsync() => await LoadAsync();
 
-    private async Task LoadRoles()
+    private async Task LoadAsync()
     {
-        roles = await HelpdeskApi.GetFromJsonAsync<List<RoleDto>>("api/v1/roles") ?? new();
-    }
-
-    private async Task OpenCreateDialog()
-    {
-        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
-        var dialog = await DialogService.ShowAsync<CreateRoleDialog>("Create Role", options);
-        var result = await dialog.Result;
-        if (!result.Canceled)
+        loading = true;
+        error = null;
+        try
         {
-            await LoadRoles();
+            roles = await HelpdeskApi.GetFromJsonAsync<List<RoleDefinition>>("api/v1/admin/role-definitions/") ?? [];
+            organizations = await HelpdeskApi.GetFromJsonAsync<List<TenantOrganization>>("api/v1/tenant-admin/organizations") ?? [];
+        }
+        catch
+        {
+            error = "Role definitions could not be loaded.";
+        }
+        finally
+        {
+            loading = false;
         }
     }
 
-    private async Task OpenEditDialog(RoleDto role)
+    private void StartCreate()
     {
-        var parameters = new DialogParameters { ["Role"] = role };
-        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
-        var dialog = await DialogService.ShowAsync<EditRoleDialog>("Edit Role", parameters, options);
-        var result = await dialog.Result;
-        if (!result.Canceled)
+        editingRole = null;
+        draftName = string.Empty;
+        draftOwnerOrganizationId = organizations.FirstOrDefault()?.Id;
+        draftPermissions = new(StringComparer.OrdinalIgnoreCase);
+        error = null;
+        showEditor = true;
+    }
+
+    private void StartEdit(RoleDefinition role)
+    {
+        editingRole = role;
+        draftName = role.Name;
+        draftOwnerOrganizationId = role.OwnerOrganizationId;
+        draftPermissions = role.Permissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        error = null;
+        showEditor = true;
+    }
+
+    private void StartClone(RoleDefinition role)
+    {
+        editingRole = null;
+        draftName = $"{role.Name} copy";
+        draftOwnerOrganizationId = role.OwnerOrganizationId;
+        draftPermissions = role.Permissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        error = null;
+        showEditor = true;
+    }
+
+    private void OnPermissionsChanged(IEnumerable<string>? permissions) =>
+        draftPermissions = permissions?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        error = null;
+        try
         {
-            await LoadRoles();
+            HttpResponseMessage response;
+            if (editingRole is null)
+            {
+                response = await HelpdeskApi.PostAsJsonAsync("api/v1/admin/role-definitions/", new CreateRoleDefinitionRequest(
+                    draftName, null, draftOwnerOrganizationId, draftPermissions.ToArray()));
+            }
+            else
+            {
+                response = await HelpdeskApi.PutAsJsonAsync($"api/v1/admin/role-definitions/{editingRole.Id}", new UpdateRoleDefinitionRequest(
+                    draftName, draftPermissions.ToArray()));
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                error = "The role could not be saved. Confirm the owner and permission dependencies, then try again.";
+                return;
+            }
+
+            showEditor = false;
+            await LoadAsync();
+        }
+        catch
+        {
+            error = "The role could not be saved.";
+        }
+        finally
+        {
+            saving = false;
         }
     }
 
-    private async Task OpenDeleteDialog(RoleDto role)
+    private async Task DeleteAsync(RoleDefinition role)
     {
-        var parameters = new DialogParameters { ["Role"] = role };
-        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraSmall };
-        var dialog = await DialogService.ShowAsync<DeleteRoleDialog>("Delete Role", parameters, options);
-        var result = await dialog.Result;
-        if (!result.Canceled)
+        error = null;
+        var response = await HelpdeskApi.DeleteAsync($"api/v1/admin/role-definitions/{role.Id}");
+        if (response.IsSuccessStatusCode)
         {
-            await LoadRoles();
+            await LoadAsync();
+        }
+        else
+        {
+            error = "The role could not be deleted because it is protected or still assigned.";
         }
     }
 
+    private void CancelEdit() => showEditor = false;
+
+    private string OrganizationLabel(string? organizationId) => organizations.FirstOrDefault(organization => organization.Id == organizationId)?.Name ?? organizationId ?? "Instance";
+    private static string ScopeLabel(RoleScopeKind scope) => scope switch
+    {
+        RoleScopeKind.Instance => "Instance",
+        RoleScopeKind.OwnResource => "Self-service",
+        _ => "Tenant"
+    };
+    private static string PermissionLabel(string permission) => PermissionOptions.FirstOrDefault(option => option.Key == permission)?.Label ?? permission;
+
+    private sealed record PermissionOption(string Key, string Label);
+    private sealed record TenantOrganization(string Id, string Name);
+    private sealed record RoleDefinition(string Id, string Key, string Name, RoleScopeKind Scope, string? OwnerOrganizationId, bool IsBuiltIn, bool IsProtected, IReadOnlyList<string> Permissions, int AssignmentCount);
+    private sealed record CreateRoleDefinitionRequest(string Name, string? Key, string? OwnerOrganizationId, IReadOnlyList<string> Permissions);
+    private sealed record UpdateRoleDefinitionRequest(string Name, IReadOnlyList<string> Permissions);
 }

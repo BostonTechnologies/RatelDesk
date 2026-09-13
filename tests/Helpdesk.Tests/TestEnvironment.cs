@@ -16,6 +16,10 @@ internal static class TestEnvironment
             "ConnectionStrings__HelpdeskDb",
             "Host=localhost;Database=helpdesk_tests;Username=helpdesk;Password=helpdesk");
         Environment.SetEnvironmentVariable("Helpdesk__SkipDatabaseStartup", "true");
+        // A missed Web-client stub must fail locally, never call a documentation
+        // placeholder host with a test authentication header or cookie.
+        Environment.SetEnvironmentVariable("ApiBaseUrl", "http://127.0.0.1:9/");
+        Environment.SetEnvironmentVariable("ReverseProxy__Clusters__apiCluster__Destinations__api1__Address", "http://127.0.0.1:9/");
         Environment.SetEnvironmentVariable("ExchangeEmail__ClientSecret", "test-client-secret");
     }
 

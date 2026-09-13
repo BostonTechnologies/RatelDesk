@@ -1,9 +1,12 @@
 using Helpdesk.Shared.Models;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Services;
 using Helpdesk.Shared.DTOs.Auth;
 using Helpdesk.Shared.DTOs.User;
 using Dodo.Primitives;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Identity;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -16,7 +19,7 @@ public static class UserEndpoints
     {
         var group = app.MapGroup("/api/v1/users")
             .WithTags("Users")
-            .RequireAuthorization();
+            .RequireAuthorization("HelpdeskAdmin");
 
         group.MapGet("/", async ([FromServices] IRepository<User> repo) =>
             (await repo.GetAllAsync()).Select(ToDto));
@@ -35,6 +38,14 @@ public static class UserEndpoints
 
         group.MapPost("/", async ([FromBody] CreateUserRequest request, [FromServices] IRepository<User> repo) =>
         {
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["password"] = ["Create local accounts through /api/v1/local-auth/users; domain user records do not accept credentials."]
+                });
+            }
+
             var user = new User
             {
                 Id = Uuid.CreateVersion7().ToString(),
@@ -42,55 +53,80 @@ public static class UserEndpoints
                 Email = request.Email,
                 Role = request.Role,
                 IsTestUser = request.IsTestUser,
-                OrganizationId = string.IsNullOrWhiteSpace(request.OrganizationId) ? null : request.OrganizationId,
-                HashedPassword = string.IsNullOrWhiteSpace(request.Password) ? null : BCrypt.Net.BCrypt.HashPassword(request.Password)
+                OrganizationId = string.IsNullOrWhiteSpace(request.OrganizationId) ? null : request.OrganizationId
             };
             var created = await repo.CreateAsync(user);
             return Results.Created($"/api/v1/users/{created.Id}", ToDto(created));
         });
 
-        group.MapPost("/provision", async (
-            [FromBody] ProvisionUserRequest request,
+        app.MapPost("/api/v1/users/provision", async (
             ClaimsPrincipal principal,
-            [FromServices] IRepository<User> repo,
             [FromServices] HelpdeskDbContext db,
-            [FromServices] ICurrentUserAccessService accessService,
-            [FromServices] ILoggerFactory loggerFactory) =>
+            [FromServices] ICurrentUserAccessService accessService) =>
         {
-            var logger = loggerFactory.CreateLogger("UserProvisioningEndpoint");
+            var email = FirstClaim(principal, ClaimTypes.Email, "email", "preferred_username");
+            var issuer = FirstClaim(principal, "iss")?.TrimEnd('/');
+            var subject = FirstClaim(principal, "sub");
+            var authentikUserId = FirstClaim(principal, "authentik_user_id", "ak_user_id");
+            var preferredUsername = FirstClaim(principal, "preferred_username");
 
-            if (string.IsNullOrWhiteSpace(request.Email))
+            if (string.IsNullOrWhiteSpace(email) ||
+                (string.IsNullOrWhiteSpace(authentikUserId) &&
+                 (string.IsNullOrWhiteSpace(issuer) || string.IsNullOrWhiteSpace(subject))))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["Email"] = ["Email is required."]
+                    ["identity"] = ["A verified issuer and subject, or provider user identifier, is required."]
                 });
             }
 
-            var all = await repo.GetAllAsync();
-            var existing = all.FirstOrDefault(u =>
-                string.Equals(u.Email, request.Email, StringComparison.OrdinalIgnoreCase));
-
-            if (existing is not null)
+            var link = await FindCustomerLoginAsync(issuer, subject, authentikUserId, db);
+            if (link is null)
             {
-                await LinkCustomerLoginAsync(request, db);
-                logger.LogInformation("User already provisioned: {Email}", request.Email);
-                return Results.Ok(ToAccessDto(await accessService.ResolveAsync(principal)));
+                // An explicitly authorized external instance administrator does not
+                // require a customer-contact link. Other users need an established identity link.
+                var unlinkedAccess = await accessService.ResolveAsync(principal);
+                return unlinkedAccess.IsHelpdeskAdmin
+                    ? Results.Ok(ToAccessDto(unlinkedAccess))
+                    : Results.Forbid();
             }
 
-            var user = new User
-            {
-                Id = Uuid.CreateVersion7().ToString(),
-                Name = string.IsNullOrWhiteSpace(request.Name) ? request.Email : request.Name,
-                Email = request.Email,
-                Role = ResolveProvisionedRole(principal)
-            };
+            var linkedCustomer = await db.Customers.AsNoTracking().SingleOrDefaultAsync(customer => customer.Id == link.CustomerId);
+            if (linkedCustomer?.IsEnabled != true ||
+                !await db.Organizations.AnyAsync(organization => organization.Id == linkedCustomer.OrganizationId && organization.IsEnabled))
+                return Results.Forbid();
 
-            var created = await repo.CreateAsync(user);
-            await LinkCustomerLoginAsync(request, db);
-            logger.LogInformation("User provisioned successfully: {Email}", request.Email);
+            var hasLinkedDomainUser = !string.IsNullOrWhiteSpace(link.DomainUserId) &&
+                                      await db.Users.AnyAsync(user => user.Id == link.DomainUserId);
+            if (!hasLinkedDomainUser && !string.IsNullOrWhiteSpace(link.DomainUserId))
+                return Results.Forbid();
+
+            if (!hasLinkedDomainUser)
+            {
+                var user = new User
+                {
+                    Id = Uuid.CreateVersion7().ToString(),
+                    Name = principal.Identity?.Name ?? FirstClaim(principal, "name") ?? email,
+                    Email = email,
+                    Role = "Customer",
+                    OrganizationId = linkedCustomer.OrganizationId
+                };
+                db.Users.Add(user);
+                link.DomainUserId = user.Id;
+                db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+                {
+                    UserId = user.Id,
+                    OrganizationId = linkedCustomer.OrganizationId,
+                    RoleKey = ScopedRoleCatalog.SelfServiceUser
+                });
+            }
+
+            UpdateCustomerLogin(link, issuer, subject, authentikUserId, preferredUsername, email);
+            await db.SaveChangesAsync();
             return Results.Ok(ToAccessDto(await accessService.ResolveAsync(principal)));
-        });
+        })
+        .RequireAuthorization()
+        .WithTags("Users");
 
         group.MapPut("/{id}", async ([FromRoute] string id, [FromBody] UpdateUserRequest request, [FromServices] IRepository<User> repo) =>
         {
@@ -100,62 +136,80 @@ public static class UserEndpoints
                 return Results.Problem("User not found", statusCode: 404);
             }
 
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["password"] = ["Change local credentials through /api/v1/local-auth/change-password."]
+                });
+            }
+
             existing.Name = request.Name;
             existing.Email = request.Email;
             existing.Role = request.Role;
             existing.IsTestUser = request.IsTestUser;
             existing.OrganizationId = string.IsNullOrWhiteSpace(request.OrganizationId) ? null : request.OrganizationId;
-            if (!string.IsNullOrEmpty(request.Password))
-            {
-                existing.HashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
-            }
-
             var updated = await repo.UpdateAsync(existing);
             return updated is null
                 ? Results.Problem("User not found", statusCode: 404)
                 : Results.Ok(ToDto(updated));
         });
 
-        group.MapDelete("/{id}", async ([FromRoute] string id, [FromServices] IRepository<User> repo) =>
-            await repo.DeleteAsync(id)
+        group.MapDelete("/{id}", async (
+            [FromRoute] string id,
+            [FromServices] IRepository<User> repo,
+            [FromServices] UserManager<ApplicationUser> users) =>
+        {
+            if (await users.FindByIdAsync(id) is not null)
+                return Results.Conflict(new { error = "local_account_requires_disable", message = "Disable this local account through account management; deleting its application profile does not revoke login." });
+            return await repo.DeleteAsync(id)
                 ? Results.NoContent()
-                : Results.Problem("User not found", statusCode: 404));
+                : Results.Problem("User not found", statusCode: 404);
+        });
     }
 
     private static UserDto ToDto(User user) => new(user.Id, user.Name, user.Email, user.Role, user.IsTestUser, user.OrganizationId);
 
     private static CurrentUserAccessDto ToAccessDto(CurrentUserAccessProfile access) => new(
-        access.IsAuthenticated,
-        access.Name,
-        access.Email,
-        access.PrimaryOrganizationId,
-        access.PrimaryOrganizationName,
-        access.CustomerId,
-        access.IsHelpdeskAdmin,
-        access.RoleBundles.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-        access.Permissions.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-        access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-        access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray());
-
-    private static string ResolveProvisionedRole(ClaimsPrincipal principal)
+            access.IsAuthenticated,
+            access.Name,
+            access.Email,
+            access.PrimaryOrganizationId,
+            access.PrimaryOrganizationName,
+            access.CustomerId,
+            access.IsHelpdeskAdmin,
+            access.RoleBundles.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            access.Permissions.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray())
     {
-        var roleClaim = principal.Claims.FirstOrDefault(c =>
-            c.Type == ClaimTypes.Role || c.Type == "roles")?.Value;
+        UsesScopedPermissions = access.UsesScopedPermissions,
+        ScopedPermissionGrants = access.ScopedPermissionGrants
+                .OrderBy(grant => grant.OrganizationId, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(grant => grant.Permission, StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+    };
 
-        if (string.Equals(roleClaim, "helpdeskadmin", StringComparison.OrdinalIgnoreCase))
+    private static string? FirstClaim(ClaimsPrincipal principal, params string[] claimTypes)
+    {
+        foreach (var claimType in claimTypes)
         {
-            return "HelpdeskAdmin";
+            var value = principal.FindFirst(claimType)?.Value;
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
         }
 
-        return string.IsNullOrWhiteSpace(roleClaim) ? "Customer" : roleClaim;
+        return null;
     }
 
-    private static async Task LinkCustomerLoginAsync(ProvisionUserRequest request, HelpdeskDbContext db)
+    private static async Task<CustomerAuthLink?> FindCustomerLoginAsync(
+        string? issuer,
+        string? subject,
+        string? authentikUserId,
+        HelpdeskDbContext db)
     {
-        var issuer = string.IsNullOrWhiteSpace(request.Issuer) ? null : request.Issuer.TrimEnd('/');
-        var subject = string.IsNullOrWhiteSpace(request.Subject) ? null : request.Subject;
-        var authentikUserId = string.IsNullOrWhiteSpace(request.AuthentikUserId) ? null : request.AuthentikUserId;
-
         CustomerAuthLink? link = null;
         if (!string.IsNullOrWhiteSpace(issuer) && !string.IsNullOrWhiteSpace(subject))
         {
@@ -169,25 +223,25 @@ public static class UserEndpoints
 
         if (link is null)
         {
-            var pendingMatches = await db.CustomerAuthLinks
-                .Where(x => x.InviteStatus == CustomerInviteStatus.Pending && x.AuthentikEmail == request.Email)
-                .ToListAsync();
-            if (pendingMatches.Count == 1)
-            {
-                link = pendingMatches[0];
-            }
+            return null;
         }
 
-        if (link is null)
-        {
-            return;
-        }
+        return link;
+    }
 
+    private static void UpdateCustomerLogin(
+        CustomerAuthLink link,
+        string? issuer,
+        string? subject,
+        string? authentikUserId,
+        string? preferredUsername,
+        string email)
+    {
         link.OidcIssuer ??= issuer;
         link.OidcSubject ??= subject;
         link.AuthentikUserId ??= authentikUserId;
-        link.AuthentikUsername = request.PreferredUsername ?? request.Email;
-        link.AuthentikEmail = request.Email;
+        link.AuthentikUsername = preferredUsername ?? email;
+        link.AuthentikEmail = email;
         link.LastLoginAtUtc = DateTimeOffset.UtcNow;
         if (link.InviteStatus == CustomerInviteStatus.Pending)
         {
@@ -195,14 +249,5 @@ public static class UserEndpoints
             link.InviteAcceptedAtUtc ??= DateTimeOffset.UtcNow;
         }
 
-        await db.SaveChangesAsync();
     }
-
-    private sealed record ProvisionUserRequest(
-        string Email,
-        string? Name,
-        string? Issuer,
-        string? Subject,
-        string? AuthentikUserId,
-        string? PreferredUsername);
 }

@@ -37,17 +37,18 @@
             }
             @foreach (var cc in incident.CcRecipients)
             {
-                <MudChip T="string" Closeable="true" OnClose="() => RemoveCc(cc)">@cc</MudChip>
+                <MudChip T="string" Closeable="@(!ReadOnly)" OnClose="() => RemoveCc(cc)">@cc</MudChip>
             }
         </MudChipSet>
 
-        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddCcDialog">
+        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Add" Disabled="@ReadOnly" OnClick="OpenAddCcDialog">
             Add Listener
         </MudButton>
     }
 </MudStack>
 
 @code {
+    [Parameter] public bool ReadOnly { get; set; }
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
 
     [Parameter] public string TicketId { get; set; } = string.Empty;

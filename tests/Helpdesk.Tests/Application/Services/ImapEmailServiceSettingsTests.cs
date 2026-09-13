@@ -1,11 +1,36 @@
 using Helpdesk.Application.Services.Email;
 using Helpdesk.Shared.Enums;
 using Helpdesk.Shared.Models;
+using Helpdesk.Infrastructure.Persistence;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 
 namespace Helpdesk.Tests.Application.Services;
 
 public class ImapEmailServiceSettingsTests
 {
+    [Fact]
+    public async Task CurrentInboxSettings_LoadsFromMigratedSqliteAndComparesUtcInstants()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new HelpdeskDbContext(new DbContextOptionsBuilder<HelpdeskDbContext>()
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly("Helpdesk.Infrastructure.SqliteMigrations"))
+            .Options, NSubstitute.Substitute.For<Helpdesk.Shared.Services.ITenantContext>(), new Microsoft.AspNetCore.Http.HttpContextAccessor());
+        await db.Database.MigrateAsync();
+        Assert.Empty(await ImapEmailService.LoadOrderedInboxSettingsAsync(db.EmailInboxSettings.AsNoTracking(), CancellationToken.None));
+        var earlier = CreateSettings(false, false, "earlier@example.com", DateTimeOffset.Parse("2026-09-13T12:00:00+02:00"));
+        var later = CreateSettings(false, false, "later@example.com", DateTimeOffset.Parse("2026-09-13T06:01:00-04:00"));
+        var enabled = CreateSettings(true, true, "enabled@example.com", earlier.UpdatedAt.AddDays(-1));
+        db.EmailInboxSettings.AddRange(earlier, later, enabled);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var ordered = await ImapEmailService.LoadOrderedInboxSettingsAsync(db.EmailInboxSettings.AsNoTracking(), CancellationToken.None);
+
+        Assert.Equal(new[] { enabled.Id, later.Id, earlier.Id }, ordered.Select(settings => settings.Id));
+    }
+
     [Fact]
     public void CurrentInboxSettingsOrdering_PrefersEnabledBackgroundSyncRecord()
     {

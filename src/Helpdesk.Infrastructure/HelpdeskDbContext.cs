@@ -32,7 +32,9 @@ public class HelpdeskDbContext(
     public DbSet<InboundEmailProcessingLog> InboundEmailProcessingLogs => Set<InboundEmailProcessingLog>();
 
     public DbSet<Role> Roles => Set<Role>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<ScopedRoleAssignment> ScopedRoleAssignments => Set<ScopedRoleAssignment>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
     public DbSet<WorkLog> WorkLogs => Set<WorkLog>();
     public DbSet<TicketTimelineEvent> TicketTimelineEvents => Set<TicketTimelineEvent>();
@@ -67,6 +69,7 @@ public class HelpdeskDbContext(
     public DbSet<EmailLayout> EmailLayouts => Set<EmailLayout>();
     public DbSet<TenantBranding> TenantBrandings => Set<TenantBranding>();
     public DbSet<InstanceBranding> InstanceBrandings => Set<InstanceBranding>();
+    public DbSet<InstanceInitialization> InstanceInitializations => Set<InstanceInitialization>();
     public DbSet<Service> Services => Set<Service>();
     public DbSet<RequestForm> RequestForms => Set<RequestForm>();
     public DbSet<AiProvider> AiProviders => Set<AiProvider>();
@@ -95,6 +98,16 @@ public class HelpdeskDbContext(
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        var isPostgreSql = Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL";
+        var isSqlite = Database.IsSqlite();
+        modelBuilder.Entity<InstanceInitialization>(entity =>
+        {
+            entity.ToTable("InstanceInitializations");
+            entity.HasKey(initialization => initialization.Id);
+            entity.Property(initialization => initialization.SetupVersion).HasMaxLength(64);
+            entity.Property(initialization => initialization.TimeZoneId).HasMaxLength(128).HasDefaultValue("UTC");
+            entity.HasIndex(initialization => initialization.InstanceId).IsUnique();
+        });
         modelBuilder.Entity<Helpdesk.Shared.AiAssistant.Chat.AiAssistantChatConversation>(entity =>
         {
             entity.ToTable("AiAssistantChatConversations");
@@ -116,7 +129,10 @@ public class HelpdeskDbContext(
             entity.HasKey(x => new { x.ConversationId, x.CallId });
             entity.HasOne<Helpdesk.Shared.AiAssistant.Chat.AiAssistantChatConversation>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Restrict);
         });
-        modelBuilder.HasPostgresExtension("vector");
+        if (isPostgreSql)
+        {
+            modelBuilder.HasPostgresExtension("vector");
+        }
 
         modelBuilder.Entity<Ticket>().HasQueryFilter(ticket =>
             _tenantContext.IsHelpdeskAdmin ||
@@ -141,6 +157,12 @@ public class HelpdeskDbContext(
         });
         modelBuilder.Entity<AiInvestigationWorklogEntry>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("OccurredUtcSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"OccurredUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("OccurredUtcSortTicks");
+            }
             entity.HasIndex(x => new { x.OrganizationId, x.TicketArea, x.TicketId, x.OccurredUtc });
             entity.HasIndex(x => x.CallbackEventId).IsUnique().HasFilter("\"CallbackEventId\" IS NOT NULL");
         });
@@ -187,6 +209,15 @@ public class HelpdeskDbContext(
             entity.HasIndex(x => x.Status);
             entity.HasIndex(x => new { x.Status, x.DueAt });
             entity.HasIndex(x => new { x.Status, x.NextRetryAt });
+            if (isSqlite)
+            {
+                entity.Property<long?>("DueAtUtcTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"DueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.Property<long?>("NextRetryAtUtcTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"NextRetryAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("Status", "DueAtUtcTicks");
+                entity.HasIndex("Status", "NextRetryAtUtcTicks");
+            }
             entity.HasIndex(x => new { x.Escalated, x.Status });
             entity.HasOne(x => x.Request)
                 .WithMany(x => x.Tasks)
@@ -261,6 +292,12 @@ public class HelpdeskDbContext(
 
         modelBuilder.Entity<AiOperationAuditRecord>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("CreatedAtSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"CreatedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("CreatedAtSortTicks");
+            }
             entity.Property(x => x.OperationName).HasMaxLength(128);
             entity.Property(x => x.OrganizationId).HasMaxLength(128);
             entity.Property(x => x.ProviderName).HasMaxLength(128);
@@ -300,6 +337,12 @@ public class HelpdeskDbContext(
             entity.Property(x => x.LastCorrelationId).HasMaxLength(128);
             entity.HasIndex(x => new { x.OrganizationId, x.RequestFormId, x.TaskTemplateId }).IsUnique();
             entity.HasIndex(x => new { x.OrganizationId, x.OrchestrationRequestDefinitionId });
+            if (isSqlite)
+            {
+                entity.Property<long>("UpdatedAtUtcSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"UpdatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("SyncState", "UpdatedAtUtcSortTicks");
+            }
         });
 
         modelBuilder.Entity<KnowledgeBaseArticle>(entity =>
@@ -337,7 +380,7 @@ public class HelpdeskDbContext(
         {
             entity.ToTable("DatasetRows");
             entity.HasKey(x => x.Id);
-            if (Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            if (isPostgreSql)
             {
                 entity.Property(x => x.DataJson)
                     .HasColumnType("jsonb")
@@ -354,6 +397,12 @@ public class HelpdeskDbContext(
 
         modelBuilder.Entity<DatasetIngestCredential>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("CreatedAtUtcSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"CreatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("CreatedAtUtcSortTicks");
+            }
             entity.ToTable("DatasetIngestCredentials");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.DatasetId, x.Name });
@@ -475,8 +524,18 @@ public class HelpdeskDbContext(
             entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(1000);
             entity.Property(x => x.TenantId).HasMaxLength(64);
-            entity.Property(x => x.ConditionsJson).HasColumnType("jsonb").HasDefaultValue("[]");
-            entity.Property(x => x.ActionsJson).HasColumnType("jsonb").HasDefaultValue("[]");
+            var conditionsJson = entity.Property(x => x.ConditionsJson).HasDefaultValue("[]");
+            var actionsJson = entity.Property(x => x.ActionsJson).HasDefaultValue("[]");
+            if (isPostgreSql)
+            {
+                conditionsJson.HasColumnType("jsonb");
+                actionsJson.HasColumnType("jsonb");
+            }
+            else
+            {
+                conditionsJson.HasColumnType("TEXT");
+                actionsJson.HasColumnType("TEXT");
+            }
             entity.Property(x => x.CreatedBy).HasMaxLength(256);
             entity.Property(x => x.UpdatedBy).HasMaxLength(256);
             entity.HasIndex(x => new { x.Enabled, x.ScopeType, x.TenantId, x.MailboxId, x.Priority });
@@ -484,6 +543,12 @@ public class HelpdeskDbContext(
 
         modelBuilder.Entity<InboundEmailProcessingLog>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("CreatedAtUtcSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"CreatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("CreatedAtUtcSortTicks");
+            }
             entity.ToTable("InboundEmailProcessingLogs");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.MessageId).HasMaxLength(512).IsRequired();
@@ -518,6 +583,37 @@ public class HelpdeskDbContext(
             .HasIndex(c => c.Email)
             .IsUnique();
 
+        modelBuilder.Entity<ScopedRoleAssignment>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.UserId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RoleKey).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.OrganizationId).HasMaxLength(128).IsRequired();
+            entity.HasIndex(x => new { x.UserId, x.RoleKey, x.OrganizationId }).IsUnique();
+            entity.HasIndex(x => new { x.OrganizationId, x.RoleKey });
+        });
+
+        modelBuilder.Entity<Role>(entity =>
+        {
+            entity.Property(x => x.Key).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.Scope).HasConversion<int>();
+            entity.Property(x => x.OwnerOrganizationId).HasMaxLength(128);
+            entity.HasIndex(x => x.Key).IsUnique();
+            entity.HasIndex(x => new { x.Scope, x.OwnerOrganizationId });
+        });
+
+        modelBuilder.Entity<RolePermission>(entity =>
+        {
+            entity.HasKey(x => new { x.RoleId, x.Permission });
+            entity.Property(x => x.RoleId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Permission).HasMaxLength(128).IsRequired();
+            entity.HasOne(x => x.Role)
+                .WithMany(x => x.Permissions)
+                .HasForeignKey(x => x.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<CustomerAuthLink>(entity =>
         {
             entity.ToTable("CustomerAuthLinks");
@@ -526,16 +622,20 @@ public class HelpdeskDbContext(
             entity.Property(x => x.AuthProviderType).HasMaxLength(64);
             entity.Property(x => x.OidcIssuer).HasMaxLength(512);
             entity.Property(x => x.OidcSubject).HasMaxLength(256);
+            entity.Property(x => x.LocalAccountId).HasMaxLength(128);
+            entity.Property(x => x.DomainUserId).HasMaxLength(128);
             entity.Property(x => x.AuthentikUserId).HasMaxLength(64);
             entity.Property(x => x.AuthentikUsername).HasMaxLength(256);
             entity.Property(x => x.AuthentikEmail).HasMaxLength(254);
-            entity.HasIndex(x => x.CustomerId).IsUnique();
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.LocalAccountId).IsUnique();
+            entity.HasIndex(x => x.DomainUserId).IsUnique();
             entity.HasIndex(x => x.AuthentikUserId);
             entity.HasIndex(x => new { x.OidcIssuer, x.OidcSubject }).IsUnique();
             entity.HasIndex(x => new { x.InviteStatus, x.InviteSentAtUtc });
             entity.HasOne<Customer>()
-                .WithOne()
-                .HasForeignKey<CustomerAuthLink>(x => x.CustomerId)
+                .WithMany()
+                .HasForeignKey(x => x.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -596,6 +696,14 @@ public class HelpdeskDbContext(
             entity.HasIndex(x => x.ResolutionDueAt);
             entity.HasIndex(x => x.ResumeAt);
             entity.HasIndex(x => x.CalendarId);
+            if (isSqlite)
+            {
+                entity.Property<long?>("CompletedAtUtcTicks").HasComputedColumnSql("CAST((julianday(\"CompletedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.Property<long>("ResolutionDueAtUtcTicks").HasComputedColumnSql("CAST((julianday(\"ResolutionDueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.Property<long>("ResponseDueAtUtcTicks").HasComputedColumnSql("CAST((julianday(\"ResponseDueAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("Status", "CompletedAtUtcTicks");
+                entity.HasIndex("ResolutionDueAtUtcTicks");
+            }
             entity.HasOne<Ticket>()
                 .WithOne()
                 .HasForeignKey<TicketSlaState>(x => x.TicketId)
@@ -692,7 +800,7 @@ public class HelpdeskDbContext(
             entity.Property(a => a.State)
                 .HasConversion<string>()
                 .HasDefaultValue(KnowledgeBaseArticleState.Draft);
-            if (Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            if (isPostgreSql)
             {
                 entity.Property(a => a.Tags).HasColumnType("jsonb");
             }
@@ -721,7 +829,7 @@ public class HelpdeskDbContext(
             entity.Property(e => e.Text).IsRequired();
             entity.Property(e => e.MetadataJson).IsRequired().HasColumnType("TEXT");
             entity.Property(e => e.LastScore).HasDefaultValue(0);
-            if (Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            if (isPostgreSql)
             {
                 entity.Property(e => e.Vector).HasVectorType(768);
             }
@@ -760,6 +868,12 @@ public class HelpdeskDbContext(
 
         modelBuilder.Entity<TicketAiFeedback>(entity =>
         {
+            if (isSqlite)
+            {
+                entity.Property<long>("CreatedAtSortTicks")
+                    .HasComputedColumnSql("CAST((julianday(\"CreatedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
+                entity.HasIndex("CreatedAtSortTicks");
+            }
             entity.ToTable("TicketAiFeedback");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.FeedbackType).HasMaxLength(64);
@@ -780,8 +894,16 @@ public class HelpdeskDbContext(
         modelBuilder.Entity<Change>(entity =>
         {
             entity.Property(x => x.ChangeType).HasMaxLength(32);
-            entity.Property(x => x.ChangeTemplateJson).HasColumnType("jsonb");
-            entity.Property(x => x.AiReviewOutputJson).HasColumnType("jsonb");
+            if (isPostgreSql)
+            {
+                entity.Property(x => x.ChangeTemplateJson).HasColumnType("jsonb");
+                entity.Property(x => x.AiReviewOutputJson).HasColumnType("jsonb");
+            }
+            else
+            {
+                entity.Property(x => x.ChangeTemplateJson).HasColumnType("TEXT");
+                entity.Property(x => x.AiReviewOutputJson).HasColumnType("TEXT");
+            }
             entity.Property(x => x.AiReviewCorrelationId).HasMaxLength(128);
             entity.Property(x => x.AiReviewFailureReason).HasMaxLength(1024);
             entity.Property(x => x.AiReviewAcknowledgementNotes).HasMaxLength(1024);
@@ -852,7 +974,7 @@ public class HelpdeskDbContext(
         modelBuilder.Entity<OrganizationAiKbSettings>().ToTable("OrganizationAiKbSettings");
 
         modelBuilder.ApplyConfiguration(new ServiceConfiguration(_tenantContext, _httpContextAccessor));
-        modelBuilder.ApplyConfiguration(new RequestFormConfiguration(_tenantContext));
+        modelBuilder.ApplyConfiguration(new RequestFormConfiguration(_tenantContext, isPostgreSql));
         modelBuilder.Entity<RequestForm>().HasQueryFilter(form =>
             _tenantContext.IsHelpdeskAdmin ||
             string.IsNullOrWhiteSpace(_tenantContext.TenantId) ||

@@ -4,6 +4,7 @@ using Helpdesk.Shared.DTOs.EmailRules;
 using Helpdesk.Shared.Enums;
 using Helpdesk.Shared.Models;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -13,7 +14,8 @@ public sealed class InboundEmailRuleProcessor(
     HelpdeskDbContext db,
     IForwardedEmailParser forwardedEmailParser,
     IInboundEmailActionExecutor actionExecutor,
-    ILogger<InboundEmailRuleProcessor> logger)
+    ILogger<InboundEmailRuleProcessor> logger,
+    RatelDeskIdentityDbContext? identityDb = null)
     : IInboundEmailRuleProcessor
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -66,11 +68,11 @@ public sealed class InboundEmailRuleProcessor(
             query = query.Where(x => x.ScopeType == InboundEmailRuleScopeType.Global || x.TenantId == context.MailboxTenantId);
         }
 
-        return await query
+        return (await query.ToListAsync(ct))
             .OrderByDescending(x => x.ScopeType == InboundEmailRuleScopeType.Tenant)
             .ThenBy(x => x.Priority)
             .ThenBy(x => x.CreatedAtUtc)
-            .ToListAsync(ct);
+            .ToList();
     }
 
     private async Task<bool> MatchesAsync(
@@ -88,7 +90,9 @@ public sealed class InboundEmailRuleProcessor(
                 case InboundEmailRuleConditionType.SenderHasAnySupportPermission:
                     var forwarder = await db.Users.AsNoTracking()
                         .FirstOrDefaultAsync(x => x.Email.ToLower() == context.FromEmail.Trim().ToLowerInvariant(), ct);
-                    if (forwarder is null || !InboundEmailActionExecutor.IsSupportUser(forwarder))
+                    var forwarderAccess = forwarder is null ? null :
+                        await InboundForwarderAuthorization.ResolveAsync(db, identityDb, forwarder, ct);
+                    if (!InboundForwarderAuthorization.CanForward(forwarderAccess))
                     {
                         return false;
                     }

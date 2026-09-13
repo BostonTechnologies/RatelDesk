@@ -1,10 +1,10 @@
-@attribute [Authorize(Roles = "Request.User,Request.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Request.User,Request.Read,Request.Write,Request.Manager,HelpdeskAdmin")]
 
 @using Helpdesk.Shared.DTOs.Request
 
 @inject IHttpClientFactory HttpClientFactory
 
-<OperatorTicketCreateForm Title="Create New Request"
+<OperatorTicketCreateForm Module="request" Title="Create New Request"
                           CreateAsync="CreateRequestAsync" />
 
 @code {

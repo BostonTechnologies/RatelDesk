@@ -53,3 +53,5 @@ public sealed record ChatDelta(Guid ConversationId, string? Text, long AfterSequ
 public sealed record ChatAbandonRequest(Guid ConversationId, Guid ResolutionId, Guid ExpectedMessageId, bool AcknowledgePossibleDelivery);
 public sealed record ChatStopWaitingRequest(Guid ConversationId, Guid ExpectedMessageId);
 public sealed record ChatConversationSummary(Guid ConversationId, ChatState State, DateTimeOffset LastActivityUtc, string CreatedByUserId);
+
+public sealed record ChatCapabilities(bool Enabled, string? Reason);

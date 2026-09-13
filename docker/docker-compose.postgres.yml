@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${RATELDESK_POSTGRES_DATABASE:-rateldesk}
+      POSTGRES_USER: ${RATELDESK_POSTGRES_USERNAME:-rateldesk}
+      POSTGRES_PASSWORD: ${RATELDESK_POSTGRES_PASSWORD:?Set RATELDESK_POSTGRES_PASSWORD before starting PostgreSQL}
+    volumes:
+      - rateldesk-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-extensions.sql:/docker-entrypoint-initdb.d/10-rateldesk-extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  rateldesk-postgres-data:

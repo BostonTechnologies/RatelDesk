@@ -173,8 +173,8 @@ public sealed class HelpdeskTools(
         return await Execute(() => client.GetAsync($"/api/v1/tickets/{Uri.EscapeDataString(id)}/{operation.Replace('_', '-')}", true, cancellationToken), $"Ticket {operation} completed.").ConfigureAwait(false);
     }
 
-    [McpServerTool(UseStructuredContent = true), Description("Inspect roles. Operations: list, get; get requires request.roleId.")]
-    public Task<HelpdeskToolResponse> helpdesk_roles(string operation, JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default) => CollectionRead("helpdesk_roles", "/api/v1/roles", "roleId", operation, request, cancellationToken);
+    [McpServerTool(UseStructuredContent = true), Description("Inspect permission-aware role definitions. Operations: list, get; get requires request.roleId.")]
+    public Task<HelpdeskToolResponse> helpdesk_roles(string operation, JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default) => CollectionRead("helpdesk_roles", "/api/v1/admin/role-definitions", "roleId", operation, request, cancellationToken);
     [McpServerTool(UseStructuredContent = true), Description("Inspect ticket categories. Operation: list. The Helpdesk API has no category detail route.")]
     public Task<HelpdeskToolResponse> helpdesk_categories(string operation, JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default)
         => operation == "list" ? CollectionRead("helpdesk_categories", "/api/v1/categories", "categoryId", operation, request, cancellationToken) : Task.FromResult(Invalid("helpdesk_categories", operation, ["list"]));
@@ -285,9 +285,9 @@ public sealed class HelpdeskTools(
             "update_user" => (HttpMethod.Put, "/api/v1/users", "userId"),
             "delete_user" => (HttpMethod.Delete, "/api/v1/users", "userId"),
             "provision_user" => (HttpMethod.Post, "/api/v1/users/provision", "userId"),
-            "create_role" => (HttpMethod.Post, "/api/v1/roles", "roleId"),
-            "update_role" => (HttpMethod.Put, "/api/v1/roles", "roleId"),
-            "delete_role" => (HttpMethod.Delete, "/api/v1/roles", "roleId"),
+            "create_role" => (HttpMethod.Post, "/api/v1/admin/role-definitions", "roleId"),
+            "update_role" => (HttpMethod.Put, "/api/v1/admin/role-definitions", "roleId"),
+            "delete_role" => (HttpMethod.Delete, "/api/v1/admin/role-definitions", "roleId"),
             "create_category" => (HttpMethod.Post, "/api/v1/categories", "categoryId"),
             "update_category" => (HttpMethod.Put, "/api/v1/categories", "categoryId"),
             "delete_category" => (HttpMethod.Delete, "/api/v1/categories", "categoryId"),

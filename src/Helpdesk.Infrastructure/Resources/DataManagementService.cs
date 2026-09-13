@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Azure.Core;
 using Azure.Identity;
 using Helpdesk.Application.Resources;
+using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Application.Services.AI;
 using Helpdesk.Shared.DTOs;
 using Helpdesk.Shared.DTOs.RequestForm;
@@ -319,7 +320,7 @@ public sealed class DataManagementService(
         return await _db.DatasetIngestCredentials
             .AsNoTracking()
             .Where(x => x.DatasetId == datasetId)
-            .OrderByDescending(x => x.CreatedAtUtc)
+            .OrderByUtc(_db, x => x.CreatedAtUtc, descending: true)
             .Select(x => MapCredentialDto(x))
             .ToListAsync(cancellationToken);
     }

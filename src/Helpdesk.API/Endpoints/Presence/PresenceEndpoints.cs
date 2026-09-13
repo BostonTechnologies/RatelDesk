@@ -9,7 +9,7 @@ public static class PresenceEndpoints
     {
         var group = app.MapGroup("/api/v1/presence")
             .WithTags("Presence")
-            .RequireAuthorization();
+            .RequireAuthorization("HelpdeskAdmin");
 
         group.MapGet("/online-users", ([FromServices] IUserPresenceService presence) => Results.Ok(presence.GetOnlineUsers()))
             .WithName("GetOnlineUsers")

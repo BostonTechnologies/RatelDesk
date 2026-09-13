@@ -1,0 +1,26 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthenticationState
+@using Helpdesk.Shared.Services
+
+@code {
+    private IJSObjectReference? module;
+    private int observerId;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/session-access.js");
+        var profile = CurrentUserAccessProfile.FromClaims((await AuthenticationState.GetAuthenticationStateAsync()).User);
+        observerId = await module.InvokeAsync<int>("start", profile);
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (module is null) return;
+        try
+        {
+            await module.InvokeVoidAsync("stop", observerId);
+            await module.DisposeAsync();
+        }
+        catch (JSDisconnectedException) { }
+    }
+}

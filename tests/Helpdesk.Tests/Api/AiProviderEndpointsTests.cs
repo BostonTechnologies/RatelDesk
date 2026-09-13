@@ -31,6 +31,7 @@ public class AiProviderEndpointsTests : IClassFixture<WebApplicationFactory<Prog
 
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
 

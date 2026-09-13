@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Helpdesk.API.Endpoints.Notifications;
+using Helpdesk.Application.Notifications;
+using Helpdesk.Infrastructure.Events;
 using Helpdesk.API.Endpoints.Ticketing;
 using Helpdesk.Infrastructure.Auth.Rbac;
 using Helpdesk.Infrastructure.Persistence;
@@ -85,9 +87,9 @@ public sealed class TenantRbacHardeningEndpointsTests
         var summary = await harness.Client.GetFromJsonAsync<NotificationSummaryDto>("/api/v1/notifications/summary");
 
         Assert.NotNull(page);
-        Assert.Equal(["notification-alpha", "notification-own"], page!.Items.Select(x => x.Title).Order(StringComparer.Ordinal).ToArray());
-        Assert.Equal(2, summary!.TotalCount);
-        Assert.Equal(2, summary.UnreadCount);
+        Assert.Equal(["notification-alpha", "notification-change", "notification-incident", "notification-own", "notification-personal-change"], page!.Items.Select(x => x.Title).Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(5, summary!.TotalCount);
+        Assert.Equal(5, summary.UnreadCount);
     }
 
     [Fact]
@@ -103,6 +105,86 @@ public sealed class TenantRbacHardeningEndpointsTests
         Assert.Contains(adminPage!.Items, x => x.Title == "notification-global");
     }
 
+    [Fact]
+    public async Task Notifications_MixedRoleScopes_DoNotExposeOtherMembersOrSelfServiceTenantBroadcasts()
+    {
+        await using var harness = await TenantRbacHardeningHarness.CreateAsync("Mixed");
+        var page = await harness.Client.GetFromJsonAsync<PagedResponse<NotificationDto>>("/api/v1/notifications?pageSize=50");
+        Assert.Equal("notification-own", Assert.Single(page!.Items).Title);
+        var summary = await harness.Client.GetFromJsonAsync<NotificationSummaryDto>("/api/v1/notifications/summary");
+        Assert.Equal(1, summary!.TotalCount);
+    }
+
+    [Fact]
+    public async Task NotificationStream_UsesTheSameRecipientAndScopedBroadcastBoundaryAsTheList()
+    {
+        await using var harness = await TenantRbacHardeningHarness.CreateAsync("Mixed");
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await harness.Client.GetAsync("/api/v1/notifications/stream", HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
+        response.EnsureSuccessStatusCode();
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(cancellation.Token));
+        Assert.Equal(": connected", await reader.ReadLineAsync(cancellation.Token));
+        await harness.PublishAsync(new NotificationDto { Title = "denied-selfservice-broadcast", TenantId = "org-alpha", IsGlobal = true, Category = "DomainEvent" });
+        await harness.PublishAsync(new NotificationDto { Title = "denied-private-other", TenantId = "org-support", UserId = "another-user", Category = "DomainEvent" });
+        await harness.PublishAsync(new NotificationDto { Title = "permitted-own", UserId = "subject-technical", Category = "DomainEvent" });
+        var received = false;
+        while (await reader.ReadLineAsync(cancellation.Token) is { } line)
+        {
+            Assert.DoesNotContain("denied-", line);
+            if (line.Contains("permitted-own", StringComparison.Ordinal))
+            {
+                received = true;
+                break;
+            }
+        }
+        Assert.True(received);
+        cancellation.Cancel();
+    }
+
+    [Fact]
+    public async Task Notifications_ModuleReaderSeesOnlyBroadcastsForAuthorizedTicketModule()
+    {
+        await using var harness = await TenantRbacHardeningHarness.CreateAsync("ModuleReader");
+        var page = await harness.Client.GetFromJsonAsync<PagedResponse<NotificationDto>>("/api/v1/notifications?pageSize=50");
+        Assert.Equal(new[] { "notification-change", "notification-own", "notification-personal-change" }, page!.Items.Select(item => item.Title).Order().ToArray());
+    }
+
+    [Fact]
+    public async Task RevokedModuleRoleRemovesPersonalTicketHistoryAndClosesItsOpenStream()
+    {
+        await using var harness = await TenantRbacHardeningHarness.CreateAsync("ModuleReader");
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await harness.Client.GetAsync("/api/v1/notifications/stream", HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
+        response.EnsureSuccessStatusCode();
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(cancellation.Token));
+        Assert.Equal(": connected", await reader.ReadLineAsync(cancellation.Token));
+        harness.RevokeModuleRole();
+        var page = await harness.Client.GetFromJsonAsync<PagedResponse<NotificationDto>>("/api/v1/notifications?pageSize=50", cancellation.Token);
+        Assert.Equal("notification-own", Assert.Single(page!.Items).Title);
+        await harness.PublishAsync(new NotificationDto { Title = "revoked-personal-change", UserId = "subject-technical", TenantId = "org-alpha", Reference = "CHG-NOTIFY", Category = "DomainEvent" });
+        var remaining = await reader.ReadToEndAsync(cancellation.Token);
+        Assert.DoesNotContain("revoked-personal-change", remaining);
+        Assert.DoesNotContain("event: notification", remaining);
+    }
+
+    private sealed class MixedAccessService(bool moduleReader = false) : ICurrentUserAccessService
+    {
+        public bool Revoked { get; set; }
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default) =>
+            Task.FromResult(new CurrentUserAccessProfile(true, "Mixed", null, "org-support", null, null, false,
+                new HashSet<string>(), Revoked ? new HashSet<string> { HelpdeskPermissions.SelfServiceUser } : new HashSet<string> { HelpdeskPermissions.ChangeManager, HelpdeskPermissions.SelfServiceUser },
+                new HashSet<string> { "org-support", "org-alpha" }, new HashSet<string> { "org-support" })
+            {
+                ScopedPermissionGrants = Revoked
+                    ? new HashSet<ScopedPermissionGrant> { new(HelpdeskPermissions.SelfServiceUser, "org-alpha") }
+                    : new HashSet<ScopedPermissionGrant>
+                    {
+                        new(HelpdeskPermissions.ChangeManager, moduleReader ? "org-alpha" : "org-support"),
+                        new(HelpdeskPermissions.SelfServiceUser, "org-alpha")
+                    }
+            });
+    }
+
     private sealed class TenantRbacHardeningHarness : IAsyncDisposable
     {
         private readonly SqliteConnection _connection;
@@ -116,6 +198,22 @@ public sealed class TenantRbacHardeningEndpointsTests
         }
 
         public HttpClient Client { get; }
+        public void RevokeModuleRole() => ((MixedAccessService)_app.Services.GetRequiredService<ICurrentUserAccessService>()).Revoked = true;
+
+        public async Task PublishAsync(NotificationDto notification)
+        {
+            notification.Id = Guid.NewGuid();
+            using var scope = _app.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Notifications.Add(new NotificationEntity
+            {
+                Id = notification.Id, UserId = notification.UserId, TenantId = notification.TenantId,
+                Title = notification.Title, Category = notification.Category, IsGlobal = notification.IsGlobal,
+                Source = notification.Source, Reference = notification.Reference, CreatedUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+            _app.Services.GetRequiredService<INotificationEventBus>().Publish(notification);
+        }
 
         public static async Task<TenantRbacHardeningHarness> CreateAsync(string actor)
         {
@@ -125,9 +223,13 @@ public sealed class TenantRbacHardeningEndpointsTests
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
             builder.WebHost.UseTestServer();
             builder.Services.AddHttpContextAccessor();
+            builder.Services.AddSingleton<INotificationEventBus, NotificationEventBus>();
             builder.Services.AddDbContext<HelpdeskDbContext>(options => options.UseSqlite(connection));
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("org-alpha", "customer-primary", actor == "Admin"));
-            builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
+            if (actor is "Mixed" or "ModuleReader")
+                builder.Services.AddSingleton<ICurrentUserAccessService>(new MixedAccessService(actor == "ModuleReader"));
+            else
+                builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
             builder.Services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = "Test";
@@ -210,7 +312,18 @@ public sealed class TenantRbacHardeningEndpointsTests
                     InviteStatus = CustomerInviteStatus.Active
                 });
 
+            db.Incidents.Add(new Incident { Id = "incident-notification", TrackingId = "INC-NOTIFY", Title = "Incident", OrganizationId = "org-alpha" });
+            db.Changes.Add(new Change { Id = "change-notification", TrackingId = "CHG-NOTIFY", Title = "Change", OrganizationId = "org-alpha" });
             db.Notifications.AddRange(
+                new NotificationEntity { Id = Guid.NewGuid(), Title = "notification-personal-change", UserId = "subject-technical", TenantId = "org-alpha", Reference = "CHG-NOTIFY", IsGlobal = false, CreatedUtc = DateTime.UtcNow },
+                new NotificationEntity { Id = Guid.NewGuid(), Title = "notification-change", Reference = "CHG-NOTIFY", IsGlobal = true, TenantId = "org-alpha", CreatedUtc = DateTime.UtcNow },
+                new NotificationEntity { Id = Guid.NewGuid(), Title = "notification-incident", Reference = "INC-NOTIFY", IsGlobal = true, TenantId = "org-alpha", CreatedUtc = DateTime.UtcNow },
+                new NotificationEntity
+                {
+                    Id = Guid.NewGuid(), Title = "notification-private-other", Message = "Private other-user notification",
+                    Severity = NotificationSeverity.Info, CreatedUtc = DateTime.UtcNow,
+                    TenantId = "org-alpha", UserId = "another-user", IsGlobal = false
+                },
                 new NotificationEntity
                 {
                     Id = Guid.NewGuid(),
@@ -283,7 +396,7 @@ public sealed class TenantRbacHardeningEndpointsTests
                     new Claim(ClaimTypes.Role, HelpdeskPermissions.HelpdeskAdmin),
                     new Claim("roles", HelpdeskPermissions.HelpdeskAdmin)
                 ],
-                "Technical" =>
+                "Technical" or "Mixed" or "ModuleReader" =>
                 [
                     new Claim(ClaimTypes.NameIdentifier, "subject-technical"),
                     new Claim("sub", "subject-technical"),

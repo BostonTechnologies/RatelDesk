@@ -140,6 +140,7 @@ public sealed class CustomerAuthEndpointsTests
     private static WebApplicationFactory<Program> CreateFactory(ICustomerInvitationService invitationService)
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
 

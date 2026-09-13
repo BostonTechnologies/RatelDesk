@@ -26,7 +26,7 @@
                          CoerceText="false"
                          ResetValueOnEmptyText="true"
                          DebounceInterval="250"
-                         Disabled="@string.IsNullOrWhiteSpace(OrganizationId)"
+                         Disabled="@(ReadOnly || string.IsNullOrWhiteSpace(OrganizationId))"
                          Adornment="Adornment.Start"
                          AdornmentIcon="@Icons.Material.Filled.PersonSearch"
                          Class="ticket-customer-picker">
@@ -52,6 +52,7 @@
 </style>
 
 @code {
+    [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public string TicketId { get; set; } = default!;
     [Parameter] public string TicketType { get; set; } = default!;
     [Parameter] public string? OrganizationId { get; set; }
@@ -75,7 +76,7 @@
             customers.Clear();
             selectedCustomer = null;
 
-            if (!string.IsNullOrWhiteSpace(OrganizationId) && string.IsNullOrWhiteSpace(CustomerId))
+            if (!ReadOnly && !string.IsNullOrWhiteSpace(OrganizationId) && string.IsNullOrWhiteSpace(CustomerId))
             {
                 await LoadCustomersAsync();
             }
@@ -86,7 +87,7 @@
     {
         try
         {
-            var all = await Api.GetFromJsonAsync<List<CustomerDto>>("api/v1/customers") ?? new();
+            var all = await Api.GetFromJsonAsync<List<CustomerDto>>($"api/v1/ticketing/customers?module={TicketType.TrimEnd('s')}&organizationId={Uri.EscapeDataString(OrganizationId ?? string.Empty)}") ?? new();
             customers.AddRange(all
                 .Where(x => x.IsEnabled && string.Equals(x.OrganizationId, OrganizationId, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase));

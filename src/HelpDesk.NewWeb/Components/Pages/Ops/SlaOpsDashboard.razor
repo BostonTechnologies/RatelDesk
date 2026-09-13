@@ -1,5 +1,5 @@
 @page "/ops/slas"
-@attribute [Authorize(Roles = "Incident.Manager,Request.Manager,Change.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Incident.Write,Incident.Manager,Request.Write,Request.Manager,Change.Write,Change.Manager,HelpdeskAdmin")]
 @using System.Security.Claims
 @using Helpdesk.Shared.DTOs
 @using Helpdesk.Shared.DTOs.Organization

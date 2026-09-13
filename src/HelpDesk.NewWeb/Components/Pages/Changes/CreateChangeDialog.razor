@@ -2,7 +2,7 @@
 @using Helpdesk.Shared.DTOs.Organization
 @using Helpdesk.Shared.Models
 @using System.ComponentModel.DataAnnotations
-@attribute [Authorize(Roles = "Change.User,Change.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Change.User,Change.Read,Change.Write,Change.Manager,HelpdeskAdmin")]
 
 @inject ISnackbar Snackbar
 @inject IHttpClientFactory HttpClientFactory
@@ -278,7 +278,7 @@
     {
         try
         {
-            organizations = (await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations") ?? new())
+            organizations = (await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/ticketing/organizations?module=change") ?? new())
                 .Where(x => x.IsEnabled)
                 .OrderBy(x => x.Name)
                 .ToList();

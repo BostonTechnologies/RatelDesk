@@ -4,6 +4,8 @@ using Helpdesk.API.Endpoints.Tickets;
 using Helpdesk.Application.Tickets;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.DTOs;
+using Helpdesk.Shared.DTOs.Worklog;
+using Helpdesk.Shared.Enums;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Builder;
@@ -90,6 +92,27 @@ public sealed class PublicTicketEndpointsTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Timeline_Returns_Only_Public_Replies_In_Instant_Order_On_Migrated_Sqlite()
+    {
+        await using var harness = await PublicTicketTestHarness.CreateAsync();
+        await harness.SeedTicketAsync(new Incident { Id = "timeline-ticket", TrackingId = "INC-TIMELINE" });
+        await harness.SeedTicketAsync(new Incident { Id = "other-ticket", TrackingId = "INC-OTHER" });
+        var first = new DateTimeOffset(2026, 9, 13, 10, 0, 0, TimeSpan.Zero);
+        await harness.SeedTimelineAsync(
+            new() { TicketId = "timeline-ticket", EventType = TimelineEventType.CustomerReply, CreatedUtc = first, MessageText = "First" },
+            new() { TicketId = "timeline-ticket", EventType = TimelineEventType.TechnicianReply, CreatedUtc = first.AddMinutes(1).ToOffset(TimeSpan.FromHours(-4)), MessageText = "Second" },
+            new() { TicketId = "timeline-ticket", EventType = TimelineEventType.SystemNotification, CreatedUtc = first.AddMinutes(2), MessageText = "Private system event" },
+            new() { TicketId = "other-ticket", EventType = TimelineEventType.CustomerReply, CreatedUtc = first.AddMinutes(3), MessageText = "Other ticket" });
+
+        var response = await harness.Client.GetAsync(
+            "/api/v1/tickets/public/timeline?trackingId=INC-TIMELINE&email=customer%40example.com&token=token:INC-TIMELINE:customer%40example.com");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var items = await response.Content.ReadFromJsonAsync<List<TicketTimelineEventDto>>();
+        Assert.Equal(new[] { "Second", "First" }, items!.Select(x => x.MessageText));
+    }
+
     private sealed class PublicTicketTestHarness : IAsyncDisposable
     {
         private readonly SqliteConnection connection;
@@ -115,7 +138,7 @@ public sealed class PublicTicketEndpointsTests
             });
             builder.WebHost.UseTestServer();
             builder.Services.AddHttpContextAccessor();
-            builder.Services.AddDbContext<HelpdeskDbContext>(options => options.UseSqlite(connection));
+            builder.Services.AddDbContext<HelpdeskDbContext>(options => options.UseSqlite(connection, sqlite => sqlite.MigrationsAssembly("Helpdesk.Infrastructure.SqliteMigrations")));
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("org-1", "admin-1", isHelpdeskAdmin: true));
             builder.Services.AddSingleton<IPublicTicketLinkSigner, TestPublicTicketLinkSigner>();
 
@@ -125,7 +148,7 @@ public sealed class PublicTicketEndpointsTests
             using (var scope = app.Services.CreateScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
-                await db.Database.EnsureCreatedAsync();
+                await db.Database.MigrateAsync();
             }
 
             await app.StartAsync();
@@ -137,6 +160,14 @@ public sealed class PublicTicketEndpointsTests
             using var scope = app.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
             db.Tickets.Add(ticket);
+            await db.SaveChangesAsync();
+        }
+
+        public async Task SeedTimelineAsync(params TicketTimelineEvent[] events)
+        {
+            using var scope = app.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.TicketTimelineEvents.AddRange(events);
             await db.SaveChangesAsync();
         }
 

@@ -6,6 +6,7 @@ using Helpdesk.Application.Services.Email;
 using Helpdesk.Application.Services.Tenants;
 using Helpdesk.Infrastructure.Email;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.EmailRules;
 using Helpdesk.Shared.Enums;
@@ -28,6 +29,7 @@ public class InboundEmailActionExecutorTests
         await using var db = CreateDb();
         db.Organizations.Add(new Organization { Id = "tenant-1", Name = "Tenant", DnsName = "example.com" });
         db.Users.Add(new User { Id = "tech-1", Email = "tech@support.local", Name = "Tech", Role = HelpdeskRoleBundles.Technical, OrganizationId = "tenant-1" });
+        LinkLegacyForwarder(db, "tenant-1");
         await db.SaveChangesAsync();
 
         var sender = Substitute.For<IRequestSender>();
@@ -115,6 +117,7 @@ public class InboundEmailActionExecutorTests
     {
         await using var db = CreateDb();
         db.Users.Add(new User { Id = "tech-1", Email = "tech@support.local", Name = "Tech", Role = HelpdeskRoleBundles.Technical, OrganizationId = "msp" });
+        LinkLegacyForwarder(db, "msp");
         db.Organizations.AddRange(
             new Organization { Id = "tenant-1", Name = "Tenant 1", ItSupportOrganizationId = "msp" },
             new Organization { Id = "tenant-2", Name = "Tenant 2", ItSupportOrganizationId = "msp" });
@@ -134,6 +137,7 @@ public class InboundEmailActionExecutorTests
     {
         await using var db = CreateDb();
         db.Users.Add(new User { Id = "tech-1", Email = "tech@support.local", Name = "Tech", Role = HelpdeskRoleBundles.Technical, OrganizationId = "tenant-1" });
+        LinkLegacyForwarder(db, "tenant-1");
         db.InboundEmailProcessingLogs.Add(new InboundEmailProcessingLog
         {
             MessageId = "message-1",
@@ -159,6 +163,7 @@ public class InboundEmailActionExecutorTests
     {
         await using var db = CreateDb();
         db.Users.Add(new User { Id = "tech-1", Email = "tech@support.local", Name = "Tech", Role = HelpdeskRoleBundles.Technical, OrganizationId = "tenant-1" });
+        LinkLegacyForwarder(db, "tenant-1");
         await db.SaveChangesAsync();
         var sender = Substitute.For<IRequestSender>();
         var executor = CreateExecutor(db, sender);
@@ -170,7 +175,56 @@ public class InboundEmailActionExecutorTests
         Assert.Contains(db.InboundEmailProcessingLogs, x => x.Status == InboundEmailProcessingStatus.ParserFailed);
     }
 
-    private static InboundEmailActionExecutor CreateExecutor(HelpdeskDbContext db, IRequestSender sender)
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_Local_forwarder_cannot_use_revoked_or_other_tenant_write_grant(bool grantInOtherTenant)
+    {
+        await using var db = CreateDb();
+        await using var identityDb = new RatelDeskIdentityDbContext(new DbContextOptionsBuilder<RatelDeskIdentityDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        db.Organizations.AddRange(new Organization { Id = "tenant-1", Name = "Target" }, new Organization { Id = "other", Name = "Other" });
+        db.Users.Add(new User { Id = "local", Email = "tech@support.local", Name = "Local", Role = "Technician", OrganizationId = "tenant-1" });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "local", OrganizationId = grantInOtherTenant ? "other" : "tenant-1", RoleKey = ScopedRoleCatalog.IncidentWriter });
+        identityDb.Users.Add(new ApplicationUser { Id = "local", UserName = "tech@support.local", Email = "tech@support.local", IsEnabled = true });
+        await db.SaveChangesAsync();
+        await identityDb.SaveChangesAsync();
+        if (!grantInOtherTenant)
+        {
+            db.ScopedRoleAssignments.RemoveRange(db.ScopedRoleAssignments);
+            await db.SaveChangesAsync();
+        }
+        var sender = Substitute.For<IRequestSender>();
+        await CreateExecutor(db, sender, identityDb).ExecuteAsync(Rule("tenant-1"), Action(), Context(), Forwarded());
+        await sender.DidNotReceive().Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>());
+        Assert.DoesNotContain(db.InboundEmailProcessingLogs, log => log.Status == InboundEmailProcessingStatus.Succeeded);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Legacy_role_without_verified_external_link_does_not_authorize_forwarding()
+    {
+        await using var db = CreateDb();
+        db.Organizations.Add(new Organization { Id = "tenant-1", Name = "Target" });
+        db.Users.Add(new User { Id = "unlinked", Email = "tech@support.local", Name = "Unlinked", Role = "Technician", OrganizationId = "tenant-1" });
+        await db.SaveChangesAsync();
+        var sender = Substitute.For<IRequestSender>();
+        await CreateExecutor(db, sender).ExecuteAsync(Rule("tenant-1"), Action(), Context(), Forwarded());
+        await sender.DidNotReceive().Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>());
+        Assert.Contains(db.InboundEmailProcessingLogs, log => log.Status == InboundEmailProcessingStatus.UnauthorizedSender);
+    }
+
+    private static void LinkLegacyForwarder(HelpdeskDbContext db, string organizationId)
+    {
+        if (!db.Organizations.Local.Any(organization => organization.Id == organizationId))
+            db.Organizations.Add(new Organization { Id = organizationId, Name = organizationId });
+        db.Customers.Add(new Customer { Id = "forwarder-contact", Name = "Forwarder", OrganizationId = organizationId });
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = "forwarder-contact", DomainUserId = "tech-1", OidcIssuer = "https://issuer.example", OidcSubject = "forwarder"
+        });
+    }
+
+    private static InboundEmailActionExecutor CreateExecutor(HelpdeskDbContext db, IRequestSender sender, RatelDeskIdentityDbContext? identityDb = null)
     {
         var provisioning = Substitute.For<ITenantProvisioningService>();
         var incidentRepo = Substitute.For<IRepository<Incident>>();
@@ -183,7 +237,7 @@ public class InboundEmailActionExecutorTests
             timelineRepo,
             NullLogger<InboundEmailActionExecutor>.Instance,
             new InboundInlineImageResolver(Substitute.For<IInlineImageStorageService>(), NullLogger<InboundInlineImageResolver>.Instance),
-            Substitute.For<ITicketAttachmentService>());
+            Substitute.For<ITicketAttachmentService>(), identityDb);
     }
 
     private static HelpdeskDbContext CreateDb()

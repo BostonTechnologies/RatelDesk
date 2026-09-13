@@ -1,5 +1,7 @@
+@using Helpdesk.Shared.Services
+@inject AuthenticationStateProvider AccessAuthenticationState
 @page "/changes/{Id}"
-@attribute [Authorize(Roles = "Change.User,Change.Manager,HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Change.User,Change.Read,Change.Write,Change.Manager,HelpdeskAdmin")]
 @rendermode @(new InteractiveServerRenderMode(prerender: false))
 
 @using Helpdesk.Shared.DTOs.Article
@@ -62,7 +64,7 @@
                 CustomerEmail="@change.CustomerEmail"
                 CategoryIds="@selectedCategoryIds"
                 AllCategories="@categories"
-                CategoryRemoved="OnCategoryRemoved">
+                CategoryRemoved="OnCategoryRemoved" ReadOnly="@(!CanManage)">
                 <MetadataContent>
                     @if (aiRuntimeStatus is not null)
                     {
@@ -115,7 +117,7 @@
                 TicketId="@Id"
                 TicketType="changes"
                 OrganizationId="@change.OrganizationId"
-                PublicMode="false"
+                PublicMode="false" CanContribute="@CanContribute" CanManage="@CanManage"
                 OnWorklogAdded="HandleWorklogAdded"
                 MessagesTabText="Change Template"
                 ShowAiStatusSummary="false"
@@ -140,7 +142,7 @@
                             </MudAlert>
                         }
                         <div class="@(IsChangeLocked ? "change-template-locked" : null)">
-                            <ChangeTemplateEditor ChangeType="@(change.ChangeType ?? string.Empty)"
+                            <ChangeTemplateEditor ReadOnly="@IsChangeLocked" ChangeType="@(change.ChangeType ?? string.Empty)"
                                                   Model="@(change.ChangeTemplate ??= new ChangeTemplateDto())"
                                                   OnChanged="OnTemplateChanged"
                                                   ValidationErrors="@templateErrors" />
@@ -165,8 +167,8 @@
                                            Margin="Margin.Dense"
                                            Label="Change Status"
                                            Variant="Variant.Outlined"
-                                           Disabled="@isUpdating">
-                                    @foreach (ChangeLifecycleState state in Enum.GetValues(typeof(ChangeLifecycleState)))
+                                           Disabled="@(!CanManage || isUpdating)">
+                                    @foreach (var state in Enum.GetValues<ChangeLifecycleState>().Where(state => state != ChangeLifecycleState.ApprovedForImplementation || accessProfile?.CanApproveChange(change.OrganizationId) == true || state == change.LifecycleState))
                                     {
                                         <MudSelectItem T="ChangeLifecycleState" Value="@state">@GetLifecycleLabel(state)</MudSelectItem>
                                     }
@@ -252,7 +254,7 @@
                                     <HelpDesk.NewWeb.Components.Shared.ServiceCategoryPicker
                                         RequestedType="TicketCategoryType.Change"
                                         SelectedCategoryIds="@selectedCategoryIds"
-                                        SelectedCategoryIdsChanged="OnCategorySelectionChanged"
+                                        SelectedCategoryIdsChanged="OnCategorySelectionChanged" ReadOnly="@(!CanManage)"
                                         Dense="true"
                                         Margin="Margin.Dense" />
                                 }
@@ -341,13 +343,13 @@
                                     <MudStack Row="true" Spacing="1">
                                         <MudButton Variant="Variant.Outlined"
                                                    Size="Size.Small"
-                                                   Disabled="@(!change.IsTemplateComplete || aiReviewBusy)"
+                                                   Disabled="@(!CanManage || !change.IsTemplateComplete || aiReviewBusy)"
                                                    OnClick="() => RunAiReviewAsync(false)">
                                             @(aiReviewBusy ? "Running..." : "Run AI Review")
                                         </MudButton>
                                         <MudButton Variant="Variant.Text"
                                                    Size="Size.Small"
-                                                   Disabled="@(!change.IsTemplateComplete || aiReviewBusy)"
+                                                   Disabled="@(!CanManage || !change.IsTemplateComplete || aiReviewBusy)"
                                                    OnClick="() => RunAiReviewAsync(true)">
                                             Re-run
                                         </MudButton>
@@ -357,7 +359,7 @@
                                         <MudButton Variant="Variant.Filled"
                                                    Color="Color.Warning"
                                                    Size="Size.Small"
-                                                   Disabled="@aiReviewBusy"
+                                                   Disabled="@(!CanManage || aiReviewBusy)"
                                                    OnClick="AcknowledgeAiReviewAsync">
                                             Acknowledge Warnings
                                         </MudButton>
@@ -386,11 +388,11 @@
                                     }
                                     @if (change.Sla.Status == SlaStatus.InProgress)
                                     {
-                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" OnClick="PauseSlaAsync">Pause SLA</MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-2" Disabled="@(!CanManage)" OnClick="PauseSlaAsync">Pause SLA</MudButton>
                                     }
                                     else if (change.Sla.Status == SlaStatus.Paused)
                                     {
-                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success" Class="mt-2" OnClick="ResumeSlaAsync">Resume SLA</MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success" Class="mt-2" Disabled="@(!CanManage)" OnClick="ResumeSlaAsync">Resume SLA</MudButton>
                                     }
                                 </MudItem>
                             }
@@ -398,12 +400,16 @@
                     </MudCardContent>
 
                     <MudCardActions Class="px-4 pb-4">
+                        @if (accessProfile?.CanApproveChange(change.OrganizationId) == true && change.LifecycleState == ChangeLifecycleState.PendingApproval)
+                        {
+                            <ChangeLifecycleStatePicker ChangeId="@change.Id" LifecycleState="@change.LifecycleState" CanApprove="true" ChangeUpdated="@(_ => LoadChangeAsync())" />
+                        }
                         <MudButton OnClick="RevertChanges"
-                                   Disabled="!hasChanges || isUpdating">Revert</MudButton>
+                                   Disabled="!CanManage || !hasChanges || isUpdating">Revert</MudButton>
                         <MudButton OnClick="SaveChangesAsync"
                                    Variant="Variant.Filled"
                                    Color="Color.Primary"
-                                   Disabled="!hasChanges || isUpdating">
+                                   Disabled="!CanManage || !hasChanges || isUpdating">
                             @if (isUpdating)
                             {
                                 <MudProgressCircular Class="mr-2" Size="Size.Small" Indeterminate="true" />
@@ -424,6 +430,10 @@
 </ErrorBoundary>
 
 @code {
+    private CurrentUserAccessProfile? accessProfile;
+    private bool CanManage => accessProfile?.CanManageChange(change?.OrganizationId) == true;
+    private bool CanContribute => change is not null && accessProfile?.CanContributeChange(change.OrganizationId, change.CustomerId, change.CustomerEmail) == true;
+
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     [Parameter] public string Id { get; set; } = string.Empty;
     private const string StandardChangeType = "Standard";
@@ -455,7 +465,7 @@
     private TimeSpan? implementationStartTime;
     private DateTime? implementationEndDate;
     private TimeSpan? implementationEndTime;
-    private bool IsChangeLocked => change is not null && change.LifecycleState != ChangeLifecycleState.Draft;
+    private bool IsChangeLocked => !CanManage || (change is not null && change.LifecycleState != ChangeLifecycleState.Draft);
 
     protected override void OnParametersSet()
     {
@@ -486,14 +496,12 @@
         {
             var changeTask = HelpdeskApi.GetFromJsonAsync<ChangeDto>($"api/v1/changes/{Id}");
             var categoriesTask = HelpdeskApi.GetFromJsonAsync<List<TicketCategoryDto>>($"api/v1/categories?type={(int)TicketCategoryType.Change}");
-            var organizationsTask = HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/organizations");
-            await Task.WhenAll(changeTask, categoriesTask, organizationsTask);
+            accessProfile = CurrentUserAccessProfile.FromClaims((await AccessAuthenticationState.GetAuthenticationStateAsync()).User);
+            await Task.WhenAll(changeTask, categoriesTask);
 
             originalChange = await changeTask;
             categories = await categoriesTask ?? new();
-            organizations = (await organizationsTask ?? new())
-                .OrderBy(x => x.Name)
-                .ToList();
+
             categories = categories
                 .GroupBy(x => x.Id)
                 .Select(x => x.First())
@@ -504,6 +512,9 @@
             if (originalChange != null)
             {
                 change = CloneChange(originalChange);
+                organizations = CanManage
+                    ? await HelpdeskApi.GetFromJsonAsync<List<OrganizationDto>>("api/v1/ticketing/organizations?module=change") ?? new()
+                    : new();
                 change.ChangeTemplate ??= new ChangeTemplateDto();
                 SyncImplementationWindowEditors(change);
                 selectedCategoryIds = change.CategoryIds.ToHashSet();
@@ -923,7 +934,7 @@
 
     private async Task SaveChangesAsync()
     {
-        if (change is null || !hasChanges) return;
+        if (!CanManage || change is null || !hasChanges) return;
 
         isUpdating = true;
 

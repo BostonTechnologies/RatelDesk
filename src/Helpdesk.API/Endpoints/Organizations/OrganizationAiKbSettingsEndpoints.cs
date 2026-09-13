@@ -95,7 +95,7 @@ public static class OrganizationAiKbSettingsEndpoints
             var lastAiAuditAt = await db.AiOperationAuditRecords
                 .AsNoTracking()
                 .Where(x => x.OrganizationId == id)
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Select(x => (DateTimeOffset?)x.CreatedAt)
                 .FirstOrDefaultAsync();
 
@@ -162,7 +162,7 @@ public static class OrganizationAiKbSettingsEndpoints
                 .Where(x =>
                     x.OrganizationId == id &&
                     (x.OperationName == "runtime-chat-fallback" || x.OperationName == "runtime-chat-failure"))
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByUtc(db, x => x.CreatedAt, descending: true)
                 .Take(10)
                 .ToListAsync(token);
 

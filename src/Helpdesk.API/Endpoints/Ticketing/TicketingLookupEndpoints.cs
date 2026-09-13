@@ -21,12 +21,13 @@ public static class TicketingLookupEndpoints
 
         group.MapGet("/organizations", async (
             ClaimsPrincipal user,
+            [FromQuery] string? module,
             [FromServices] HelpdeskDbContext db,
             [FromServices] ICurrentUserAccessService accessService,
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            var organizationIds = access.AllowedOrganizationIds.ToArray();
+            var organizationIds = access.AllowedOrganizationIds.Where(id => CanUseOrganization(access, id, module)).ToArray();
 
             var query = db.Organizations.AsNoTracking()
                 .Where(x => x.State == Helpdesk.Shared.Models.EntityState.Enabled);
@@ -42,13 +43,6 @@ public static class TicketingLookupEndpoints
                 {
                     Id = x.Id,
                     Name = x.Name,
-                    DnsName = x.DnsName,
-                    ContactInfo = x.ContactInfo,
-                    EnableAiIntake = x.EnableAiIntake,
-                    ItSupportOrganizationId = x.ItSupportOrganizationId,
-                    OrchestrationTenantId = x.OrchestrationTenantId,
-                    OrchestrationTenantName = x.OrchestrationTenantName,
-                    OrchestrationTenantLinkedAtUtc = x.OrchestrationTenantLinkedAtUtc,
                     State = x.State
                 })
                 .ToListAsync(token);
@@ -59,13 +53,14 @@ public static class TicketingLookupEndpoints
 
         group.MapGet("/customers", async (
             ClaimsPrincipal user,
+            [FromQuery] string? module,
             [FromQuery] string? organizationId,
             [FromServices] HelpdeskDbContext db,
             [FromServices] ICurrentUserAccessService accessService,
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanUseOrganization(access, organizationId))
+            if (!CanUseOrganization(access, organizationId, module))
             {
                 return Results.Forbid();
             }
@@ -78,7 +73,7 @@ public static class TicketingLookupEndpoints
                       customer.OrganizationId == organizationId
                 select new { Customer = customer, OrganizationName = organization.Name };
 
-            if (!access.IsHelpdeskAdmin && !IsManager(access, organizationId))
+            if (!access.IsHelpdeskAdmin && !IsManager(access, organizationId, module))
             {
                 query = query.Where(x => x.Customer.Id == access.CustomerId);
             }
@@ -103,18 +98,19 @@ public static class TicketingLookupEndpoints
 
         group.MapGet("/assignees", async (
             ClaimsPrincipal user,
+            [FromQuery] string? module,
             [FromQuery] string? organizationId,
             [FromServices] HelpdeskDbContext db,
             [FromServices] ICurrentUserAccessService accessService,
             CancellationToken token) =>
         {
             var access = await accessService.ResolveAsync(user, token);
-            if (!CanUseOrganization(access, organizationId))
+            if (!CanUseOrganization(access, organizationId, module))
             {
                 return Results.Forbid();
             }
 
-            if (!access.IsHelpdeskAdmin && !IsManager(access, organizationId))
+            if (!access.IsHelpdeskAdmin && !IsManager(access, organizationId, module))
             {
                 return Results.Ok(Array.Empty<UserDto>());
             }
@@ -131,12 +127,26 @@ public static class TicketingLookupEndpoints
         .WithName("GetTicketingAssignees");
     }
 
-    private static bool CanUseOrganization(CurrentUserAccessProfile access, string? organizationId) =>
+    private static bool CanUseOrganization(CurrentUserAccessProfile access, string? organizationId, string? module) =>
         !string.IsNullOrWhiteSpace(organizationId) &&
-        (access.IsHelpdeskAdmin || access.AllowedOrganizationIds.Contains(organizationId));
+        (access.IsHelpdeskAdmin || IsManager(access, organizationId, module) || (module?.ToLowerInvariant() switch
+        {
+            "incident" => access.HasPermission(HelpdeskPermissions.IncidentUser, organizationId),
+            "request" => access.HasPermission(HelpdeskPermissions.RequestUser, organizationId),
+            "change" => access.HasPermission(HelpdeskPermissions.ChangeUser, organizationId),
+            null or "" => access.HasPermission(HelpdeskPermissions.IncidentUser, organizationId) ||
+                          access.HasPermission(HelpdeskPermissions.RequestUser, organizationId) ||
+                          access.HasPermission(HelpdeskPermissions.ChangeUser, organizationId),
+            _ => false
+        }));
 
-    private static bool IsManager(CurrentUserAccessProfile access, string? organizationId) =>
-        access.CanManageIncident(organizationId) ||
-        access.CanManageRequest(organizationId) ||
-        access.CanManageChange(organizationId);
+    private static bool IsManager(CurrentUserAccessProfile access, string? organizationId, string? module) =>
+        module?.ToLowerInvariant() switch
+        {
+            "incident" => access.CanManageIncident(organizationId),
+            "request" => access.CanManageRequest(organizationId),
+            "change" => access.CanManageChange(organizationId),
+            null or "" => access.CanManageIncident(organizationId) || access.CanManageRequest(organizationId) || access.CanManageChange(organizationId),
+            _ => false
+        };
 }

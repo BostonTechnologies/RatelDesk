@@ -1,5 +1,5 @@
 @page "/self-service/request/{RequestFormId}"
-@attribute [Authorize]
+@attribute [Authorize(Roles = "SelfService.User,HelpdeskAdmin")]
 @using System.Net.Http.Json
 @using System.Security.Claims
 @using System.Text.Json

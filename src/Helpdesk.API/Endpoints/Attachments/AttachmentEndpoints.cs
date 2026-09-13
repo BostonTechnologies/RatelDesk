@@ -1,84 +1,99 @@
+using Helpdesk.Application.Services.Tickets;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Storage;
+using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Attachment;
 using Helpdesk.Shared.Models;
-using Helpdesk.Application.Services.Tickets;
-using Microsoft.AspNetCore.Http;
+using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
-using System.IO;
 
 namespace Helpdesk.API.Endpoints.Attachments;
 
 public static class AttachmentEndpoints
 {
     /// <summary>
-    /// Configures the attachment-related API endpoints for the application.
+    /// Configures attachment download, list, and upload endpoints.
     /// </summary>
-    /// <remarks>This method defines two endpoint groups: <list type="bullet"> <item> <description>
-    /// <c>/api/v1/attachments</c>: Handles operations for individual attachments, such as retrieving a file by its
-    /// GUID. </description> </item> <item> <description> <c>/api/v1/tickets/{ticketId}/attachments</c>: Manages
-    /// attachments associated with specific tickets, including listing and uploading files. </description> </item>
-    /// </list> Each endpoint group is secured with appropriate authorization policies and supports specific operations:
-    /// <list type="bullet"> <item> <description> The <c>/api/v1/attachments</c> group requires the "AttachmentRead"
-    /// policy and provides a GET endpoint to retrieve an attachment by its ID. </description> </item> <item>
-    /// <description> The <c>/api/v1/tickets/{ticketId}/attachments</c> group includes endpoints for listing attachments
-    /// (GET) and uploading new attachments (POST).  The POST endpoint requires the "AttachmentWrite" policy and
-    /// disables antiforgery protection. </description> </item> </list></remarks>
-    /// <param name="app">The <see cref="IEndpointRouteBuilder"/> used to define the application's routing.</param>
+    /// <remarks>
+    /// Attachment access always derives from the parent ticket. Read operations require ticket visibility and uploads
+    /// require the corresponding ticket-manager grant. This prevents an authenticated principal from reading or
+    /// modifying attachments in another tenant by guessing an attachment or ticket identifier.
+    /// </remarks>
     public static void MapAttachmentEndpoints(this IEndpointRouteBuilder app)
     {
-        // --- NEW ENDPOINT GROUP TO SERVE FILES ---
-        // This group handles fetching a single attachment by its GUID
         var individualAttachmentGroup = app.MapGroup("/api/v1/attachments")
             .WithTags("Attachments")
-            .RequireAuthorization("AttachmentRead");
+            .RequireAuthorization();
 
-        individualAttachmentGroup.MapGet("/{id:guid}", async (Guid id, [FromServices] HelpdeskDbContext db, IWebHostEnvironment env) =>
+        individualAttachmentGroup.MapGet("/{id:guid}", async (
+            Guid id,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
+            TicketAttachmentFileStore fileStore,
+            CancellationToken token) =>
         {
-            Attachment? attachment = await db.Attachments.FindAsync(id);
-            if (attachment == null)
+            var attachment = await db.Attachments.FindAsync([id], token);
+            if (attachment is null ||
+                await GetAccessibleTicketAsync(attachment.TicketId, db, accessService, user, requireManager: false, token) is null)
             {
                 return Results.NotFound("Attachment not found.");
             }
 
-            // This path must match exactly where you saved the files during upload
-            var filePath = Path.Combine(env.ContentRootPath, "wwwroot", "attachments", attachment.FilePath);
-
-            if (!File.Exists(filePath))
+            var filePath = fileStore.GetReadPath(attachment.FilePath);
+            if (filePath is null)
             {
-                // This is a server-side data integrity issue; log it
-                Console.WriteLine($"Error: File not found at {filePath} for attachment ID {id}.");
-                return Results.Problem("File not found on server.", statusCode: 404);
+                return Results.NotFound("Attachment not found.");
             }
-
-            // This is the magic part: return the actual file stream.
-            // The browser will handle downloading it or displaying it based on the ContentType.
             return Results.File(filePath, attachment.ContentType, attachment.FileName);
         });
 
-        // Your existing endpoint group
         var ticketAttachmentGroup = app.MapGroup("/api/v1/tickets/{ticketId}/attachments")
             .WithTags("Attachments")
-            .RequireAuthorization("AttachmentRead");
+            .RequireAuthorization();
 
-        ticketAttachmentGroup.MapGet("/", async ([FromRoute] string ticketId, [FromServices] HelpdeskDbContext db) =>
+        ticketAttachmentGroup.MapGet("/", async (
+            [FromRoute] string ticketId,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] ICurrentUserAccessService accessService,
+            ClaimsPrincipal user,
+            CancellationToken token) =>
         {
+            if (await GetAccessibleTicketAsync(ticketId, db, accessService, user, requireManager: false, token) is null)
+            {
+                return Results.NotFound();
+            }
+
             var attachments = await db.Attachments
-                .Where(a => a.TicketId == ticketId)
-                .Select(a => new AttachmentDto(a.Id, a.TicketId, a.FileName, a.ContentType, a.SizeBytes, a.CreatedAt))
-                .ToListAsync();
+                .Where(attachment => attachment.TicketId == ticketId)
+                .Select(attachment => new AttachmentDto(attachment.Id, attachment.TicketId, attachment.FileName, attachment.ContentType, attachment.SizeBytes, attachment.CreatedAt))
+                .ToListAsync(token);
             return Results.Ok(attachments);
         });
 
         ticketAttachmentGroup.MapPost("/", async (
             [FromRoute] string ticketId,
+            [FromServices] HelpdeskDbContext db,
+            [FromServices] ICurrentUserAccessService accessService,
             [FromServices] ITicketAttachmentService attachmentService,
             ClaimsPrincipal user,
             HttpRequest request,
             CancellationToken token) =>
         {
-            var files = request.Form.Files;
+            if (await GetAccessibleTicketAsync(ticketId, db, accessService, user, requireManager: true, token) is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (!request.HasFormContentType)
+            {
+                return Results.BadRequest("Attachments must be sent as multipart form data.");
+            }
+
+            var form = await request.ReadFormAsync(token);
+            var files = form.Files;
             if (files.Count == 0)
             {
                 return Results.BadRequest("No files were provided.");
@@ -87,15 +102,59 @@ public static class AttachmentEndpoints
             var uploads = new List<AttachmentUpload>();
             foreach (var file in files)
             {
-                await using var ms = new MemoryStream();
-                await file.CopyToAsync(ms, token);
-                uploads.Add(new AttachmentUpload(file.FileName, file.ContentType, ms.ToArray()));
+                await using var stream = new MemoryStream();
+                await file.CopyToAsync(stream, token);
+                uploads.Add(new AttachmentUpload(file.FileName, file.ContentType, stream.ToArray()));
             }
 
             var uploadedById = user.FindFirstValue(ClaimTypes.NameIdentifier);
             var saved = await attachmentService.SaveAsync(ticketId, uploads, uploadedById, token);
             return Results.Ok(saved);
-        }).RequireAuthorization("AttachmentWrite")
-          .DisableAntiforgery();
+        }).DisableAntiforgery();
     }
+
+    private static async Task<Ticket?> GetAccessibleTicketAsync(
+        string ticketId,
+        HelpdeskDbContext db,
+        ICurrentUserAccessService accessService,
+        ClaimsPrincipal user,
+        bool requireManager,
+        CancellationToken token)
+    {
+        var ticket = await db.Tickets.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.Id == ticketId, token);
+        if (ticket is null)
+        {
+            return null;
+        }
+
+        var access = await accessService.ResolveAsync(user, token);
+        return CanAccessTicket(access, ticket, requireManager) ? ticket : null;
+    }
+
+    private static bool CanAccessTicket(CurrentUserAccessProfile access, Ticket ticket, bool requireManager) =>
+        requireManager
+            ? CanManageTicket(access, ticket) || CanSelfServiceUpload(access, ticket)
+            : CanViewTicket(access, ticket);
+
+    private static bool CanViewTicket(CurrentUserAccessProfile access, Ticket ticket) => ticket switch
+    {
+        Incident incident => access.CanViewIncident(incident.OrganizationId, incident.CustomerId, incident.RequesterEmail),
+        Request request => access.CanViewRequest(request.OrganizationId, request.CustomerId, request.RequesterEmail),
+        Change change => access.CanViewChange(change.OrganizationId, change.CustomerId, change.RequesterEmail),
+        _ => false
+    };
+
+    private static bool CanManageTicket(CurrentUserAccessProfile access, Ticket ticket) => ticket switch
+    {
+        Incident incident => access.CanManageIncident(incident.OrganizationId),
+        Request request => access.CanManageRequest(request.OrganizationId),
+        Change change => access.CanManageChange(change.OrganizationId),
+        _ => false
+    };
+
+    private static bool CanSelfServiceUpload(CurrentUserAccessProfile access, Ticket ticket) =>
+        ticket is Incident or Request &&
+        access.HasPermission(HelpdeskPermissions.SelfServiceUser, ticket.OrganizationId) &&
+        CanViewTicket(access, ticket);
 }

@@ -165,7 +165,7 @@ public static class InboundEmailRuleEndpoints
             }
 
             var rows = await query
-                .OrderByDescending(x => x.CreatedAtUtc)
+                .OrderByUtc(db, x => x.CreatedAtUtc, descending: true)
                 .Take(200)
                 .ToListAsync(ct);
             return Results.Ok(rows.Select(ToAuditDto));

@@ -104,7 +104,6 @@ public static class PublicTicketEndpoints
             .Where(t =>
                 t.EventType == TimelineEventType.CustomerReply ||
                 t.EventType == TimelineEventType.TechnicianReply)
-            .OrderBy(t => t.CreatedUtc)
             .ToListAsync(ct);
 
 
