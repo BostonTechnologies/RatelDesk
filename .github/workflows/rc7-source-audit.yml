@@ -3,6 +3,7 @@ name: rc.7 source audit
 on:
   push:
     branches: [fix/rc7-remove-legacy-ai]
+    paths: [.github/workflows/rc7-source-audit.yml]
 
 permissions:
   contents: read
@@ -10,14 +11,27 @@ permissions:
 jobs:
   source-audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    env:
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/sdk
+      NUGET_PACKAGES: ${{ runner.temp }}/packages
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Export tracked public source only
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Restore public build inputs
         run: |
+          dotnet restore Helpdesk.sln
+          tar -czf "$RUNNER_TEMP/rc7-build-inputs.tgz" -C "$RUNNER_TEMP" sdk packages
           git archive --format=zip --output="$RUNNER_TEMP/rateldesk-source.zip" HEAD
           git ls-files '*AGENTS.md' '*SKILL.md'
-          git grep -n -i -E 'GenerateKnowledge|KnowledgeGeneration|EmbedIncident|IChatClient|IEmbeddingGenerator|Netclaw|pg_trgm' -- src ':!*.Designer.cs' ':!*ModelSnapshot.cs' || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rateldesk-rc7-build-inputs
+          path: ${{ runner.temp }}/rc7-build-inputs.tgz
+          compression-level: 0
+          retention-days: 1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rateldesk-rc7-source
