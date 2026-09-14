@@ -257,6 +257,7 @@ public static class RequestEndpoints
             [FromServices] ITicketNotificationService ticketNotificationService,
             [FromServices] IHtmlSanitizerService sanitizer,
             [FromServices] IHtmlToPlainTextConverter plainTextConverter,
+            [FromServices] ILoggerFactory loggerFactory,
             [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
@@ -328,9 +329,12 @@ public static class RequestEndpoints
             {
                 await ticketSlaInitializer.InitializeAsync(created);
             }
-            catch
+            catch (Exception ex)
             {
-                // Ticket creation must not fail if SLA initialization fails.
+                loggerFactory.CreateLogger("RequestEndpoints").LogWarning(
+                    ex,
+                    "SLA initialization failed for newly created request {RequestId}; continuing without an SLA record.",
+                    created.Id);
             }
 
             if (categoryIds.Count > 0)
@@ -347,9 +351,12 @@ public static class RequestEndpoints
             {
                 await requestTaskGenerationService.GenerateForRequestAsync(created, token);
             }
-            catch
+            catch (Exception ex)
             {
-                // Request creation must not fail if task generation fails.
+                loggerFactory.CreateLogger("RequestEndpoints").LogWarning(
+                    ex,
+                    "Task generation failed for newly created request {RequestId}; continuing without generated tasks.",
+                    created.Id);
             }
 
             await tx.CommitAsync(token);
@@ -664,16 +671,16 @@ public static class RequestEndpoints
                 .Where(log => log.TicketId == id)
                 .Where(log => authorization.Access!.CanManageRequest(authorization.OrganizationId) || !log.IsInternalNote)
                 .Select(l => new WorkLogDto
-            {
-                Id = l.Id,
-                TicketId = l.TicketId,
-                NotesHtml = l.NotesHtml,
-                NotesText = l.NotesText,
-                Hours = l.Hours,
-                IsInternalNote = l.IsInternalNote,
-                LoggedAt = l.LoggedAt,
-                TechnicianId = l.TechnicianId
-            });
+                {
+                    Id = l.Id,
+                    TicketId = l.TicketId,
+                    NotesHtml = l.NotesHtml,
+                    NotesText = l.NotesText,
+                    Hours = l.Hours,
+                    IsInternalNote = l.IsInternalNote,
+                    LoggedAt = l.LoggedAt,
+                    TechnicianId = l.TechnicianId
+                });
             return Results.Ok(logs);
         });
 
@@ -699,13 +706,13 @@ public static class RequestEndpoints
                 timelineQuery = timelineQuery.Where(evt => evt.EventType != TimelineEventType.InternalNote);
             }
 
-            timelineQuery = string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
-                ? timelineQuery.OrderBy(evt => evt.CreatedUtc)
-                : timelineQuery.OrderByDescending(evt => evt.CreatedUtc);
-
-            var timeline = await timelineQuery
-                .Select(evt => ToTimelineDto(evt))
+            var timelineEvents = await timelineQuery
                 .ToListAsync(ct);
+            var timeline = (string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase)
+                    ? timelineEvents.OrderBy(evt => evt.CreatedUtc)
+                    : timelineEvents.OrderByDescending(evt => evt.CreatedUtc))
+                .Select(evt => ToTimelineDto(evt))
+                .ToList();
 
             return Results.Ok(timeline);
         });
@@ -770,7 +777,7 @@ public static class RequestEndpoints
             if (request is null) return Results.Problem("Request not found", statusCode: 404);
 
             var access = await accessService.ResolveAsync(user, cancellationToken);
-            if (!access.CanManageRequest(request.OrganizationId)) return Results.Forbid();
+            if (!access.CanDeleteRequest(request.OrganizationId)) return Results.Forbid();
 
             return await repo.DeleteAsync(id)
                 ? Results.NoContent()
@@ -813,10 +820,14 @@ public static class RequestEndpoints
         if (!access.IsHelpdeskAdmin)
         {
             var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-            var managerOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestManager).ToArray();
-            if (managerOrganizationIds.Length > 0)
+            var readableOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestManager)
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestRead))
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.RequestWrite))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (readableOrganizationIds.Length > 0)
             {
-                query = query.Where(x => managerOrganizationIds.Contains(x.Request.OrganizationId));
+                query = query.Where(x => readableOrganizationIds.Contains(x.Request.OrganizationId));
             }
             else
             {
@@ -1305,7 +1316,7 @@ public static class RequestEndpoints
         }
         catch (OperationCanceledException)
         {
-            // connection terminated by client disconnect/cancellation
+            logger.LogDebug("Request timeline stream cancelled {TicketId}", id);
         }
         catch (Exception ex)
         {

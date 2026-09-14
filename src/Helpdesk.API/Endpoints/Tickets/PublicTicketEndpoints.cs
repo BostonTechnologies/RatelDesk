@@ -104,8 +104,8 @@ public static class PublicTicketEndpoints
             .Where(t =>
                 t.EventType == TimelineEventType.CustomerReply ||
                 t.EventType == TimelineEventType.TechnicianReply)
-            .OrderBy(t => t.CreatedUtc)
             .ToListAsync(ct);
+        timelineEventsRaw = timelineEventsRaw.OrderBy(t => t.CreatedUtc).ToList();
 
 
         // Load worklogs WITH technician name via join

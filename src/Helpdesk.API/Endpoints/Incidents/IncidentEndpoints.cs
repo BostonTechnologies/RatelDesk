@@ -80,10 +80,14 @@ public static class IncidentEndpoints
             if (!access.IsHelpdeskAdmin)
             {
                 var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-                var managerOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentManager).ToArray();
-                if (managerOrganizationIds.Length > 0)
+                var readableOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentManager)
+                    .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentRead))
+                    .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.IncidentWrite))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (readableOrganizationIds.Length > 0)
                 {
-                    query = query.Where(x => managerOrganizationIds.Contains(x.Incident.OrganizationId));
+                    query = query.Where(x => readableOrganizationIds.Contains(x.Incident.OrganizationId));
                 }
                 else
                 {
@@ -643,6 +647,7 @@ public static class IncidentEndpoints
                 previousAssignedToId,
                 updatedIncident.AssignedToId,
                 supportNotificationService,
+                loggerFactory.CreateLogger("IncidentEndpoints"),
                 token);
 
             var updatedSuggestionItemsJson = await db.TicketAiSuggestions
@@ -1002,6 +1007,7 @@ public static class IncidentEndpoints
             [FromServices] IRepository<Incident> repo,
             [FromServices] ISupportNotificationService supportNotificationService,
             [FromServices] ISupportAccessService supportAccessService,
+            [FromServices] ILoggerFactory loggerFactory,
             CancellationToken token) =>
         {
             if (req.Ids is null || req.Ids.Count == 0) return Results.BadRequest("No ids");
@@ -1042,6 +1048,7 @@ public static class IncidentEndpoints
                     previousAssignedToId,
                     incident.AssignedToId,
                     supportNotificationService,
+                    loggerFactory.CreateLogger("IncidentEndpoints"),
                     token);
             }
             return Results.Ok(new { updated = incidents.Count });
@@ -1226,7 +1233,7 @@ public static class IncidentEndpoints
             if (incident is null) return Results.Problem("Incident not found", statusCode: 404);
 
             var access = await accessService.ResolveAsync(user, cancellationToken);
-            if (!access.CanManageIncident(incident.OrganizationId)) return Results.Forbid();
+            if (!access.CanDeleteIncident(incident.OrganizationId)) return Results.Forbid();
 
             return await repo.DeleteAsync(id)
                 ? Results.NoContent()
@@ -1461,6 +1468,7 @@ public static class IncidentEndpoints
         string? previousAssignedToId,
         string? newAssignedToId,
         ISupportNotificationService supportNotificationService,
+        ILogger logger,
         CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(newAssignedToId) ||
@@ -1477,9 +1485,12 @@ public static class IncidentEndpoints
                 newAssignedToId,
                 token);
         }
-        catch
+        catch (Exception ex)
         {
-            // Assignment must not fail if support notification routing fails.
+            logger.LogWarning(
+                ex,
+                "Assignment notification routing failed for incident {IncidentId}; assignment was retained.",
+                incident.Id);
         }
     }
 

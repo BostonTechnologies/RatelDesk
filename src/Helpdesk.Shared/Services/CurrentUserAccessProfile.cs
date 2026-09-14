@@ -49,21 +49,30 @@ public sealed record CurrentUserAccessProfile(
                 : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     public bool CanViewIncident(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageIncident(organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
+        CanManageIncident(organizationId) || HasPermission(HelpdeskPermissions.IncidentRead, organizationId) || CanOwn(HelpdeskPermissions.IncidentUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageIncident(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.IncidentManager, organizationId) || HasPermission(HelpdeskPermissions.IncidentWrite, organizationId);
+
+    public bool CanDeleteIncident(string? organizationId) =>
         HasPermission(HelpdeskPermissions.IncidentManager, organizationId);
 
     public bool CanViewRequest(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageRequest(organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
+        CanManageRequest(organizationId) || HasPermission(HelpdeskPermissions.RequestRead, organizationId) || CanOwn(HelpdeskPermissions.RequestUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageRequest(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.RequestManager, organizationId) || HasPermission(HelpdeskPermissions.RequestWrite, organizationId);
+
+    public bool CanDeleteRequest(string? organizationId) =>
         HasPermission(HelpdeskPermissions.RequestManager, organizationId);
 
     public bool CanViewChange(string? organizationId, string? customerId, string? requesterEmail) =>
-        CanManageChange(organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
+        CanManageChange(organizationId) || HasPermission(HelpdeskPermissions.ChangeRead, organizationId) || CanOwn(HelpdeskPermissions.ChangeUser, organizationId, customerId, requesterEmail);
 
     public bool CanManageChange(string? organizationId) =>
+        HasPermission(HelpdeskPermissions.ChangeManager, organizationId) || HasPermission(HelpdeskPermissions.ChangeWrite, organizationId);
+
+    public bool CanDeleteChange(string? organizationId) =>
         HasPermission(HelpdeskPermissions.ChangeManager, organizationId);
 
     public static CurrentUserAccessProfile FromClaims(ClaimsPrincipal user)

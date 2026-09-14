@@ -103,6 +103,18 @@ public sealed class TenantRbacHardeningEndpointsTests
         Assert.Contains(adminPage!.Items, x => x.Title == "notification-global");
     }
 
+    [Fact]
+    public async Task Notification_management_in_one_tenant_does_not_disclose_membership_only_tenant_notifications()
+    {
+        await using var harness = await TenantRbacHardeningHarness.CreateAsync("Mixed");
+
+        var page = await harness.Client.GetFromJsonAsync<PagedResponse<NotificationDto>>("/api/v1/notifications?pageSize=50");
+
+        Assert.NotNull(page);
+        Assert.Contains(page!.Items, notification => notification.Title == "notification-alpha");
+        Assert.DoesNotContain(page.Items, notification => notification.Title == "notification-other");
+    }
+
     private sealed class TenantRbacHardeningHarness : IAsyncDisposable
     {
         private readonly SqliteConnection _connection;
@@ -191,6 +203,10 @@ public sealed class TenantRbacHardeningEndpointsTests
                 new User { Id = "user-alpha-tech", Name = "Alpha Technician", Email = "tech@example.com", OrganizationId = "org-alpha", Role = "Technician" },
                 new User { Id = "user-support-tech", Name = "Support Technician", Email = "support-tech@example.com", OrganizationId = "org-support", Role = "Technician" },
                 new User { Id = "user-other", Name = "Other Admin", Email = "admin@example.com", OrganizationId = "org-other", Role = "HelpdeskAdmin" });
+            db.Users.Add(new User { Id = "user-mixed", Name = "Mixed Scope", Email = "mixed@example.com", OrganizationId = "org-other", Role = "User" });
+            db.ScopedRoleAssignments.AddRange(
+                new ScopedRoleAssignment { UserId = "user-mixed", OrganizationId = "org-alpha", RoleKey = ScopedRoleCatalog.Technician },
+                new ScopedRoleAssignment { UserId = "user-mixed", OrganizationId = "org-other", RoleKey = ScopedRoleCatalog.SelfServiceUser });
 
             db.CustomerAuthLinks.AddRange(
                 new CustomerAuthLink
@@ -207,6 +223,15 @@ public sealed class TenantRbacHardeningEndpointsTests
                     OidcIssuer = "https://auth.example/application/o/helpdesk-dev",
                     OidcSubject = "subject-technical",
                     AuthentikEmail = "support@example.com",
+                    InviteStatus = CustomerInviteStatus.Active
+                },
+                new CustomerAuthLink
+                {
+                    CustomerId = "customer-other",
+                    DomainUserId = "user-mixed",
+                    OidcIssuer = "https://auth.example/application/o/helpdesk-dev",
+                    OidcSubject = "subject-mixed",
+                    AuthentikEmail = "mixed@example.com",
                     InviteStatus = CustomerInviteStatus.Active
                 });
 
@@ -290,6 +315,14 @@ public sealed class TenantRbacHardeningEndpointsTests
                     new Claim("iss", "https://auth.example/application/o/helpdesk-dev/"),
                     new Claim(ClaimTypes.Email, "support@example.com"),
                     new Claim("groups", AuthentikRbacGroups.Technical),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.ChangeManager)
+                ],
+                "Mixed" =>
+                [
+                    new Claim(ClaimTypes.NameIdentifier, "subject-mixed"),
+                    new Claim("sub", "subject-mixed"),
+                    new Claim("iss", "https://auth.example/application/o/helpdesk-dev/"),
+                    new Claim(ClaimTypes.Email, "mixed@example.com"),
                     new Claim(ClaimTypes.Role, HelpdeskPermissions.ChangeManager)
                 ],
                 _ =>

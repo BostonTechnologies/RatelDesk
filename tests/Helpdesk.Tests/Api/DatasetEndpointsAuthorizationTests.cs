@@ -70,6 +70,23 @@ public sealed class DatasetEndpointsAuthorizationTests
     }
 
     [Fact]
+    public async Task Scoped_dataset_administration_in_one_tenant_does_not_authorize_a_membership_only_tenant()
+    {
+        using var harness = await DatasetEndpointsHarness.CreateAsync("Mixed");
+
+        var list = await harness.Client.GetAsync("/api/v1/resources/datasets?organizationId=org-other");
+        var delete = await harness.Client.DeleteAsync("/api/v1/resources/datasets/other-custom");
+        var credential = await harness.Client.PostAsJsonAsync("/api/v1/resources/datasets/other-custom/credentials", new CreateDatasetIngestCredentialDto
+        {
+            Name = "must-not-be-created"
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, list.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, delete.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, credential.StatusCode);
+    }
+
+    [Fact]
     public async Task ClientAdmin_CanSaveGraphSettingsAndTriggerBuiltInSyncForOwnTenant()
     {
         using var harness = await DatasetEndpointsHarness.CreateAsync("ClientAdmin");
@@ -214,6 +231,14 @@ public sealed class DatasetEndpointsAuthorizationTests
                     new Claim(ClaimTypes.Role, HelpdeskPermissions.SelfServiceUser),
                     new Claim("roles", HelpdeskPermissions.SelfServiceUser)
                 ],
+                "Mixed" =>
+                [
+                    new Claim(ClaimTypes.NameIdentifier, "mixed"),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.DataManagementAdmin),
+                    new Claim(ClaimTypes.Role, HelpdeskPermissions.SelfServiceUser),
+                    new Claim("roles", HelpdeskPermissions.DataManagementAdmin),
+                    new Claim("roles", HelpdeskPermissions.SelfServiceUser)
+                ],
                 _ =>
                 [
                     new Claim(ClaimTypes.NameIdentifier, "client-admin"),
@@ -243,9 +268,20 @@ public sealed class DatasetEndpointsAuthorizationTests
             var isAdmin = roles.Contains(HelpdeskPermissions.HelpdeskAdmin);
             var tenantId = user.FindFirst("tenant_id")?.Value;
             var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var scopedPermissions = new HashSet<ScopedPermissionGrant>();
             if (!string.IsNullOrWhiteSpace(tenantId))
             {
                 allowed.Add(tenantId);
+            }
+
+            if (string.Equals(user.FindFirstValue(ClaimTypes.NameIdentifier), "mixed", StringComparison.Ordinal))
+            {
+                allowed.UnionWith(["org-alpha", "org-other"]);
+                scopedPermissions.UnionWith(
+                [
+                    new ScopedPermissionGrant(HelpdeskPermissions.DataManagementAdmin, "org-alpha"),
+                    new ScopedPermissionGrant(HelpdeskPermissions.SelfServiceUser, "org-other")
+                ]);
             }
 
             if (roles.Contains(AuthentikRbacGroups.ClientAdmin))
@@ -265,7 +301,10 @@ public sealed class DatasetEndpointsAuthorizationTests
                 roles,
                 roles,
                 allowed,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+            {
+                ScopedPermissionGrants = scopedPermissions
+            });
         }
     }
 

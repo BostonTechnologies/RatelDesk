@@ -321,9 +321,9 @@ public sealed class RequestTaskApprovalService(
         var tasks = await db.RequestTasks
             .Where(x => x.Type == RequestTaskType.Approval
                 && x.Status == RequestTaskStatus.PendingApproval
-                && x.DueAt != null
-                && x.DueAt <= now)
+                && x.DueAt != null)
             .ToListAsync(ct);
+        tasks = tasks.Where(task => task.DueAt <= now).ToList();
         var expired = 0;
         foreach (var task in tasks)
         {

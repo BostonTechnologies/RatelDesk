@@ -498,7 +498,7 @@ public static class NotificationEndpoints
         var access = await accessService.ResolveAsync(httpContext.User, ct);
         if (!access.IsHelpdeskAdmin &&
             !string.IsNullOrWhiteSpace(tenantId) &&
-            !access.AllowedOrganizationIds.Contains(tenantId))
+            !CanReadTenantNotifications(access, tenantId))
         {
             return Results.Forbid();
         }
@@ -614,10 +614,10 @@ public static class NotificationEndpoints
             return query;
         }
 
-        var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
+        var readableTenantIds = TenantNotificationOrganizationIds(access).ToArray();
         return query.Where(n =>
             n.UserId == userId ||
-            (n.TenantId != null && allowedOrganizationIds.Contains(n.TenantId)));
+            (n.TenantId != null && readableTenantIds.Contains(n.TenantId)));
     }
 
     private static IQueryable<NotificationEntity> GetScopedUnreadNotificationsQuery(
@@ -818,7 +818,7 @@ public static class NotificationEndpoints
         var access = await accessService.ResolveAsync(context.User, ct);
         if (!access.IsHelpdeskAdmin &&
             !string.IsNullOrWhiteSpace(tenantId) &&
-            !access.AllowedOrganizationIds.Contains(tenantId))
+            !CanReadTenantNotifications(access, tenantId))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
@@ -855,7 +855,7 @@ public static class NotificationEndpoints
                 if (!CanAccessNotifications(access) ||
                     (!access.IsHelpdeskAdmin &&
                      !string.IsNullOrWhiteSpace(tenantId) &&
-                     !access.AllowedOrganizationIds.Contains(tenantId)))
+                     !CanReadTenantNotifications(access, tenantId)))
                 {
                     logger.LogInformation(
                         "Notification stream authorization revoked. User={UserId} Tenant={TenantId}",
@@ -891,7 +891,7 @@ public static class NotificationEndpoints
         }
         catch (OperationCanceledException)
         {
-            // connection terminated by client disconnect/cancellation
+            logger.LogDebug("Notification stream cancelled. User={UserId} Tenant={TenantId}", userId, tenantId);
         }
         catch (Exception ex)
         {
@@ -927,12 +927,27 @@ public static class NotificationEndpoints
             return true;
 
         return !string.IsNullOrWhiteSpace(notification.TenantId) &&
-            access.AllowedOrganizationIds.Contains(notification.TenantId);
+            CanReadTenantNotifications(access, notification.TenantId);
     }
 
     private static bool CanAccessNotifications(CurrentUserAccessProfile access) =>
+        access.IsHelpdeskAdmin || TenantNotificationOrganizationIds(access).Count > 0;
+
+    private static bool CanReadTenantNotifications(CurrentUserAccessProfile access, string organizationId) =>
         access.IsHelpdeskAdmin ||
-        access.HasPermission(HelpdeskPermissions.IncidentManager) ||
-        access.HasPermission(HelpdeskPermissions.RequestManager) ||
-        access.HasPermission(HelpdeskPermissions.ChangeManager);
+        access.HasPermission(HelpdeskPermissions.IncidentManager, organizationId) ||
+        access.HasPermission(HelpdeskPermissions.IncidentWrite, organizationId) ||
+        access.HasPermission(HelpdeskPermissions.RequestManager, organizationId) ||
+        access.HasPermission(HelpdeskPermissions.RequestWrite, organizationId) ||
+        access.HasPermission(HelpdeskPermissions.ChangeManager, organizationId) ||
+        access.HasPermission(HelpdeskPermissions.ChangeWrite, organizationId);
+
+    private static IReadOnlySet<string> TenantNotificationOrganizationIds(CurrentUserAccessProfile access) =>
+        access.OrganizationIdsFor(HelpdeskPermissions.IncidentManager)
+            .Concat(access.OrganizationIdsFor(HelpdeskPermissions.IncidentWrite))
+            .Concat(access.OrganizationIdsFor(HelpdeskPermissions.RequestManager))
+            .Concat(access.OrganizationIdsFor(HelpdeskPermissions.RequestWrite))
+            .Concat(access.OrganizationIdsFor(HelpdeskPermissions.ChangeManager))
+            .Concat(access.OrganizationIdsFor(HelpdeskPermissions.ChangeWrite))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 }

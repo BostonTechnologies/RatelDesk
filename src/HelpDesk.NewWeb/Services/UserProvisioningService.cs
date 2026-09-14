@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Security.Claims;
 using Helpdesk.Shared.DTOs.Auth;
 
@@ -21,11 +22,15 @@ public class UserProvisioningService : IUserProvisioningService
         ClaimsPrincipal principal,
         CancellationToken cancellationToken)
     {
-        await EnsureUserAccessAsync(principal, cancellationToken);
+        await EnsureUserAccessAsync(
+            principal,
+            accessToken: null,
+            cancellationToken: cancellationToken);
     }
 
     public async Task<CurrentUserAccessDto?> EnsureUserAccessAsync(
         ClaimsPrincipal principal,
+        string? accessToken,
         CancellationToken cancellationToken)
     {
         var email =
@@ -39,30 +44,21 @@ public class UserProvisioningService : IUserProvisioningService
             return null;
         }
 
+        if (string.IsNullOrWhiteSpace(accessToken))
+        {
+            throw new InvalidOperationException("OIDC provisioning requires the verified access token from the sign-in callback.");
+        }
+
         try
         {
-            var client = _httpClientFactory.CreateClient("SystemApi");
+            var client = _httpClientFactory.CreateClient("HelpdeskApi");
             _logger.LogInformation("Provisioning started for {Email}", email);
-            _logger.LogInformation("Provisioning user via system endpoint: {Email}", email);
-
-            var name =
-                principal.Identity?.Name ??
-                principal.FindFirst("name")?.Value ??
-                email;
-
-            var createResponse = await client.PostAsJsonAsync(
-                "/api/v1/users/provision",
-                new
-                {
-                    Email = email,
-                    Name = name,
-                    Issuer = principal.FindFirst("iss")?.Value,
-                    Subject = principal.FindFirst("sub")?.Value,
-                    AuthentikUserId = principal.FindFirst("authentik_user_id")?.Value
-                        ?? principal.FindFirst("ak_user_id")?.Value,
-                    PreferredUsername = principal.FindFirst("preferred_username")?.Value
-                },
-                cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/users/provision")
+            {
+                Content = JsonContent.Create(new { })
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            using var createResponse = await client.SendAsync(request, cancellationToken);
 
             createResponse.EnsureSuccessStatusCode();
             _logger.LogInformation("Provisioning ensured successfully for {Email}", email);

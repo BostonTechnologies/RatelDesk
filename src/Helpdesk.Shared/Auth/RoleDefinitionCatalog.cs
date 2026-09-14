@@ -19,10 +19,17 @@ public static class RoleDefinitionCatalog
             HelpdeskPermissions.SelfServiceUser,
             HelpdeskPermissions.IncidentUser,
             HelpdeskPermissions.IncidentManager,
+            HelpdeskPermissions.IncidentRead,
+            HelpdeskPermissions.IncidentWrite,
             HelpdeskPermissions.RequestUser,
             HelpdeskPermissions.RequestManager,
+            HelpdeskPermissions.RequestRead,
+            HelpdeskPermissions.RequestWrite,
             HelpdeskPermissions.ChangeUser,
-            HelpdeskPermissions.ChangeManager
+            HelpdeskPermissions.ChangeManager,
+            HelpdeskPermissions.ChangeRead,
+            HelpdeskPermissions.ChangeWrite,
+            HelpdeskPermissions.ChangeApprove
         };
 
     public static readonly IReadOnlyList<BuiltInRoleDefinition> BuiltIns =
@@ -50,7 +57,14 @@ public static class RoleDefinitionCatalog
             ScopedRoleCatalog.Technician,
             "Technician",
             RoleScopeKind.Tenant,
-            HelpdeskPermissions.TechnicalBundle)
+            HelpdeskPermissions.TechnicalBundle),
+        new(ScopedRoleCatalog.IncidentReader, "Incident Reader", RoleScopeKind.Tenant, [HelpdeskPermissions.IncidentRead]),
+        new(ScopedRoleCatalog.IncidentWriter, "Incident Writer", RoleScopeKind.Tenant, [HelpdeskPermissions.IncidentRead, HelpdeskPermissions.IncidentWrite]),
+        new(ScopedRoleCatalog.RequestReader, "Request Reader", RoleScopeKind.Tenant, [HelpdeskPermissions.RequestRead]),
+        new(ScopedRoleCatalog.RequestWriter, "Request Writer", RoleScopeKind.Tenant, [HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite]),
+        new(ScopedRoleCatalog.ChangeReader, "Change Reader", RoleScopeKind.Tenant, [HelpdeskPermissions.ChangeRead]),
+        new(ScopedRoleCatalog.ChangeWriter, "Change Writer", RoleScopeKind.Tenant, [HelpdeskPermissions.ChangeRead, HelpdeskPermissions.ChangeWrite]),
+        new(ScopedRoleCatalog.ChangeApprover, "Change Approver", RoleScopeKind.Tenant, [HelpdeskPermissions.ChangeRead, HelpdeskPermissions.ChangeApprove])
     ];
 
     public static BuiltInRoleDefinition? Find(string? key) =>
@@ -75,7 +89,11 @@ public static class RoleDefinitionCatalog
     {
         var grants = permissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
         return (!grants.Contains(HelpdeskPermissions.IncidentManager) || grants.Contains(HelpdeskPermissions.IncidentUser)) &&
+               (!grants.Contains(HelpdeskPermissions.IncidentWrite) || grants.Contains(HelpdeskPermissions.IncidentRead)) &&
                (!grants.Contains(HelpdeskPermissions.RequestManager) || grants.Contains(HelpdeskPermissions.RequestUser)) &&
-               (!grants.Contains(HelpdeskPermissions.ChangeManager) || grants.Contains(HelpdeskPermissions.ChangeUser));
+               (!grants.Contains(HelpdeskPermissions.RequestWrite) || grants.Contains(HelpdeskPermissions.RequestRead)) &&
+               (!grants.Contains(HelpdeskPermissions.ChangeManager) || grants.Contains(HelpdeskPermissions.ChangeUser)) &&
+               (!grants.Contains(HelpdeskPermissions.ChangeWrite) || grants.Contains(HelpdeskPermissions.ChangeRead)) &&
+               (!grants.Contains(HelpdeskPermissions.ChangeApprove) || grants.Contains(HelpdeskPermissions.ChangeRead));
     }
 }

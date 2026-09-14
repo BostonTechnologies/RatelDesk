@@ -396,6 +396,52 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Incident_reader_can_view_a_colleagues_incident_but_cannot_delete_it()
+    {
+        const string email = "incident.reader@example.test";
+        const string organizationId = "incident-reader-organization";
+        const string incidentId = "incident-readable-by-role";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var users = setupScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var created = await users.CreateAsync(
+                new ApplicationUser { UserName = email, Email = email, DisplayName = "Incident Reader" },
+                "correct horse battery staple");
+            Assert.True(created.Succeeded, string.Join(", ", created.Errors.Select(error => error.Description)));
+            var account = await users.FindByEmailAsync(email);
+
+            var db = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            db.Organizations.Add(new Organization { Id = organizationId, Name = "Incident reader organization" });
+            db.Users.Add(new User { Id = account!.Id, Name = "Incident Reader", Email = email, OrganizationId = organizationId, Role = "User" });
+            db.ScopedRoleAssignments.Add(new ScopedRoleAssignment
+            {
+                UserId = account.Id,
+                OrganizationId = organizationId,
+                RoleKey = ScopedRoleCatalog.IncidentReader
+            });
+            db.Incidents.Add(new Incident
+            {
+                Id = incidentId,
+                OrganizationId = organizationId,
+                CustomerId = "colleague-customer",
+                Title = "Colleague incident",
+                Description = "A reader may view but not mutate this incident."
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var reader = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await reader.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            email, "correct horse battery staple"))).StatusCode);
+
+        var detail = await reader.GetAsync($"/api/v1/incidents/{incidentId}");
+        var delete = await reader.DeleteAsync($"/api/v1/incidents/{incidentId}");
+
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, delete.StatusCode);
+    }
+
+    [Fact]
     public async Task Administrator_can_replace_a_local_accounts_tenant_scoped_role_assignments()
     {
         const string firstOrganizationId = "first-scoped-role-organization";
@@ -439,6 +485,70 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Contains(access!.ScopedPermissionGrants, grant =>
             grant.OrganizationId == secondOrganizationId && grant.Permission == HelpdeskPermissions.IncidentManager);
         Assert.DoesNotContain(access.ScopedPermissionGrants, grant => grant.OrganizationId == firstOrganizationId);
+    }
+
+    [Fact]
+    public async Task Removing_a_managed_accounts_final_assignment_does_not_restore_its_legacy_role()
+    {
+        const string organizationId = "removed-role-organization";
+        await using (var setupScope = _factory.Services.CreateAsyncScope())
+        {
+            var setupDb = setupScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            setupDb.Organizations.Add(new Organization { Id = organizationId, Name = "Removed role organization" });
+            await setupDb.SaveChangesAsync();
+        }
+
+        using var administrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+        var create = await administrator.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
+            "Managed technician", "managed.technician@example.test")
+        {
+            OrganizationId = organizationId,
+            Role = "Technician"
+        });
+        var activation = await create.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
+
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        Assert.NotNull(activation);
+        Assert.Equal(HttpStatusCode.NoContent, (await administrator.PutAsJsonAsync($"/api/v1/local-auth/users/{activation!.UserId}/assignments",
+            new LocalAuthenticationEndpoints.ReplaceLocalScopedRoleAssignmentsRequest([]))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await administrator.PostAsJsonAsync("/api/v1/local-auth/activate", new LocalAuthenticationEndpoints.ActivateLocalAccountRequest(
+            activation.Email, activation.ActivationToken, "another secure passphrase"))).StatusCode);
+
+        using var account = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await account.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            activation.Email, "another secure passphrase"))).StatusCode);
+        var access = await account.GetFromJsonAsync<CurrentUserAccessDto>("/api/v1/auth/me");
+
+        Assert.NotNull(access);
+        Assert.DoesNotContain(HelpdeskPermissions.IncidentManager, access.Permissions);
+        Assert.DoesNotContain(HelpdeskPermissions.RequestManager, access.Permissions);
+        Assert.DoesNotContain(HelpdeskPermissions.ChangeManager, access.Permissions);
+    }
+
+    [Fact]
+    public async Task Administrator_can_create_a_second_instance_administrator()
+    {
+        using var administrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await administrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            "admin@example.test", "correct horse battery staple"))).StatusCode);
+
+        var create = await administrator.PostAsJsonAsync("/api/v1/local-auth/users", new LocalAuthenticationEndpoints.CreateLocalAccountRequest(
+            "Second instance administrator", "second.admin@example.test", isInstanceAdministrator: true));
+        var activation = await create.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.LocalAccountActivationResponse>();
+
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        Assert.NotNull(activation);
+        Assert.Equal(HttpStatusCode.NoContent, (await administrator.PostAsJsonAsync("/api/v1/local-auth/activate", new LocalAuthenticationEndpoints.ActivateLocalAccountRequest(
+            activation!.Email, activation.ActivationToken, "another secure passphrase"))).StatusCode);
+
+        using var secondAdministrator = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.NoContent, (await secondAdministrator.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
+            activation.Email, "another secure passphrase"))).StatusCode);
+        var access = await secondAdministrator.GetFromJsonAsync<CurrentUserAccessDto>("/api/v1/auth/me");
+
+        Assert.True(access!.IsHelpdeskAdmin);
     }
 
     [Fact]
@@ -1198,6 +1308,16 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Static_attachment_paths_are_not_served_anonymously()
+    {
+        using var anonymous = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var response = await anonymous.GetAsync("/attachments/known-file.txt");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Ticket_sla_mutation_requires_a_manager_grant_in_the_ticket_tenant()
     {
         const string technicianOrganizationId = "sla-technician-organization";
@@ -1442,9 +1562,6 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.False(string.IsNullOrWhiteSpace(setupResult?.SharedKey));
 
         var authenticatorCode = CreateTotp(setupResult!.SharedKey);
-        Assert.Equal(HttpStatusCode.NoContent, (await setupClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
-            "admin@example.test", "correct horse battery staple"))).StatusCode);
-
         var enable = await setupClient.PostAsJsonAsync("/api/v1/local-auth/two-factor/enable", new LocalAuthenticationEndpoints.EnableTwoFactorRequest(authenticatorCode));
         Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
         var recoveryCodes = await enable.Content.ReadFromJsonAsync<LocalAuthenticationEndpoints.TwoFactorRecoveryCodesResponse>();

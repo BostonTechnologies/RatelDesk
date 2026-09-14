@@ -412,7 +412,7 @@ public static class DatasetEndpoints
     private static bool CanAccessOrganization(CurrentUserAccessProfile access, string? organizationId) =>
         access.IsHelpdeskAdmin ||
         !string.IsNullOrWhiteSpace(organizationId) &&
-        access.AllowedOrganizationIds.Contains(organizationId);
+        access.HasPermission(HelpdeskPermissions.DataManagementAdmin, organizationId);
 
     private static async Task<DatasetApiAccessCheck> CanManageDatasetApiAsync(
         string datasetId,

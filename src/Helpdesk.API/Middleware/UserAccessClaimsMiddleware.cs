@@ -74,10 +74,17 @@ public sealed class UserAccessClaimsMiddleware(RequestDelegate next)
             HelpdeskPermissions.SelfServiceUser or
             HelpdeskPermissions.IncidentUser or
             HelpdeskPermissions.IncidentManager or
+            HelpdeskPermissions.IncidentRead or
+            HelpdeskPermissions.IncidentWrite or
             HelpdeskPermissions.RequestUser or
             HelpdeskPermissions.RequestManager or
+            HelpdeskPermissions.RequestRead or
+            HelpdeskPermissions.RequestWrite or
             HelpdeskPermissions.ChangeUser or
             HelpdeskPermissions.ChangeManager or
+            HelpdeskPermissions.ChangeRead or
+            HelpdeskPermissions.ChangeWrite or
+            HelpdeskPermissions.ChangeApprove or
             HelpdeskPermissions.DataManagementAdmin or
             HelpdeskPermissions.TenantUsersManage or
             HelpdeskPermissions.TenantRolesAssign or

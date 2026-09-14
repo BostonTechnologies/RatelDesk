@@ -511,7 +511,10 @@ builder.Services.AddAuthentication(options =>
             if (iss.Contains("login.microsoftonline.com", StringComparison.OrdinalIgnoreCase) ||
                 iss.Contains("sts.windows.net", StringComparison.OrdinalIgnoreCase)) return "Azure";
         }
-        catch { /* fall through */ }
+        catch (ArgumentException)
+        {
+            return "Azure";
+        }
 
         return "Azure";
     };
@@ -917,12 +920,12 @@ builder.Services.AddAuthorization(opts =>
     opts.AddPolicy("TenantPowerUser", p => p.RequireRole("PowerUser"));
     opts.AddPolicy("TenantUser", p => p.RequireRole("User"));
     opts.AddPolicy(HelpdeskPermissions.SelfServiceUser, p => p.RequireRole(HelpdeskPermissions.SelfServiceUser, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("IncidentAccess", p => p.RequireRole(HelpdeskPermissions.IncidentUser, HelpdeskPermissions.IncidentManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("IncidentManager", p => p.RequireRole(HelpdeskPermissions.IncidentManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("RequestAccess", p => p.RequireRole(HelpdeskPermissions.RequestUser, HelpdeskPermissions.RequestManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("RequestManager", p => p.RequireRole(HelpdeskPermissions.RequestManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("ChangeAccess", p => p.RequireRole(HelpdeskPermissions.ChangeUser, HelpdeskPermissions.ChangeManager, HelpdeskPermissions.HelpdeskAdmin));
-    opts.AddPolicy("ChangeManager", p => p.RequireRole(HelpdeskPermissions.ChangeManager, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("IncidentAccess", p => p.RequireRole(HelpdeskPermissions.IncidentUser, HelpdeskPermissions.IncidentManager, HelpdeskPermissions.IncidentRead, HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("IncidentManager", p => p.RequireRole(HelpdeskPermissions.IncidentManager, HelpdeskPermissions.IncidentWrite, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("RequestAccess", p => p.RequireRole(HelpdeskPermissions.RequestUser, HelpdeskPermissions.RequestManager, HelpdeskPermissions.RequestRead, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("RequestManager", p => p.RequireRole(HelpdeskPermissions.RequestManager, HelpdeskPermissions.RequestWrite, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("ChangeAccess", p => p.RequireRole(HelpdeskPermissions.ChangeUser, HelpdeskPermissions.ChangeManager, HelpdeskPermissions.ChangeRead, HelpdeskPermissions.ChangeWrite, HelpdeskPermissions.ChangeApprove, HelpdeskPermissions.HelpdeskAdmin));
+    opts.AddPolicy("ChangeManager", p => p.RequireRole(HelpdeskPermissions.ChangeManager, HelpdeskPermissions.ChangeWrite, HelpdeskPermissions.HelpdeskAdmin));
     opts.AddPolicy("NotificationAccess", p => p.RequireRole(HelpdeskPermissions.IncidentManager, HelpdeskPermissions.RequestManager, HelpdeskPermissions.ChangeManager, HelpdeskPermissions.HelpdeskAdmin));
 
     opts.AddPolicy("SystemBlazorWeb", p =>
@@ -1057,6 +1060,16 @@ if (app.Environment.IsDevelopment() &&
 app.UseExceptionHandler();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ExceptionNotificationMiddleware>();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/attachments", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    await next();
+});
 app.UseStaticFiles();
 
 app.MapOpenApi().AllowAnonymous();
@@ -1229,7 +1242,8 @@ app.MapPost("/api/v1/ingestEmail", async (
     [FromServices] Helpdesk.Application.Sla.ITicketSlaInitializer ticketSlaInitializer,
     [FromServices] AppServices.Tickets.ITicketRefGeneratorService refs,
     [FromServices] SharedServices.IRepository<BlockedEntity> blocked,
-    [FromServices] SharedServices.IRepository<ActivityLog> logs) =>
+    [FromServices] SharedServices.IRepository<ActivityLog> logs,
+    [FromServices] ILoggerFactory loggerFactory) =>
 {
     var sender = GetSenderEmail(rawEmail);
     if (sender is not null)
@@ -1264,9 +1278,12 @@ app.MapPost("/api/v1/ingestEmail", async (
     {
         await ticketSlaInitializer.InitializeAsync(ticket);
     }
-    catch
+    catch (Exception ex)
     {
-        // Email ingestion should not fail if SLA initialization fails.
+        loggerFactory.CreateLogger("EmailIngestion").LogWarning(
+            ex,
+            "SLA initialization failed for email-ingested incident {IncidentId}; continuing without an SLA record.",
+            ticket.Id);
     }
 
     return Results.Created($"/api/v1/incidents/{ticket.Id}", ticket); // 201
@@ -1376,9 +1393,17 @@ app.Run();
 
 static SymmetricSecurityKey BuildSymmetricKey(string secret)
 {
-    // If you store hex/base64, decode; otherwise fall back to UTF8.
-    try { return new SymmetricSecurityKey(Convert.FromHexString(secret)); } catch { }
-    try { return new SymmetricSecurityKey(Convert.FromBase64String(secret)); } catch { }
+    if (secret.Length % 2 == 0 && secret.All(Uri.IsHexDigit))
+    {
+        return new SymmetricSecurityKey(Convert.FromHexString(secret));
+    }
+
+    var base64Bytes = new byte[secret.Length];
+    if (Convert.TryFromBase64String(secret, base64Bytes, out var bytesWritten))
+    {
+        return new SymmetricSecurityKey(base64Bytes[..bytesWritten]);
+    }
+
     return new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
 }
 

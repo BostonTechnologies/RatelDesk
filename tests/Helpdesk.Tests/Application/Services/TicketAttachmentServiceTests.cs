@@ -1,10 +1,12 @@
 using Helpdesk.Application.Services.Tickets;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Storage;
 using Helpdesk.Shared.DTOs.Attachment;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace Helpdesk.Tests.Application.Services;
@@ -24,7 +26,10 @@ public class TicketAttachmentServiceTests
         var tenant = Substitute.For<ITenantContext>();
         var context = new HelpdeskDbContext(options, tenant, new HttpContextAccessor());
 
-        var service = new TicketAttachmentService(context, env);
+        var service = new TicketAttachmentService(
+            context,
+            env,
+            Options.Create(new StorageOptions { RootPath = Path.Combine(tempRoot, "storage") }));
         var uploads = new[]
         {
             new AttachmentUpload("test.txt", "text/plain", System.Text.Encoding.UTF8.GetBytes("hello"))
@@ -35,7 +40,7 @@ public class TicketAttachmentServiceTests
         Assert.Single(result);
         Assert.Single(context.Attachments);
         var saved = context.Attachments.First();
-        var filePath = Path.Combine(tempRoot, "wwwroot", "attachments", saved.FilePath);
+        var filePath = Path.Combine(tempRoot, "storage", "attachments", saved.FilePath);
         Assert.True(File.Exists(filePath));
     }
 }

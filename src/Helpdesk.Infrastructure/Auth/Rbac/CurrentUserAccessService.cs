@@ -280,10 +280,17 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
                      HelpdeskPermissions.SelfServiceUser,
                      HelpdeskPermissions.IncidentUser,
                      HelpdeskPermissions.IncidentManager,
+                     HelpdeskPermissions.IncidentRead,
+                     HelpdeskPermissions.IncidentWrite,
                      HelpdeskPermissions.RequestUser,
                      HelpdeskPermissions.RequestManager,
+                     HelpdeskPermissions.RequestRead,
+                     HelpdeskPermissions.RequestWrite,
                      HelpdeskPermissions.ChangeUser,
                      HelpdeskPermissions.ChangeManager,
+                     HelpdeskPermissions.ChangeRead,
+                     HelpdeskPermissions.ChangeWrite,
+                     HelpdeskPermissions.ChangeApprove,
                      HelpdeskPermissions.DataManagementAdmin
                  })
         {

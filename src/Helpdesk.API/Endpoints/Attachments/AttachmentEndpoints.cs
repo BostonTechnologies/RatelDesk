@@ -1,11 +1,13 @@
 using Helpdesk.Application.Services.Tickets;
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Storage;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.DTOs.Attachment;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using System.Security.Claims;
 
 namespace Helpdesk.API.Endpoints.Attachments;
@@ -32,6 +34,7 @@ public static class AttachmentEndpoints
             [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             IWebHostEnvironment env,
+            IOptions<StorageOptions> storageOptions,
             CancellationToken token) =>
         {
             var attachment = await db.Attachments.FindAsync([id], token);
@@ -41,8 +44,8 @@ public static class AttachmentEndpoints
                 return Results.NotFound("Attachment not found.");
             }
 
-            var filePath = Path.Combine(env.ContentRootPath, "wwwroot", "attachments", attachment.FilePath);
-            if (!File.Exists(filePath))
+            var filePath = ResolveAttachmentPath(attachment.FilePath, env, storageOptions.Value);
+            if (filePath is null)
             {
                 return Results.NotFound("Attachment not found.");
             }
@@ -156,4 +159,28 @@ public static class AttachmentEndpoints
         ticket is Incident or Request &&
         access.HasPermission(HelpdeskPermissions.SelfServiceUser, ticket.OrganizationId) &&
         CanViewTicket(access, ticket);
+
+    private static string? ResolveAttachmentPath(
+        string storedFileName,
+        IWebHostEnvironment env,
+        StorageOptions storageOptions)
+    {
+        var fileName = Path.GetFileName(storedFileName);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return null;
+        }
+
+        var storageRoot = string.IsNullOrWhiteSpace(storageOptions.RootPath)
+            ? Path.Combine(env.ContentRootPath, "storage")
+            : storageOptions.RootPath;
+        var persistedPath = Path.Combine(storageRoot, "attachments", fileName);
+        if (File.Exists(persistedPath))
+        {
+            return persistedPath;
+        }
+
+        var legacyPath = Path.Combine(env.WebRootPath, "attachments", fileName);
+        return File.Exists(legacyPath) ? legacyPath : null;
+    }
 }

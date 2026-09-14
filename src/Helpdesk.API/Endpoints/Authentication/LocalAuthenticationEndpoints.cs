@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
@@ -97,19 +99,21 @@ public static class LocalAuthenticationEndpoints
                 return Results.Unauthorized();
             }
 
-            var reset = await users.ResetAuthenticatorKeyAsync(user);
+            var authenticatorKey = CreateAuthenticatorKey();
+            var reset = await users.SetAuthenticationTokenAsync(
+                user,
+                "[AspNetUserStore]",
+                "AuthenticatorKey",
+                authenticatorKey);
             if (!reset.Succeeded)
             {
                 return Results.Problem("The authenticator setup could not be started.", statusCode: StatusCodes.Status409Conflict);
             }
 
-            user.AuthorizationRevision++;
-            await users.UpdateAsync(user);
-            var sharedKey = await users.GetAuthenticatorKeyAsync(user);
             var accountName = user.Email ?? user.UserName ?? user.Id;
             var issuer = "RatelDesk";
-            var uri = $"otpauth://totp/{Uri.EscapeDataString($"{issuer}:{accountName}")}?secret={Uri.EscapeDataString(sharedKey!)}&issuer={Uri.EscapeDataString(issuer)}&digits=6";
-            return Results.Ok(new AuthenticatorSetupResponse(sharedKey!, uri));
+            var uri = $"otpauth://totp/{Uri.EscapeDataString($"{issuer}:{accountName}")}?secret={Uri.EscapeDataString(authenticatorKey)}&issuer={Uri.EscapeDataString(issuer)}&digits=6";
+            return Results.Ok(new AuthenticatorSetupResponse(authenticatorKey, uri));
         })
         .RequireAuthorization();
 
@@ -132,8 +136,6 @@ public static class LocalAuthenticationEndpoints
             }
 
             var recoveryCodes = await users.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
-            user.AuthorizationRevision++;
-            await users.UpdateAsync(user);
             return Results.Ok(new TwoFactorRecoveryCodesResponse(recoveryCodes?.ToArray() ?? []));
         })
         .RequireAuthorization();
@@ -318,12 +320,11 @@ public static class LocalAuthenticationEndpoints
                     assignment.RoleKey?.Trim() ?? string.Empty,
                     assignment.OrganizationId?.Trim() ?? string.Empty))
                 .ToArray();
-            if (requestedAssignments.Length == 0 ||
-                requestedAssignments.Any(assignment => string.IsNullOrWhiteSpace(assignment.OrganizationId)))
+            if (requestedAssignments.Any(assignment => string.IsNullOrWhiteSpace(assignment.OrganizationId)))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["assignments"] = ["Assign at least one local role to an enabled organization."]
+                    ["assignments"] = ["Every local role assignment must reference an enabled organization."]
                 });
             }
 
@@ -385,6 +386,11 @@ public static class LocalAuthenticationEndpoints
                 RoleKey = assignment.RoleKey,
                 OrganizationId = assignment.OrganizationId
             }));
+            // A non-empty legacy Role is an explicit compatibility marker for
+            // pre-scoped accounts. Once an administrator manages assignments,
+            // zero assignments must remain zero grants rather than resurrecting
+            // the old User/Technician bundle.
+            domainUser.Role = string.Empty;
             await db.SaveChangesAsync(cancellationToken);
 
             if (account is not null)
@@ -418,7 +424,7 @@ public static class LocalAuthenticationEndpoints
             var role = request.IsInstanceAdministrator
                 ? "HelpdeskAdmin"
                 : request.Role?.Trim() ?? string.Empty;
-            if (role is not ("User" or "Technician"))
+            if (!request.IsInstanceAdministrator && role is not ("User" or "Technician"))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
@@ -609,6 +615,33 @@ public static class LocalAuthenticationEndpoints
     public sealed record AuthenticatorSetupResponse(string SharedKey, string AuthenticatorUri);
 
     public sealed record TwoFactorRecoveryCodesResponse(IReadOnlyList<string> RecoveryCodes);
+
+    private static string CreateAuthenticatorKey()
+    {
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        var bytes = RandomNumberGenerator.GetBytes(20);
+        var builder = new StringBuilder(32);
+        var buffer = 0;
+        var bitsInBuffer = 0;
+
+        foreach (var value in bytes)
+        {
+            buffer = (buffer << 8) | value;
+            bitsInBuffer += 8;
+            while (bitsInBuffer >= 5)
+            {
+                bitsInBuffer -= 5;
+                builder.Append(alphabet[(buffer >> bitsInBuffer) & 0x1f]);
+            }
+        }
+
+        if (bitsInBuffer > 0)
+        {
+            builder.Append(alphabet[(buffer << (5 - bitsInBuffer)) & 0x1f]);
+        }
+
+        return builder.ToString();
+    }
 
     private static async Task<bool> IsSecondFactorValidAsync(UserManager<ApplicationUser> users, ApplicationUser user, string? code)
     {

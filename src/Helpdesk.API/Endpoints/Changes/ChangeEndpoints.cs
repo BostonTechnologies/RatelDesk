@@ -327,9 +327,12 @@ public static class ChangeEndpoints
             {
                 await ticketSlaInitializer.InitializeAsync(created);
             }
-            catch
+            catch (Exception ex)
             {
-                // Ticket creation must not fail if SLA initialization fails.
+                loggerFactory.CreateLogger("ChangeEndpoints").LogWarning(
+                    ex,
+                    "SLA initialization failed for newly created change {ChangeId}; continuing without an SLA record.",
+                    created.Id);
             }
 
             if (categoryIds.Count > 0)
@@ -1308,16 +1311,16 @@ public static class ChangeEndpoints
                 .Where(log => log.TicketId == id)
                 .Where(log => authorization.Access!.CanManageChange(authorization.OrganizationId) || !log.IsInternalNote)
                 .Select(l => new WorkLogDto
-            {
-                Id = l.Id,
-                TicketId = l.TicketId,
-                NotesHtml = l.NotesHtml,
-                NotesText = l.NotesText,
-                Hours = l.Hours,
-                IsInternalNote = l.IsInternalNote,
-                LoggedAt = l.LoggedAt,
-                TechnicianId = l.TechnicianId
-            });
+                {
+                    Id = l.Id,
+                    TicketId = l.TicketId,
+                    NotesHtml = l.NotesHtml,
+                    NotesText = l.NotesText,
+                    Hours = l.Hours,
+                    IsInternalNote = l.IsInternalNote,
+                    LoggedAt = l.LoggedAt,
+                    TechnicianId = l.TechnicianId
+                });
             return Results.Ok(logs);
         });
 
@@ -1379,7 +1382,7 @@ public static class ChangeEndpoints
             if (change is null) return Results.Problem("Change not found", statusCode: 404);
 
             var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanManageChange(change.OrganizationId)) return Results.Forbid();
+            if (!access.CanDeleteChange(change.OrganizationId)) return Results.Forbid();
 
             return await repo.DeleteAsync(id) ? Results.NoContent() : Results.Problem("Change not found", statusCode: 404);
         })
@@ -1631,7 +1634,7 @@ public static class ChangeEndpoints
         }
         catch (OperationCanceledException)
         {
-            // Connection terminated by client disconnect/cancellation.
+            logger.LogDebug("Change timeline stream cancelled {TicketId}", id);
         }
         catch (Exception ex)
         {
@@ -1742,10 +1745,15 @@ public static class ChangeEndpoints
         if (!access.IsHelpdeskAdmin)
         {
             var allowedOrganizationIds = access.AllowedOrganizationIds.ToArray();
-            var managerOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeManager).ToArray();
-            if (managerOrganizationIds.Length > 0)
+            var readableOrganizationIds = access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeManager)
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeRead))
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeWrite))
+                .Concat(access.OrganizationIdsFor(Helpdesk.Shared.Auth.HelpdeskPermissions.ChangeApprove))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (readableOrganizationIds.Length > 0)
             {
-                query = query.Where(x => managerOrganizationIds.Contains(x.Change.OrganizationId));
+                query = query.Where(x => readableOrganizationIds.Contains(x.Change.OrganizationId));
             }
             else
             {

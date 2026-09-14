@@ -1,26 +1,34 @@
 using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Infrastructure.Storage;
 using Helpdesk.Shared.DTOs.Attachment;
 using Helpdesk.Shared.Models;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace Helpdesk.Application.Services.Tickets;
 
-public class TicketAttachmentService(HelpdeskDbContext db, IHostEnvironment env) : ITicketAttachmentService
+public class TicketAttachmentService(
+    HelpdeskDbContext db,
+    IHostEnvironment env,
+    IOptions<StorageOptions>? options = null) : ITicketAttachmentService
 {
     private readonly HelpdeskDbContext _db = db;
-    private readonly IHostEnvironment _env = env;
+    private readonly string _attachmentRoot = Path.Combine(
+        string.IsNullOrWhiteSpace(options?.Value.RootPath)
+            ? Path.Combine(env.ContentRootPath, "storage")
+            : options.Value.RootPath,
+        "attachments");
 
     public async Task<IEnumerable<AttachmentDto>> SaveAsync(string ticketId, IEnumerable<AttachmentUpload> uploads, string? uploadedById, CancellationToken token)
     {
-        var uploadPath = Path.Combine(_env.ContentRootPath, "wwwroot", "attachments");
-        Directory.CreateDirectory(uploadPath);
+        Directory.CreateDirectory(_attachmentRoot);
 
         var results = new List<AttachmentDto>();
 
         foreach (var upload in uploads)
         {
             var uniqueName = $"{Guid.NewGuid()}{Path.GetExtension(upload.FileName)}";
-            var filePath = Path.Combine(uploadPath, uniqueName);
+            var filePath = Path.Combine(_attachmentRoot, uniqueName);
             await File.WriteAllBytesAsync(filePath, upload.Content, token);
 
             var entity = new Attachment

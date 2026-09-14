@@ -33,6 +33,16 @@ var hasConfiguredOidc = !string.IsNullOrWhiteSpace(builder.Configuration["Authen
 var webAuthenticationMode = string.IsNullOrWhiteSpace(configuredAuthenticationMode)
     ? hasConfiguredOidc ? "Oidc" : "Local"
     : configuredAuthenticationMode;
+// Components resolve the authentication mode from IConfiguration too. Publish the
+// computed default only when no deployment setting was supplied, so the UI and
+// host cannot disagree about whether local sign-in is available.
+if (string.IsNullOrWhiteSpace(configuredAuthenticationMode))
+{
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Authentication:Mode"] = webAuthenticationMode
+    });
+}
 const string localAuthenticationScheme = "RatelDeskLocal";
 var webSupportsLocalAccounts = string.Equals(webAuthenticationMode, "Local", StringComparison.OrdinalIgnoreCase)
     || string.Equals(webAuthenticationMode, "Hybrid", StringComparison.OrdinalIgnoreCase);
@@ -231,7 +241,7 @@ if (webUsesOidc)
             return Task.CompletedTask;
         }
     };
-    });
+});
 }
 
 // Web & System API clients
@@ -240,6 +250,7 @@ var helpdeskApiClient = builder.Services.AddHttpClient("HelpdeskApi", client =>
     client.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
     client.Timeout = TimeSpan.FromMinutes(5);
 })
+    .ConfigurePrimaryHttpMessageHandler(static () => new HttpClientHandler { UseCookies = false })
     .AddHttpMessageHandler<TokenAuthorizationHandler>();
 
 var helpdeskApiStreamingClient = builder.Services.AddHttpClient("HelpdeskApiStreaming", client =>
@@ -247,6 +258,7 @@ var helpdeskApiStreamingClient = builder.Services.AddHttpClient("HelpdeskApiStre
     client.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
     client.Timeout = Timeout.InfiniteTimeSpan;
 })
+    .ConfigurePrimaryHttpMessageHandler(static () => new HttpClientHandler { UseCookies = false })
     .AddHttpMessageHandler<TokenAuthorizationHandler>();
 
 #pragma warning disable EXTEXP0001
@@ -272,12 +284,15 @@ builder.Services.AddHttpClient("SystemApi", c =>
 {
     c.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
     c.Timeout = TimeSpan.FromSeconds(100);
-}).AddHttpMessageHandler<SystemTokenAuthorizationHandler>();
+})
+    .ConfigurePrimaryHttpMessageHandler(static () => new HttpClientHandler { UseCookies = false })
+    .AddHttpMessageHandler<SystemTokenAuthorizationHandler>();
 
 builder.Services.AddHttpClient("SystemApiNoAuth", c =>
 {
     c.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
-});
+})
+    .ConfigurePrimaryHttpMessageHandler(static () => new HttpClientHandler { UseCookies = false });
 
 builder.Services.AddReverseProxy()
     .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
@@ -644,14 +659,25 @@ app.MapGet("/auth/development", async (
 app.MapGet("/logout", async (HttpContext ctx) =>
 {
     var isLocalSession = string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "local", StringComparison.OrdinalIgnoreCase);
-    await ctx.SignOutAsync(localAuthenticationScheme);
-    if (webUsesOidc)
+    if (isLocalSession)
     {
-        await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        await ctx.SignOutAsync(localAuthenticationScheme);
+        if (webUsesOidc)
+        {
+            await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        }
+
+        return Results.LocalRedirect("/login");
     }
 
-    if (isLocalSession || !webUsesOidc ||
-        string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "ai_agent", StringComparison.OrdinalIgnoreCase))
+    if (!webUsesOidc)
+    {
+        await ctx.SignOutAsync(localAuthenticationScheme);
+        return Results.LocalRedirect("/login");
+    }
+
+    await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    if (string.Equals(ctx.User.FindFirst("auth_mode")?.Value, "ai_agent", StringComparison.OrdinalIgnoreCase))
     {
         return Results.LocalRedirect("/login");
     }
@@ -679,15 +705,17 @@ static Task QueueUserProvisioningOnTokenValidatedAsync(TokenValidatedContext con
         try
         {
             var provisioningService = requestServices.GetRequiredService<IUserProvisioningService>();
-            var access = await provisioningService.EnsureUserAccessAsync(principal, context.HttpContext.RequestAborted);
+            var access = await provisioningService.EnsureUserAccessAsync(
+                principal,
+                context.TokenEndpointResponse?.AccessToken,
+                context.HttpContext.RequestAborted);
+            if (access is null)
+            {
+                throw new InvalidOperationException("OIDC provisioning did not resolve an authorized RatelDesk identity.");
+            }
             if (principal.Identity is ClaimsIdentity identity)
             {
                 AddRolesFromAuthentikGroups(identity);
-
-                if (access is null)
-                {
-                    return;
-                }
 
                 AddClaim(identity, "organization_id", access.PrimaryOrganizationId);
                 AddClaim(identity, "customer_id", access.CustomerId);
@@ -706,6 +734,7 @@ static Task QueueUserProvisioningOnTokenValidatedAsync(TokenValidatedContext con
             logger.LogError(ex,
                 "User provisioning failed for {Email}",
                 principal.Identity?.Name);
+            throw;
         }
     }
 }
