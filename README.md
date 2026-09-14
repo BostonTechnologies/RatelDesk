@@ -22,7 +22,7 @@ docker compose -f docker/docker-compose.yml exec api dotnet /app/Helpdesk.API.dl
 
 Paste that code into **Unlock setup**, then choose storage, set the instance details, create the first administrator, optionally add branding, review, and finish. Sign in with the administrator email and password you just created. No authenticator or recovery code is needed for the initial login. Two-factor verification appears only for accounts that explicitly enabled it later in account settings.
 
-**Already deployed through Komodo or another container manager?** You do not need a local Compose file or an interactive terminal. Run these commands on the Docker host, replacing `rateldesk-api-1` with the actual API container name from the first command:
+**Already deployed through a container manager?** You do not need a local Compose file or an interactive terminal. Run these commands on the Docker host, replacing `rateldesk-api-1` with the actual API container name from the first command:
 
 ```sh
 docker ps --format 'table {{.Names}}\t{{.Image}}'

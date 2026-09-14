@@ -143,11 +143,12 @@ run_setup_wizard_validation() {
   setup_web_pid=$!
   wait_for_health 'Bootstrap Helpdesk web' "$setup_web_pid" "$setup_web_url" '/' "$setup_web_log"
 
+  PLAYWRIGHT_HTML_OUTPUT_DIR="$artifact_dir/setup-report" \
   HELPDESK_E2E_BASE_URL="$setup_web_url" \
   HELPDESK_E2E_IGNORE_HTTPS_ERRORS=true \
   HELPDESK_E2E_SETUP_CODE="$setup_code" \
   HELPDESK_E2E_RUN_SETUP_WIZARD=true \
-  npm run test:ux -- tests/ux/setup.spec.ts
+  npm run test:ux -- tests/ux/setup.spec.ts --output="$artifact_dir/setup-test-results"
 
   stop_process "$setup_web_pid"
   setup_web_pid=''

@@ -78,13 +78,13 @@
                                 <div class="setup-command-card">
                                     <h3>Run on your Docker host</h3>
                                     <p>Use the name of your <strong>API</strong> container from <code>docker ps</code>. This command works directly from your host terminal; no container shell or Compose file is needed.</p>
-                                    <MudTextField T="string" @bind-Value="_apiContainer" Label="API container name" Variant="Variant.Outlined" FullWidth="true" HelperText="Replace this example with the API container name shown by docker ps." Error="@(!IsValidContainerName)" ErrorText="Use the API container name from docker ps (letters, numbers, dots, underscores and hyphens)." />
+                                    <MudTextField T="string" @bind-Value="_containerName" Label="API container name" Variant="Variant.Outlined" FullWidth="true" HelperText="Replace this example with the API container name shown by docker ps." Error="@(!IsValidContainerName)" ErrorText="Use the API container name from docker ps (letters, numbers, dots, underscores and hyphens)." />
                                     <pre class="setup-command"><code data-testid="setup-host-command">@HostCommand("--show-setup-code")</code></pre>
                                     <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ContentCopy" OnClick="CopySetupCommandAsync" Disabled="@(!RendererInfo.IsInteractive || !IsValidContainerName)">Copy command</MudButton>
                                     @if (_copyMessage is not null) { <p role="status" class="setup-copy-status">@_copyMessage</p> }
                                 </div>
                                 <details class="setup-help">
-                                    <summary>Already in a Komodo or container terminal?</summary>
+                                    <summary>Already in a container terminal?</summary>
                                     <p>Select <code>sh</code> as the terminal shell, then run this command inside the API container. Bash is not required.</p>
                                     <pre class="setup-command"><code>dotnet /app/Helpdesk.API.dll --show-setup-code</code></pre>
                                 </details>
@@ -193,10 +193,10 @@
 @code {
     private static readonly string[] StepTitles = ["Unlock setup", "Storage", "Instance", "First administrator", "Branding", "Review", "Ready"];
     private int CurrentStep => _ready ? 6 : _step;
-    private string _apiContainer = "rateldesk-api-1";
+    private string _containerName = "rateldesk-api-1";
     private string? _copyMessage;
-    private bool IsValidContainerName => System.Text.RegularExpressions.Regex.IsMatch(_apiContainer?.Trim() ?? string.Empty, @"\A[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\z");
-    private string HostCommand(string option) => $"docker exec {(IsValidContainerName ? _apiContainer.Trim() : "<api-container>")} dotnet /app/Helpdesk.API.dll {option}";
+    private bool IsValidContainerName => System.Text.RegularExpressions.Regex.IsMatch(_containerName?.Trim() ?? string.Empty, @"\A[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\z");
+    private string HostCommand(string option) => $"docker exec {(IsValidContainerName ? _containerName.Trim() : "<api-container>")} dotnet /app/Helpdesk.API.dll {option}";
     private async Task CopySetupCommandAsync()
     {
         if (!IsValidContainerName) return;

@@ -81,6 +81,11 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Install repository validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
+
       - name: Run public disclosure gate
         run: tools/ci/check-public-disclosure.sh
 

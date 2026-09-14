@@ -16,7 +16,7 @@ Retrieve the operator-only setup code using the running API's configuration:
 docker compose -f docker/docker-compose.yml exec api dotnet /app/Helpdesk.API.dll --show-setup-code
 ```
 
-For an existing Komodo or other managed deployment, use the actual container name instead. No Compose file or interactive shell is needed. Run the first command on the Docker host, find the API container, then replace `rateldesk-api-1` below with its name:
+For an existing managed deployment, use the actual container name instead. No Compose file or interactive shell is needed. Run the first command on the Docker host, find the API container, then replace `rateldesk-api-1` below with its name:
 
 ```sh
 docker ps --format 'table {{.Names}}\t{{.Image}}'

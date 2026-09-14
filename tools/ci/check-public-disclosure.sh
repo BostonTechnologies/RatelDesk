@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+for dependency in git rg file strings; do
+  if ! command -v "$dependency" >/dev/null 2>&1; then
+    printf 'public disclosure gate: required tool is missing: %s\n' "$dependency" >&2
+    exit 1
+  fi
+done
+
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
@@ -10,7 +17,7 @@ blocked_files='(^|/)(\.env|appsettings\.Development\.local\.json)$|\.(pfx|pem|ke
 
 failed=false
 
-disallowed_matches=$(rg -n -I -e "$blocked_text" \
+disallowed_matches=$(rg -n -i -e "$blocked_text" \
   --glob '!LICENSE' \
   --glob '!tools/ci/check-public-disclosure.sh' \
   --glob '!**/bin/**' \
