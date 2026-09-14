@@ -102,7 +102,7 @@ done
 # A fresh Web-only jar proves the browser login establishes its own session.
 curl --fail --silent --show-error --cookie-jar "$web_cookie_jar" \
   "$web_base_url/login" > "$work_directory/login.html"
-if grep -Eq 'name="twoFactorCode"|href="/activate"' "$work_directory/login.html"; then
+if grep -Eiq 'name="(twoFactorCode|code)"|href="/activate"' "$work_directory/login.html"; then
   echo "The initial login form contains an unexpected activation or verification control."
   exit 1
 fi

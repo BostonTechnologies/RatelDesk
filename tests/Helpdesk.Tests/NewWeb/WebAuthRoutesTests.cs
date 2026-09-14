@@ -205,10 +205,12 @@ public class WebAuthRoutesTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("action=\"/local-login\"", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Authenticator or recovery code", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("name=\"twoFactorCode\"", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("href=\"/activate\"", content, StringComparison.Ordinal);
-        Assert.Contains("name=\"email\"", content, StringComparison.Ordinal);
-        Assert.Contains("name=\"password\"", content, StringComparison.Ordinal);
+        var inputNames = ReadNativeInputNames(content);
+        Assert.DoesNotContain("twoFactorCode", inputNames);
+        Assert.DoesNotContain("code", inputNames);
+        Assert.DoesNotContain("href=\"/activate\"", content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("email", inputNames);
+        Assert.Contains("password", inputNames);
         Assert.Contains("Sign in to RatelDesk", content, StringComparison.Ordinal);
         Assert.DoesNotContain("href=\"/login-authentik\"", content, StringComparison.Ordinal);
     }
@@ -272,7 +274,7 @@ public class WebAuthRoutesTests
             client.DefaultRequestHeaders.Add("Cookie", "RatelDesk.LocalChallenge=forged");
         var response = await client.GetAsync("/login/two-factor");
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Equal("/login?status=verification-expired", response.Headers.Location?.OriginalString);
+        Assert.Equal("/login?status=verification-expired", new Uri(client.BaseAddress!, response.Headers.Location!).PathAndQuery);
     }
 
     [Fact]
@@ -314,7 +316,10 @@ public class WebAuthRoutesTests
         var html = await page.Content.ReadAsStringAsync();
         Assert.Equal(HttpStatusCode.OK, page.StatusCode);
         Assert.Contains("Verify your sign-in", html, StringComparison.Ordinal);
-        Assert.DoesNotContain("name=\"password\"", html, StringComparison.Ordinal);
+        var inputNames = ReadNativeInputNames(html);
+        Assert.Contains("code", inputNames);
+        Assert.DoesNotContain("password", inputNames);
+        Assert.DoesNotContain("email", inputNames);
         Assert.DoesNotContain("test password", html, StringComparison.Ordinal);
         using var verification = new FormUrlEncodedContent(new Dictionary<string, string>
         {
@@ -327,6 +332,15 @@ public class WebAuthRoutesTests
         Assert.Equal("123456", payload.RootElement.GetProperty("code").GetString());
         Assert.False(payload.RootElement.TryGetProperty("password", out _));
     }
+
+    // HTML attribute names are case-insensitive. MudBlazor preserves the casing
+    // of unmatched attributes when it renders them on the native input element.
+    private static string[] ReadNativeInputNames(string html) =>
+        Regex.Matches(html, @"<input\b[^>]*>", RegexOptions.IgnoreCase)
+            .Select(input => Regex.Match(input.Value, "\\bname\\s*=\\s*\"([^\"]+)\"", RegexOptions.IgnoreCase))
+            .Where(attribute => attribute.Success)
+            .Select(attribute => WebUtility.HtmlDecode(attribute.Groups[1].Value))
+            .ToArray();
 
     private static async Task<string> ReadFormTokenAsync(HttpClient client, string route) =>
         ExtractFormToken(await client.GetStringAsync(route));
