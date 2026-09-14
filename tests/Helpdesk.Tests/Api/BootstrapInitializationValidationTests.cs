@@ -178,7 +178,7 @@ public sealed class BootstrapInitializationValidationTests
             Store = new FileBootstrapStateStore(Options);
             Protection = DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(_directory, "keys")));
             Initializer = new BootstrapInitializationService(Store, Options, Protection);
-            Sessions = new BootstrapSessionService(Protection, Options);
+            Sessions = new BootstrapSessionService();
         }
 
         public static async Task<Harness> CreateAsync(string? managedTimeZone = null)

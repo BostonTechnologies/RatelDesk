@@ -1,6 +1,8 @@
+extern alias NewWeb;
+
 using System.Net;
 using System.Text;
-using HelpDesk.NewWeb.Services;
+using NewWeb::HelpDesk.NewWeb.Services;
 
 namespace Helpdesk.Tests.NewWeb;
 
