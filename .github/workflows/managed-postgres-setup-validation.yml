@@ -1,0 +1,58 @@
+name: Managed PostgreSQL setup validation
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: managed-postgres-setup-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  managed-postgres:
+    name: Deployment-managed PostgreSQL first run
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RATELDESK_POSTGRES_PASSWORD: ci-managed-postgres-test-only
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure storage through deployment environment
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/managed-postgres.yml" <<'YAML'
+          services:
+            api:
+              environment:
+                ConnectionStrings__HelpdeskDb: "Host=postgres;Port=5432;Database=rateldesk;Username=rateldesk;Password=${RATELDESK_POSTGRES_PASSWORD};SSL Mode=Prefer"
+          YAML
+
+      - name: Initialize with non-UTC time zone and verify correction, login, and persistence
+        shell: bash
+        run: |
+          files=(docker/docker-compose.yml docker/docker-compose.postgres.yml "$RUNNER_TEMP/managed-postgres.yml")
+          docker compose -f "${files[0]}" -f "${files[1]}" -f "${files[2]}" config --quiet
+          docker compose -f "${files[0]}" -f "${files[1]}" -f "${files[2]}" up --build --detach --wait
+          RATELDESK_SETUP_PROVIDER=PostgreSql \
+            RATELDESK_EXPECT_STORAGE_MANAGED=true \
+            RATELDESK_SETUP_POSTGRES_PASSWORD="$RATELDESK_POSTGRES_PASSWORD" \
+            tools/ci/smoke-first-run-local.sh "${files[@]}"
+          zone="$(docker compose -f "${files[0]}" -f "${files[1]}" -f "${files[2]}" exec -T postgres \
+            psql -U rateldesk -d rateldesk -tAc 'SELECT "TimeZoneId" FROM "InstanceInitializations";')"
+          [[ "$zone" == "Africa/Johannesburg" ]]
+
+      - name: Collect managed PostgreSQL Compose logs
+        if: always()
+        run: docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml -f "$RUNNER_TEMP/managed-postgres.yml" logs --no-color
+
+      - name: Stop test stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml -f "$RUNNER_TEMP/managed-postgres.yml" down --volumes --remove-orphans

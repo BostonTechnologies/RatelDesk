@@ -177,18 +177,64 @@ public static class BootstrapEndpoints
             [FromServices] BootstrapSessionService sessions,
             [FromServices] BootstrapInitializationService initializer,
             [FromServices] IHostApplicationLifetime applicationLifetime,
+            [FromServices] ILoggerFactory loggerFactory,
+            HttpContext context,
             CancellationToken cancellationToken) =>
         {
+            context.Response.Headers.CacheControl = "no-store";
             var descriptor = await stateStore.LoadOrCreateAsync(cancellationToken);
             if (!sessions.IsValid(session, descriptor))
             {
                 return Results.Unauthorized();
             }
 
-            var result = await initializer.InitializeAsync(descriptor, request, cancellationToken);
+            var logger = loggerFactory.CreateLogger("RatelDesk.Setup");
+            var traceId = context.TraceIdentifier;
+            BootstrapInitializationResult result;
+            try
+            {
+                result = await initializer.InitializeAsync(descriptor, request, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // Never log the submitted account, password, setup session, connection
+                // string or raw provider message. SQLSTATE and exception type are safe diagnostics.
+                var sqlState = (exception.GetBaseException() as PostgresException)?.SqlState;
+                logger.LogError("Setup initialization failed. ExceptionType={ExceptionType} SqlState={SqlState} TraceId={TraceId}",
+                    exception.GetType().Name, sqlState, traceId);
+                return Results.Problem(
+                    "Initialization did not finish. Check the API logs and setup status before retrying.",
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "Setup initialization failed",
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["code"] = "setup_initialization_failed",
+                        ["traceId"] = traceId
+                    });
+            }
+
             if (!result.Succeeded)
             {
-                return Results.Problem(result.Error, statusCode: StatusCodes.Status409Conflict);
+                logger.LogWarning("Setup initialization rejected. Code={Code} Fields={Fields} TraceId={TraceId}",
+                    result.Code, string.Join(",", result.Errors?.Keys ?? []), traceId);
+                var extensions = new Dictionary<string, object?>
+                {
+                    ["code"] = result.Code,
+                    ["traceId"] = traceId
+                };
+                if (result.Errors is { Count: > 0 })
+                    return Results.ValidationProblem(
+                        result.Errors.ToDictionary(pair => pair.Key, pair => pair.Value),
+                        statusCode: StatusCodes.Status400BadRequest,
+                        title: "Correct the indicated setup fields",
+                        extensions: extensions);
+
+                return Results.Problem(result.Error, statusCode: StatusCodes.Status409Conflict,
+                    title: "Setup initialization could not complete", extensions: extensions);
             }
 
             _ = StopBootstrapHostAfterResponseAsync(applicationLifetime);

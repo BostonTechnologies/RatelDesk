@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore.Storage;
 using System.Reflection;
@@ -16,7 +17,8 @@ namespace Helpdesk.API.Bootstrap;
 public sealed class BootstrapInitializationService(
     IBootstrapStateStore stateStore,
     BootstrapOptions options,
-    IDataProtectionProvider dataProtection)
+    IDataProtectionProvider dataProtection,
+    ILogger<BootstrapInitializationService>? logger = null)
 {
     private const long PostgreSqlBootstrapLockId = 649182743;
 
@@ -44,16 +46,12 @@ public sealed class BootstrapInitializationService(
         }
         var operationId = descriptor.OperationId.Value;
 
-        if (string.IsNullOrWhiteSpace(request.Email) ||
-            string.IsNullOrWhiteSpace(request.DisplayName) ||
-            string.IsNullOrWhiteSpace(request.OrganizationName) ||
-            string.IsNullOrWhiteSpace(request.Password) ||
-            !IsPermittedApplicationUrl(request.ApplicationUrl) ||
-            !ArePermittedBrandingUrls(request) ||
-            !IsPermittedSupportEmail(request.SupportEmail) ||
-            !IsPermittedTimeZone(request.TimeZoneId))
+        // Validate deployment-owned values too. A runtime dependency failure must
+        // identify its field, not be presented as an incorrect administrator password.
+        var validationErrors = ValidateRequest(request);
+        if (validationErrors.Count > 0)
         {
-            return BootstrapInitializationResult.InvalidRequest;
+            return BootstrapInitializationResult.InvalidRequest with { Errors = validationErrors };
         }
 
         var settings = new Dictionary<string, string?>
@@ -127,7 +125,10 @@ public sealed class BootstrapInitializationService(
                 var preflight = await new PostgreSqlSetupPreflightService().CheckAsync(
                     settings["ConnectionStrings:HelpdeskDb"], cancellationToken);
                 if (!preflight.Succeeded)
-                    return new BootstrapInitializationResult(false, preflight.Error, null);
+                    return new BootstrapInitializationResult(false, preflight.Error, null)
+                    {
+                        Code = "setup_storage_preflight_failed"
+                    };
             }
 
             if (descriptor.ProtectedKeyRingProof is null)
@@ -183,7 +184,16 @@ public sealed class BootstrapInitializationService(
             var createUser = await userManager.CreateAsync(administrator, request.Password);
             if (!createUser.Succeeded)
             {
-                return BootstrapInitializationResult.PasswordRejected;
+                // Identity descriptions can include submitted email/user names.
+                // Translate known categories to safe field guidance instead.
+                var errors = new Dictionary<string, string[]>();
+                if (createUser.Errors.Any(error => error.Code.StartsWith("Password", StringComparison.Ordinal)))
+                    errors["password"] = [$"Use a passphrase of at least {userManager.Options.Password.RequiredLength} characters that meets the local-account password policy."];
+                if (createUser.Errors.Any(error => error.Code.Contains("Email", StringComparison.Ordinal) || error.Code.Contains("UserName", StringComparison.Ordinal)))
+                    errors["email"] = ["The administrator email address was not accepted. Enter a valid, unused email address."];
+                if (errors.Count == 0)
+                    errors["administrator"] = ["The administrator account could not be created. Check the account details and retry."];
+                return BootstrapInitializationResult.PasswordRejected with { Errors = errors };
             }
 
             // PostgreSQL stores microsecond precision; use the same durable
@@ -208,7 +218,7 @@ public sealed class BootstrapInitializationService(
                     InstanceId = descriptor.InstanceId,
                     OperationId = operationId,
                     SetupVersion = GetSetupVersion(),
-                    TimeZoneId = request.TimeZoneId?.Trim() ?? "UTC",
+                    TimeZoneId = string.IsNullOrWhiteSpace(request.TimeZoneId) ? "UTC" : request.TimeZoneId.Trim(),
                     CompletedAtUtc = completedAtUtc
                 });
                 if (HasBrandingInput(request))
@@ -230,9 +240,17 @@ public sealed class BootstrapInitializationService(
 
                 await db.SaveChangesAsync(cancellationToken);
             }
-            catch (Exception)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                return new BootstrapInitializationResult(false, "Initialization could not be completed.", null);
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // Do not log the request, credentials, connection string or raw
+                // database exception: provider details may contain submitted data.
+                logger?.LogError("Setup initialization failed while saving application records. ExceptionType={ExceptionType}",
+                    exception.GetType().Name);
+                return new BootstrapInitializationResult(false, "Initialization could not save the application records. Check the API logs using the supplied reference.", null);
             }
 
             await transaction.CommitAsync(cancellationToken);
@@ -272,6 +290,32 @@ public sealed class BootstrapInitializationService(
         (string.Equals(descriptor.Provider, "PostgreSql", StringComparison.OrdinalIgnoreCase) &&
          !string.IsNullOrWhiteSpace(descriptor.ProtectedPostgreSqlConnection));
 
+    private static Dictionary<string, string[]> ValidateRequest(FirstAdministratorRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request.Email) || !IsPermittedSupportEmail(request.Email))
+            errors["email"] = ["Enter a valid administrator email address."];
+        if (string.IsNullOrWhiteSpace(request.DisplayName))
+            errors["displayName"] = ["Enter the administrator display name."];
+        if (string.IsNullOrWhiteSpace(request.OrganizationName))
+            errors["organizationName"] = ["Enter the initial organization name."];
+        if (string.IsNullOrWhiteSpace(request.Password))
+            errors["password"] = ["Enter the administrator passphrase."];
+        if (!IsPermittedApplicationUrl(request.ApplicationUrl))
+            errors["applicationUrl"] = ["Enter an HTTPS public URL (HTTP is allowed only for localhost), without credentials, a query string or a fragment."];
+        if (!IsPermittedTimeZone(request.TimeZoneId))
+            errors["timeZoneId"] = ["The API could not load the selected time zone. Check the IANA ID (for example Africa/Johannesburg) and ensure the API runtime includes the tzdata package."];
+        if (!IsPermittedSupportEmail(request.SupportEmail))
+            errors["supportEmail"] = ["Enter a valid support email address, or leave it empty."];
+        if (!IsPermittedOptionalHttpUrl(request.SupportUrl))
+            errors["supportUrl"] = ["Enter an HTTP or HTTPS support URL, or leave it empty."];
+        if (!IsPermittedOptionalHttpUrl(request.LogoUrl))
+            errors["logoUrl"] = ["Enter an HTTP or HTTPS logo URL, or leave it empty."];
+        if (!IsPermittedOptionalHttpUrl(request.CompactLogoUrl))
+            errors["compactLogoUrl"] = ["Enter an HTTP or HTTPS compact logo URL, or leave it empty."];
+        return errors;
+    }
+
     private static bool IsPermittedApplicationUrl(string? applicationUrl)
     {
         if (string.IsNullOrWhiteSpace(applicationUrl))
@@ -286,11 +330,6 @@ public sealed class BootstrapInitializationService(
                (applicationUri.Scheme == Uri.UriSchemeHttps ||
                 (applicationUri.Scheme == Uri.UriSchemeHttp && applicationUri.IsLoopback));
     }
-
-    private static bool ArePermittedBrandingUrls(FirstAdministratorRequest request) =>
-        IsPermittedOptionalHttpUrl(request.SupportUrl) &&
-        IsPermittedOptionalHttpUrl(request.LogoUrl) &&
-        IsPermittedOptionalHttpUrl(request.CompactLogoUrl);
 
     private static bool IsPermittedOptionalHttpUrl(string? value) =>
         string.IsNullOrWhiteSpace(value) ||
@@ -370,9 +409,12 @@ public sealed record FirstAdministratorRequest(
 
 public sealed record BootstrapInitializationResult(bool Succeeded, string? Error, BootstrapDescriptor? Descriptor)
 {
-    public static BootstrapInitializationResult InvalidState { get; } = new(false, "Setup is not ready for initialization.", null);
-    public static BootstrapInitializationResult InvalidRequest { get; } = new(false, "Required setup values are missing.", null);
-    public static BootstrapInitializationResult InvalidUnattendedConfiguration { get; } = new(false, "The unattended setup configuration is incomplete or invalid.", null);
-    public static BootstrapInitializationResult AlreadyInitialized { get; } = new(false, "The selected database already contains initialization data.", null);
-    public static BootstrapInitializationResult PasswordRejected { get; } = new(false, "The password does not meet the configured requirements.", null);
+    public string Code { get; init; } = "setup_initialization_failed";
+    public IReadOnlyDictionary<string, string[]>? Errors { get; init; }
+
+    public static BootstrapInitializationResult InvalidState { get; } = new(false, "Setup is not ready for initialization.", null) { Code = "setup_not_ready" };
+    public static BootstrapInitializationResult InvalidRequest { get; } = new(false, "Some setup values are missing or invalid.", null) { Code = "setup_validation_failed" };
+    public static BootstrapInitializationResult InvalidUnattendedConfiguration { get; } = new(false, "The unattended setup configuration is incomplete or invalid.", null) { Code = "setup_validation_failed" };
+    public static BootstrapInitializationResult AlreadyInitialized { get; } = new(false, "The selected database already contains initialization data.", null) { Code = "setup_database_in_use" };
+    public static BootstrapInitializationResult PasswordRejected { get; } = new(false, "The administrator account details were not accepted.", null) { Code = "setup_validation_failed" };
 }
