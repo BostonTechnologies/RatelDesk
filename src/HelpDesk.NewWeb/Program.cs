@@ -295,6 +295,8 @@ builder.Services.AddHttpClient("SystemApiNoAuth", c =>
     c.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false });
 
+builder.Services.AddSingleton<InstanceSetupStatusClient>();
+
 builder.Services.AddReverseProxy()
     .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
 
@@ -349,6 +351,7 @@ fwd.KnownProxies.Clear();
 app.UseForwardedHeaders(fwd);
 
 app.UseHttpsRedirection();
+app.UseMiddleware<FirstRunEntryMiddleware>();
 app.UseAuthentication();
 app.UseMiddleware<TenantContextMiddleware>();
 app.UseAuthorization();
@@ -513,53 +516,7 @@ app.MapGet("/login-authentik", async (HttpContext ctx) =>
 
 app.MapGet("/login-azure", () => Results.LocalRedirect("/login-authentik"));
 
-app.MapPost("/local-login", async (HttpContext context, IHttpClientFactory httpClientFactory, IAntiforgery antiforgery) =>
-{
-    if (!webSupportsLocalAccounts)
-    {
-        return Results.NotFound();
-    }
-
-    try
-    {
-        await antiforgery.ValidateRequestAsync(context);
-    }
-    catch (AntiforgeryValidationException)
-    {
-        return Results.BadRequest(new { error = "invalid_login_form" });
-    }
-
-    var form = await context.Request.ReadFormAsync(context.RequestAborted);
-    var email = form["email"].ToString();
-    var password = form["password"].ToString();
-    var twoFactorCode = form["twoFactorCode"].ToString();
-    var rememberMe = string.Equals(form["rememberMe"], "on", StringComparison.OrdinalIgnoreCase);
-    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-    {
-        return Results.LocalRedirect("/login?status=Email%20and%20password%20are%20required");
-    }
-
-    using var response = await httpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync(
-        "/api/v1/local-auth/login",
-        new { email, password, rememberMe, twoFactorCode },
-        context.RequestAborted);
-    if (!response.IsSuccessStatusCode)
-    {
-        return Results.LocalRedirect(response.StatusCode == HttpStatusCode.TooManyRequests
-            ? "/login?status=Too%20many%20sign-in%20attempts.%20Please%20retry%20shortly."
-            : "/login?status=Sign-in%20failed");
-    }
-
-    if (response.Headers.TryGetValues("Set-Cookie", out var setCookies))
-    {
-        foreach (var cookie in setCookies)
-        {
-            context.Response.Headers.Append("Set-Cookie", cookie);
-        }
-    }
-
-    return Results.LocalRedirect("/home");
-}).AllowAnonymous().RequireRateLimiting("LocalBrowserLogin");
+app.MapLocalBrowserLoginEndpoints(webSupportsLocalAccounts, localCookieName);
 
 app.MapGet("/login-ai-agent", (IOptions<AuthentikAiAgentOptions> options) =>
 {

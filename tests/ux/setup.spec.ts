@@ -15,8 +15,18 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   const interactiveConnection = page.waitForResponse(response =>
     response.url().includes('/_blazor/negotiate') && response.ok());
 
-  await page.goto('/setup');
+  // Fresh visitors must discover setup from normal entry points, without knowing /setup.
+  const directLogin = await page.request.get('/login', { maxRedirects: 0 });
+  expect(directLogin.status()).toBe(302);
+  expect(directLogin.headers().location).toBe('/setup');
+  const prematureLogin = await page.request.post('/local-login', {
+    maxRedirects: 0, form: { email: 'admin@example.test', password: 'not-created-yet' }
+  });
+  expect(prematureLogin.status()).toBe(303);
+  expect(prematureLogin.headers().location).toBe('/setup');
+  await page.goto('/');
   await interactiveConnection;
+  await expect(page).toHaveURL(/\/setup$/);
   await expect(page.getByRole('heading', { name: 'Set up RatelDesk' })).toBeVisible();
   await expect(page.getByText('operator-only setup code')).toBeVisible();
 
@@ -68,12 +78,16 @@ test('first-run setup initializes, survives restart, and supports isolated scope
 
   // Login starts with an empty browser cookie jar. An earlier API login cannot mask failure.
   await page.context().clearCookies();
-  await page.goto('/login');
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Admin sign-in' }).click();
+  await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByTestId('local-login-form')).toHaveAttribute('data-interactive', 'true');
+  await expect(page.locator('input[name="twoFactorCode"], input[name="code"]')).toHaveCount(0);
+  await expect(page.locator('a[href="/activate"]')).toHaveCount(0);
   await page.getByLabel('Email', { exact: false }).fill('browser.wizard.admin@example.test');
   await page.getByLabel('Password', { exact: false }).fill('incorrect-browser-test-passphrase');
   await page.getByRole('button', { name: 'Sign in to Browser Wizard RatelDesk', exact: true }).click();
-  await expect(page.getByTestId('local-login-error')).toHaveText('Sign-in failed. Check your email, passphrase and authenticator or recovery code.');
+  await expect(page.getByTestId('local-login-error')).toHaveText('Sign-in failed. Check your email and password.');
   await signIn(page, 'browser.wizard.admin@example.test');
   const admin = await (await page.request.get('/api/v1/auth/me')).json();
   expect(admin.isHelpdeskAdmin).toBe(true);
@@ -156,9 +170,29 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   await page.getByLabel('Authenticator code', { exact: true }).fill(totp(sharedKey));
   await page.getByRole('button', { name: 'Enable authenticator', exact: true }).click();
   await expect(page.getByLabel('Recovery codes', { exact: true })).toBeVisible();
+  const recoveryCode = (await page.getByLabel('Recovery codes', { exact: true }).inputValue()).trim().split(/\s+/)[0];
   expect((await page.request.get('/api/v1/auth/me')).ok()).toBe(true);
   await page.getByRole('button', { name: 'I have saved my recovery codes' }).click();
   await expect(page).toHaveURL(/\/home(?:[?#].*)?$/);
+
+  // MFA is offered only after a correct password for an explicitly enrolled account.
+  for (const code of [totp(sharedKey), recoveryCode]) {
+    await page.context().clearCookies();
+    await page.goto('/login');
+    await expect(page.getByTestId('local-login-form')).toHaveAttribute('data-interactive', 'true');
+    await expect(page.getByLabel('Verification code')).toHaveCount(0);
+    await page.getByLabel('Email', { exact: false }).fill('browser.wizard.admin@example.test');
+    await page.getByLabel('Password', { exact: false }).fill(passphrase);
+    await page.getByRole('button', { name: 'Sign in to Browser Wizard RatelDesk', exact: true }).click();
+    await expect(page).toHaveURL(/\/login\/two-factor$/);
+    expect((await page.request.get('/api/v1/auth/me')).status()).toBe(401);
+    await expect(page.getByTestId('local-two-factor-form')).toHaveAttribute('data-interactive', 'true');
+    await expect(page.locator('input[name="password"]')).toHaveCount(0);
+    await page.getByLabel('Verification code').fill(code);
+    await page.getByRole('button', { name: 'Verify and sign in' }).click();
+    await expect(page).toHaveURL(/\/home(?:[?#].*)?$/);
+    expect((await (await page.request.get('/api/v1/auth/me')).json()).isHelpdeskAdmin).toBe(true);
+  }
 });
 
 const passphrase = 'browser-wizard-setup-passphrase';

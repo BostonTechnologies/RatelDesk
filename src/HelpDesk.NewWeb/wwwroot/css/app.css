@@ -27,10 +27,17 @@ body
     background: var(--mud-palette-background);
 }
 
-:where(a, button, input, select, textarea, [role="button"], [tabindex]):focus-visible
+/* MudBlazor inputs already show focus on their field border or underline. */
+:where(a, button, input, select, textarea, [role="button"], [tabindex]):focus-visible:not(.mud-input-slot, h1[tabindex="-1"])
 {
     outline: 2px solid var(--mud-palette-primary) !important;
     outline-offset: 2px;
+}
+
+/* FocusOnNavigate announces the page heading without framing it as a control. */
+h1[tabindex="-1"]:focus
+{
+    outline: none;
 }
 
 .helpdesk-app-bar.mud-appbar

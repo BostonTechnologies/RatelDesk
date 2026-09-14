@@ -28,8 +28,20 @@ trap 'printf "First-run smoke failed at line %s.\n" "$LINENO" >&2' ERR
 curl --retry 6 --retry-all-errors --retry-delay 2 --fail --silent --show-error \
   "$web_base_url/setup" > /dev/null
 
+# Normal entry points must discover setup before offering a credentials form.
+for entry_path in / /login; do
+  entry_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --dump-header "$work_directory/entry.headers" "$web_base_url$entry_path")"
+  [[ "$entry_status" == "302" ]]
+  grep -Eiq '^location: /setup[[:space:]]*$' "$work_directory/entry.headers"
+done
+premature_login_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --dump-header "$work_directory/entry.headers" --request POST "$web_base_url/local-login")"
+[[ "$premature_login_status" == "303" ]]
+grep -Eiq '^location: /setup[[:space:]]*$' "$work_directory/entry.headers"
+
 setup_code="$(docker compose "${compose_arguments[@]}" exec -T api sh -c 'cat /var/lib/rateldesk/bootstrap/setup-code')"
-password="Rc4-$(openssl rand -hex 24)"
+password="Smoke-$(openssl rand -hex 24)"
 
 session_payload="$(jq -nc --arg setupCode "$setup_code" '{setupCode: $setupCode}')"
 session="$(curl --fail --silent --show-error \
@@ -90,6 +102,10 @@ done
 # A fresh Web-only jar proves the browser login establishes its own session.
 curl --fail --silent --show-error --cookie-jar "$web_cookie_jar" \
   "$web_base_url/login" > "$work_directory/login.html"
+if grep -Eq 'name="twoFactorCode"|href="/activate"' "$work_directory/login.html"; then
+  echo "The initial login form contains an unexpected activation or verification control."
+  exit 1
+fi
 antiforgery_token="$(python3 - "$work_directory/login.html" <<'TOKEN'
 from html.parser import HTMLParser
 import sys

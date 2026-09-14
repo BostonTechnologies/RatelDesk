@@ -14,11 +14,13 @@ Prerequisites: Docker with Compose, or the .NET SDK specified by [global.json](g
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-Open `http://localhost:8111/setup`. Retrieve the one-time, per-installation setup code only from the API container:
+Open `http://localhost:8111/`. A fresh instance opens the setup wizard automatically. Retrieve the one-time, per-installation setup code only from the API container:
 
 ```bash
 docker compose -f docker/docker-compose.yml exec api cat /var/lib/rateldesk/bootstrap/setup-code
 ```
+
+Create the first administrator in the wizard, then sign in with that email and password. No authenticator or recovery code is needed for the initial login. Two-factor verification appears only for accounts that explicitly enabled it later in account settings.
 
 The default Compose stack runs Web and API in Production mode with persistent SQLite, bootstrap, data-protection, and attachment volumes. It is explicitly configured for localhost HTTP so local-account cookies use the valid `RatelDesk.Local` name. Deploy HTTPS and remove `Authentication__AllowInsecureLocalhost` for public hosting.
 
@@ -29,7 +31,7 @@ For local .NET development, run the API and Web projects with their configuratio
 To run published images rather than build from source, select an exact published version and use the release Compose file:
 
 ```bash
-RATELDESK_VERSION=0.1.0-rc.4 docker compose -f docker/docker-compose.release.yml up -d
+RATELDESK_VERSION=0.1.0-rc.5 docker compose -f docker/docker-compose.release.yml up -d
 ```
 
 Use an exact SemVer tag in production, or preferably replace tags with the published image digests. `latest` advances only for stable releases; prereleases never move it. See [release engineering](docs/releases.md) for versioning, build metadata, and release instructions.

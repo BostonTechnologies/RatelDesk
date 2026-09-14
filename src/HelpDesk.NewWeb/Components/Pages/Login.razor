@@ -1,5 +1,6 @@
 @inject HelpDesk.NewWeb.Models.WebAuthenticationMode AuthenticationMode
 @page "/login"
+@page "/login/two-factor"
 @attribute [AllowAnonymous]
 
 @inject NavigationManager Navigation
@@ -7,6 +8,8 @@
 @inject IConfiguration Config
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IHttpClientFactory HttpClientFactory
+@inject IHttpContextAccessor HttpContextAccessor
+@inject Microsoft.AspNetCore.DataProtection.IDataProtectionProvider Protection
 @using System.Net.Http.Json
 
 <PageTitle>@_branding.ApplicationName</PageTitle>
@@ -32,26 +35,38 @@
                 {
                     <MudAlert Severity="Severity.Error" data-testid="local-login-error">@SignInError</MudAlert>
                 }
-                <form method="post" action="/local-login" class="helpdesk-login-local-form" data-testid="local-login-form" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")">
-                    <AntiforgeryToken />
-                    <MudTextField T="string" Name="email" Disabled="@(!RendererInfo.IsInteractive)" Label="Email" InputType="InputType.Email" Required="true" Variant="Variant.Outlined" FullWidth="true" />
-                    <MudTextField T="string" Name="password" Disabled="@(!RendererInfo.IsInteractive)" Label="Password" InputType="InputType.Password" Required="true" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" />
-                    <MudTextField T="string" Name="twoFactorCode" Disabled="@(!RendererInfo.IsInteractive)" Label="Authenticator or recovery code" InputType="InputType.Password" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" HelperText="Required only if two-factor authentication is enabled." />
-                    <MudCheckBox T="bool" Name="rememberMe" Disabled="@(!RendererInfo.IsInteractive)" Label="Keep me signed in" Color="Color.Primary" Class="mt-2" />
-                    <MudButton Variant="Variant.Filled" ButtonType="ButtonType.Submit" Disabled="@(!RendererInfo.IsInteractive)" Size="Size.Large" Color="Color.Primary" FullWidth="true" Class="mt-3" StartIcon="@Icons.Material.Filled.Login">
-                        Sign in to @_branding.ApplicationName
-                    </MudButton>
-                </form>
-                <MudLink Href="/activate" Class="align-self-center">Activate or reset your local account</MudLink>
+                @if (IsSecondFactorStep)
+                {
+                    <MudText Typo="Typo.h6" HtmlTag="h2">Verify your sign-in</MudText>
+                    <MudText Typo="Typo.body2">Enter the code from your authenticator app. You can also use one of the recovery codes saved when you enabled two-factor authentication.</MudText>
+                    <form method="post" action="/local-login/two-factor" class="helpdesk-login-local-form" data-testid="local-two-factor-form" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")">
+                        <AntiforgeryToken />
+                        <MudTextField T="string" Name="code" Disabled="@(!RendererInfo.IsInteractive)" Label="Verification code" autocomplete="one-time-code" Required="true" Variant="Variant.Outlined" FullWidth="true" />
+                        <MudButton Variant="Variant.Filled" ButtonType="ButtonType.Submit" Disabled="@(!RendererInfo.IsInteractive)" Size="Size.Large" Color="Color.Primary" FullWidth="true" Class="mt-3">Verify and sign in</MudButton>
+                    </form>
+                    <MudLink Href="/login" Class="align-self-center">Back to sign in</MudLink>
+                }
+                else
+                {
+                    <form method="post" action="/local-login" class="helpdesk-login-local-form" data-testid="local-login-form" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")">
+                        <AntiforgeryToken />
+                        <MudTextField T="string" Name="email" Disabled="@(!RendererInfo.IsInteractive)" Label="Email" InputType="InputType.Email" autocomplete="username" Required="true" Variant="Variant.Outlined" FullWidth="true" />
+                        <MudTextField T="string" Name="password" Disabled="@(!RendererInfo.IsInteractive)" Label="Password" InputType="InputType.Password" autocomplete="current-password" Required="true" Variant="Variant.Outlined" FullWidth="true" Class="mt-3" />
+                        <MudCheckBox T="bool" Name="rememberMe" Disabled="@(!RendererInfo.IsInteractive)" Label="Keep me signed in" Color="Color.Primary" Class="mt-2" />
+                        <MudButton Variant="Variant.Filled" ButtonType="ButtonType.Submit" Disabled="@(!RendererInfo.IsInteractive)" Size="Size.Large" Color="Color.Primary" FullWidth="true" Class="mt-3" StartIcon="@Icons.Material.Filled.Login">
+                            Sign in to @_branding.ApplicationName
+                        </MudButton>
+                    </form>
+                }
             }
 
-            @if (SupportsLocalAccounts && SupportsOidc)
+            @if (!IsSecondFactorStep && SupportsLocalAccounts && SupportsOidc)
             {
                 <MudDivider Class="my-4" />
                 <MudText Typo="Typo.body2" Align="Align.Center">or use your organization sign-in</MudText>
             }
 
-            @if (SupportsOidc)
+            @if (!IsSecondFactorStep && SupportsOidc)
             {
                 <MudButton Variant="Variant.Filled"
                            Size="Size.Large"
@@ -88,15 +103,29 @@
 
     private string? SignInError => SignInStatus switch
     {
-        "Email and password are required" => "Enter your email and passphrase to sign in.",
-        "Too many sign-in attempts. Please retry shortly." => "Too many sign-in attempts. Please retry shortly.",
-        "Sign-in failed" => "Sign-in failed. Check your email, passphrase and authenticator or recovery code.",
+        "Email and password are required" => "Enter your email and password to sign in.",
+        "Too many sign-in attempts. Please retry shortly." or "rate-limited" => "Too many sign-in attempts. Please retry shortly.",
+        "Sign-in failed" => "Sign-in failed. Check your email and password.",
+        "service-unavailable" => "Sign-in is temporarily unavailable. Please try again shortly.",
+        "form-expired" => "Your sign-in form expired. Please try again.",
+        "verification-expired" => "Your verification session expired. Enter your email and password to try again.",
+        "invalid-code" when IsSecondFactorStep => "That verification code was not accepted. Please try again.",
+        "code-required" when IsSecondFactorStep => "Enter your verification code to continue.",
         _ => null
     };
+
+    private bool IsSecondFactorStep => string.Equals(new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/'), "/login/two-factor", StringComparison.OrdinalIgnoreCase);
 
     private BrandingSnapshot _branding = new();
     protected override async Task OnInitializedAsync()
     {
+        if (IsSecondFactorStep && (!SupportsLocalAccounts ||
+            LocalBrowserLoginEndpoints.ReadChallenge(HttpContextAccessor.HttpContext, Config, Protection) is null))
+        {
+            Navigation.NavigateTo("/login?status=verification-expired", forceLoad: true, replace: true);
+            return;
+        }
+
         try
         {
             _branding = await HttpClientFactory.CreateClient("HelpdeskApi")

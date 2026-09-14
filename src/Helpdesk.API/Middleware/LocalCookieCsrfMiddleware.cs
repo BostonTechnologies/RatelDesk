@@ -6,7 +6,9 @@ public sealed class LocalCookieCsrfMiddleware(RequestDelegate next)
     public async Task InvokeAsync(HttpContext context)
     {
         var request = context.Request;
-        var isLogin = string.Equals(request.Path.Value?.TrimEnd('/'), "/api/v1/local-auth/login", StringComparison.OrdinalIgnoreCase);
+        var path = request.Path.Value?.TrimEnd('/');
+        var isLogin = string.Equals(path, "/api/v1/local-auth/login", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(path, "/api/v1/local-auth/login/two-factor", StringComparison.OrdinalIgnoreCase);
         if ((!context.User.HasClaim("auth_mode", "local") && !isLogin) ||
             HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method) || HttpMethods.IsOptions(request.Method))
         {
