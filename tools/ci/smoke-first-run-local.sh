@@ -83,8 +83,9 @@ curl --fail --silent --show-error \
   --data "$storage_payload" \
   "$api_base_url/api/v1/setup/storage" | jq -e '.state == "Configuring"' > /dev/null
 
-initialize_payload="$(jq -nc --arg password "$password" '{email: "admin@example.test", displayName: "RC4 Test Administrator", password: $password, organizationName: "RC4 Test Organization", applicationName: "RatelDesk RC4", applicationUrl: "http://127.0.0.1:8111"}')"
-curl --fail --silent --show-error \
+# Exercise a real IANA zone in the Alpine runtime, not only Ubuntu-hosted browser tests or UTC.
+initialize_payload="$(jq -nc --arg password "$password" '{email: "admin@example.test", displayName: "RC4 Test Administrator", password: $password, organizationName: "RC4 Test Organization", applicationName: "RatelDesk RC4", applicationUrl: "http://127.0.0.1:8111", timeZoneId: "Africa/Johannesburg"}')"
+curl --fail-with-body --silent --show-error \
   --header 'Content-Type: application/json' \
   --header "X-RatelDesk-Setup-Session: $session" \
   --data "$initialize_payload" \
@@ -242,7 +243,7 @@ self_service_request_id="$(curl --fail --silent --show-error \
   --data "$self_service_request_payload" \
   "$api_base_url/api/v1/self-service/requests" | jq -er '.requestId')"
 curl --fail --silent --show-error --cookie "$self_service_cookie_jar" --header 'X-Requested-With: XMLHttpRequest' \
-  "$api_base_url/api/v1/self-service/requests/$self_service_request_id" | jq -e --arg id "$self_service_request_id" '.id == $id' > /dev/null
+  "$api_base_url/api/v1/self-service/requests/$self_service_request_id" | jq -e --arg id "$self_service_request_id" 'any(.[]; .id == $id) or .id == $id' > /dev/null
 
 self_service_attachment_id="$(curl --fail --silent --show-error \
   --cookie "$self_service_cookie_jar" --header 'X-Requested-With: XMLHttpRequest' \
