@@ -891,7 +891,13 @@ public sealed class BootstrapStateStoreTests
                 "Example Desk",
                 "http://desk.example.test"), CancellationToken.None);
 
-            Assert.Equal(BootstrapInitializationResult.InvalidRequest, result);
+            Assert.False(result.Succeeded);
+            Assert.Equal("setup_validation_failed", result.Code);
+            Assert.Null(result.Descriptor);
+            var error = Assert.Single(result.Errors!);
+            Assert.Equal("applicationUrl", error.Key);
+            Assert.NotEmpty(Assert.Single(error.Value));
+            Assert.Equal(BootstrapState.Configuring, (await store.LoadOrCreateAsync()).State);
             Assert.False(File.Exists(Path.Combine(options.DataDirectory, "rateldesk.db")));
         }
         finally
@@ -938,7 +944,13 @@ public sealed class BootstrapStateStoreTests
                 "https://desk.example.test",
                 "Not/A-TimeZone"), CancellationToken.None);
 
-            Assert.Equal(BootstrapInitializationResult.InvalidRequest, result);
+            Assert.False(result.Succeeded);
+            Assert.Equal("setup_validation_failed", result.Code);
+            Assert.Null(result.Descriptor);
+            var error = Assert.Single(result.Errors!);
+            Assert.Equal("timeZoneId", error.Key);
+            Assert.NotEmpty(Assert.Single(error.Value));
+            Assert.Equal(BootstrapState.Configuring, (await store.LoadOrCreateAsync()).State);
             Assert.False(File.Exists(Path.Combine(options.DataDirectory, "rateldesk.db")));
         }
         finally

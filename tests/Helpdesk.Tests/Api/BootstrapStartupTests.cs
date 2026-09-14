@@ -279,9 +279,15 @@ public sealed class BootstrapStartupTests : IDisposable
         var path = Path.Combine(options.DataDirectory, "invalid-url.db");
         var configured = await ConfigureAsync(store, path, BootstrapState.Configuring);
         var protection = DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(options.StateDirectory, "keys")));
-        Assert.Equal(BootstrapInitializationResult.InvalidRequest,
-            await new BootstrapInitializationService(store, options, protection)
-                .InitializeAsync(configured, ValidAdministrator() with { ApplicationUrl = url }, CancellationToken.None));
+        var result = await new BootstrapInitializationService(store, options, protection)
+            .InitializeAsync(configured, ValidAdministrator() with { ApplicationUrl = url }, CancellationToken.None);
+        Assert.False(result.Succeeded);
+        Assert.Equal("setup_validation_failed", result.Code);
+        Assert.Null(result.Descriptor);
+        var error = Assert.Single(result.Errors!);
+        Assert.Equal("applicationUrl", error.Key);
+        Assert.NotEmpty(Assert.Single(error.Value));
+        Assert.Equal(BootstrapState.Configuring, (await store.LoadOrCreateAsync()).State);
         Assert.False(File.Exists(path));
     }
 

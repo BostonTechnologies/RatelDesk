@@ -98,8 +98,9 @@ public sealed class BootstrapInitializationValidationTests
         await using var harness = await Harness.CreateAsync();
         var result = await harness.Initializer.InitializeAsync(harness.Descriptor,
             ValidRequest with { Password = "short" }, CancellationToken.None);
-        Assert.Equal("password", Assert.Single(result.Errors!).Key);
-        Assert.Contains("15", result.Errors["password"][0]);
+        var passwordError = Assert.Single(result.Errors!);
+        Assert.Equal("password", passwordError.Key);
+        Assert.Contains("15", Assert.Single(passwordError.Value));
         var corrected = await harness.Initializer.InitializeAsync(harness.Descriptor, ValidRequest, CancellationToken.None);
         Assert.True(corrected.Succeeded, corrected.Error);
         await harness.AssertInitializedAsync("Africa/Johannesburg");
