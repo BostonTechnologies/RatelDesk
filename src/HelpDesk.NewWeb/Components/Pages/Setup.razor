@@ -322,6 +322,7 @@
         {
             2 when string.IsNullOrWhiteSpace(_organization) || string.IsNullOrWhiteSpace(_applicationName) || string.IsNullOrWhiteSpace(_timeZoneId) || !ValidUrl(_applicationUrl) => "Enter an organization, application name, permitted public URL, and time zone.",
             3 when string.IsNullOrWhiteSpace(_displayName) || string.IsNullOrWhiteSpace(_email) || string.IsNullOrWhiteSpace(_password) || _password != _confirmPassword => "Enter administrator details and matching passphrases.",
+            3 when _password.Length < 15 => "Use an administrator passphrase of at least 15 characters.",
             _ => null
         };
         if (_error is null) await _stepper.NextStepAsync();
@@ -337,7 +338,11 @@
             request.Headers.Add("X-RatelDesk-Setup-Session", _session);
             using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request, _lifetime.Token);
             if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden) { ExpireSession(); return; }
-            if (!response.IsSuccessStatusCode) { _error = "Initialization could not be completed. Check the setup details and passphrase."; return; }
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = await HelpDesk.NewWeb.Services.SetupInitializationError.ReadAsync(response, _lifetime.Token);
+                return;
+            }
             _password = _confirmPassword = string.Empty; _session = null; _ready = true;
             await InvokeAsync(StateHasChanged);
             await WaitForApplicationAsync();

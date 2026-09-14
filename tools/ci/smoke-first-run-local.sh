@@ -44,13 +44,18 @@ setup_code="$(docker compose "${compose_arguments[@]}" exec -T api dotnet /app/H
 [[ -n "$setup_code" ]]
 [[ "$setup_code" == "$(docker compose "${compose_arguments[@]}" exec -T api dotnet /app/Helpdesk.API.dll --show-setup-code)" ]]
 docker compose "${compose_arguments[@]}" exec -T api dotnet /app/Helpdesk.API.dll --setup-status > "$work_directory/setup-status.txt"
-grep -q 'Setup state: Unconfigured' "$work_directory/setup-status.txt"
+if [[ "${RATELDESK_EXPECT_STORAGE_MANAGED:-false}" == "true" ]]; then
+  grep -q 'Setup state: Configuring' "$work_directory/setup-status.txt"
+  curl --fail --silent --show-error "$api_base_url/api/v1/setup/status" | jq -e '.storageManaged == true and .provider == "PostgreSql"' > /dev/null
+else
+  grep -q 'Setup state: Unconfigured' "$work_directory/setup-status.txt"
+fi
 if grep -Fq "$setup_code" "$work_directory/setup-status.txt"; then
   echo "Setup diagnostics unexpectedly disclosed the setup code." >&2
   exit 1
 fi
-# The shipped Alpine image supports sh and includes Npgsql's native GSS dependency.
-docker compose "${compose_arguments[@]}" exec -T api sh -c 'test -r /usr/lib/libgssapi_krb5.so.2'
+# Check the shipped runtime, not only the SDK/test-runner environment.
+docker compose "${compose_arguments[@]}" exec -T api sh -c 'test -r /usr/lib/libgssapi_krb5.so.2 && test -r /usr/share/zoneinfo/Africa/Johannesburg'
 password="Smoke-$(openssl rand -hex 24)"
 
 session_payload="$(jq -nc --arg setupCode "$setup_code" '{setupCode: $setupCode}')"
@@ -83,12 +88,31 @@ curl --fail --silent --show-error \
   --data "$storage_payload" \
   "$api_base_url/api/v1/setup/storage" | jq -e '.state == "Configuring"' > /dev/null
 
-initialize_payload="$(jq -nc --arg password "$password" '{email: "admin@example.test", displayName: "RC4 Test Administrator", password: $password, organizationName: "RC4 Test Organization", applicationName: "RatelDesk RC4", applicationUrl: "http://127.0.0.1:8111"}')"
-curl --fail --silent --show-error \
+# Exercise a real IANA zone in the Alpine runtime, not only Ubuntu-hosted browser tests or UTC.
+initialize_payload="$(jq -nc --arg password "$password" '{email: "admin@example.test", displayName: "RC4 Test Administrator", password: $password, organizationName: "RC4 Test Organization", applicationName: "RatelDesk RC4", applicationUrl: "http://127.0.0.1:8111", timeZoneId: "Africa/Johannesburg"}')"
+# A rejected field must be actionable, leave setup incomplete, and allow correction with the same session.
+invalid_payload="$(jq -c '.timeZoneId = "Invalid/TimeZone"' <<< "$initialize_payload")"
+invalid_status="$(curl --silent --show-error --output "$work_directory/invalid-initialize.json" --write-out '%{http_code}' \
+  --header 'Content-Type: application/json' --header "X-RatelDesk-Setup-Session: $session" \
+  --data "$invalid_payload" "$api_base_url/api/v1/setup/initialize")"
+[[ "$invalid_status" == "400" ]]
+jq -e '.code == "setup_validation_failed" and (.errors.timeZoneId | length > 0) and (.errors.password == null) and (.traceId | length > 0)' "$work_directory/invalid-initialize.json" > /dev/null
+if grep -Fq "$password" "$work_directory/invalid-initialize.json" || grep -Fq "$session" "$work_directory/invalid-initialize.json"; then
+  echo "Initialization validation unexpectedly disclosed submitted credentials." >&2
+  exit 1
+fi
+curl --fail --silent --show-error "$api_base_url/api/v1/setup/status" | jq -e '.state == "Configuring"' > /dev/null
+initialize_status="$(curl --silent --show-error --output "$work_directory/initialize.json" --write-out '%{http_code}' \
   --header 'Content-Type: application/json' \
   --header "X-RatelDesk-Setup-Session: $session" \
   --data "$initialize_payload" \
-  "$api_base_url/api/v1/setup/initialize" | jq -e '.state == "Restarting"' > /dev/null
+  "$api_base_url/api/v1/setup/initialize")"
+if [[ "$initialize_status" != "200" ]]; then
+  echo "Initialization failed with HTTP $initialize_status." >&2
+  jq '{code, title, errors, traceId}' "$work_directory/initialize.json" >&2
+  exit 1
+fi
+jq -e '.state == "Restarting"' "$work_directory/initialize.json" > /dev/null
 
 login_payload="$(jq -nc --arg password "$password" '{email: "admin@example.test", password: $password, rememberMe: false}')"
 for attempt in $(seq 1 30); do
@@ -278,8 +302,8 @@ for closed_command in --show-setup-code --rotate-setup-code; do
 done
 docker compose "${compose_arguments[@]}" exec -T api sh -c 'test ! -f /var/lib/rateldesk/bootstrap/setup-code'
 docker compose "${compose_arguments[@]}" logs --no-color api >> "$work_directory/api.log"
-if grep -Fq "$setup_code" "$work_directory/api.log"; then
-  echo "API logs unexpectedly disclosed the setup code." >&2
+if grep -Fq "$setup_code" "$work_directory/api.log" || grep -Fq "$password" "$work_directory/api.log" || grep -Fq "$session" "$work_directory/api.log"; then
+  echo "API logs unexpectedly disclosed setup credentials." >&2
   exit 1
 fi
 if grep -q 'Cannot load library libgssapi_krb5' "$work_directory/api.log"; then

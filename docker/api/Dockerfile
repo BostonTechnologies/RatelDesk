@@ -2,8 +2,8 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.12-alpine3.23 AS base
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:8222
-# Npgsql's GSS negotiation needs libgssapi_krb5, which the .NET Alpine base omits.
-RUN apk add --no-cache icu-libs krb5-libs
+# Npgsql needs GSS support; TimeZoneInfo needs the IANA database for non-UTC setup.
+RUN apk add --no-cache icu-libs krb5-libs tzdata
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
 EXPOSE 8222 8222
 
