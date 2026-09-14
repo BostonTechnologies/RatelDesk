@@ -23,17 +23,29 @@ jobs:
       - name: Restore public build inputs
         run: |
           dotnet restore Helpdesk.sln
-          tar -czf "$RUNNER_TEMP/rc7-build-inputs.tgz" -C /tmp/rateldesk-rc7 sdk packages
-          git archive --format=zip --output="$RUNNER_TEMP/rateldesk-source.zip" HEAD
+          tar -czf - -C /tmp/rateldesk-rc7 sdk packages | split -b 350M -d - "$RUNNER_TEMP/build-inputs.part"
           git ls-files '*AGENTS.md' '*SKILL.md'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rateldesk-rc7-build-inputs
-          path: ${{ runner.temp }}/rc7-build-inputs.tgz
+          name: rc7-inputs-00
+          path: ${{ runner.temp }}/build-inputs.part00
           compression-level: 0
           retention-days: 1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rateldesk-rc7-source
-          path: ${{ runner.temp }}/rateldesk-source.zip
+          name: rc7-inputs-01
+          path: ${{ runner.temp }}/build-inputs.part01
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rc7-inputs-02
+          path: ${{ runner.temp }}/build-inputs.part02
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rc7-inputs-03
+          path: ${{ runner.temp }}/build-inputs.part03
+          compression-level: 0
           retention-days: 1
