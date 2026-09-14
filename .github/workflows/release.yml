@@ -289,11 +289,7 @@ jobs:
           if [[ "$PRERELEASE" == true ]]; then
             prerelease_flag=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            --title "RatelDesk $VERSION" \
-            --generate-notes \
-            "${prerelease_flag[@]}" \
-            --notes "RatelDesk $VERSION
+          release_notes="RatelDesk $VERSION
 
           Containers
 
@@ -311,3 +307,16 @@ jobs:
           Pull:
           docker pull ghcr.io/bostontechnologies/rateldesk-web:$VERSION
           docker pull ghcr.io/bostontechnologies/rateldesk-api:$VERSION"
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "RatelDesk $VERSION" \
+              "${prerelease_flag[@]}" \
+              --notes "$release_notes"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "RatelDesk $VERSION" \
+              --generate-notes \
+              "${prerelease_flag[@]}" \
+              --notes "$release_notes"
+          fi
