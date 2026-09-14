@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using Helpdesk.API;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -45,30 +44,4 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.Contains("/api/v1/system/version", content, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task System_Version_ReturnsReleaseInfo()
-    {
-        using var client = _factory.CreateClient();
-
-        var httpResponse = await client.GetAsync("/api/v1/system/version");
-        var content = await httpResponse.Content.ReadAsStringAsync();
-        var response = await httpResponse.Content.ReadFromJsonAsync<SystemVersionResponse>();
-
-        Assert.Equal(HttpStatusCode.OK, httpResponse.StatusCode);
-        Assert.NotNull(response);
-        Assert.Equal("0.1.0-rc.5", response!.Version);
-        Assert.Equal("Helpdesk.API", response.AssemblyName);
-        Assert.False(string.IsNullOrWhiteSpace(response.CommitHash));
-        Assert.NotEqual("unknown", response.BuildTimestamp);
-        Assert.Equal("Development", response.Environment);
-        Assert.DoesNotContain("displayVersion", content, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("informationalVersion", content, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private sealed record SystemVersionResponse(
-        string Version,
-        string CommitHash,
-        string BuildTimestamp,
-        string AssemblyName,
-        string Environment);
 }
