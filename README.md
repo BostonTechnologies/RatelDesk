@@ -8,19 +8,28 @@ It starts with embedded SQLite and local accounts, with PostgreSQL, OIDC provide
 
 ## Quick start
 
-Prerequisites: Docker with Compose, or the .NET SDK specified by [global.json](global.json). No database or identity-provider service is required for a new installation.
+Prerequisites: Docker with Compose, or the .NET SDK specified by [global.json](global.json). No database or identity-provider service is required for a new installation. Run these Compose commands from the root of a checked-out copy of this repository:
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-Open `http://localhost:8111/`. A fresh instance opens the setup wizard automatically. Retrieve the one-time, per-installation setup code only from the API container:
+Open `http://localhost:8111/`. A fresh instance opens the seven-step setup wizard automatically. Retrieve its setup code from the API container; this command finds the code using the API's configuration and does not change it:
 
 ```bash
-docker compose -f docker/docker-compose.yml exec api cat /var/lib/rateldesk/bootstrap/setup-code
+docker compose -f docker/docker-compose.yml exec api dotnet /app/Helpdesk.API.dll --show-setup-code
 ```
 
-Create the first administrator in the wizard, then sign in with that email and password. No authenticator or recovery code is needed for the initial login. Two-factor verification appears only for accounts that explicitly enabled it later in account settings.
+Paste that code into **Unlock setup**, then choose storage, set the instance details, create the first administrator, optionally add branding, review, and finish. Sign in with the administrator email and password you just created. No authenticator or recovery code is needed for the initial login. Two-factor verification appears only for accounts that explicitly enabled it later in account settings.
+
+**Already deployed through Komodo or another container manager?** You do not need a local Compose file or an interactive terminal. Run these commands on the Docker host, replacing `rateldesk-api-1` with the actual API container name from the first command:
+
+```sh
+docker ps --format 'table {{.Names}}\t{{.Image}}'
+docker exec rateldesk-api-1 dotnet /app/Helpdesk.API.dll --show-setup-code
+```
+
+If you are already inside the API container's `sh` terminal, run `dotnet /app/Helpdesk.API.dll --show-setup-code`. The Alpine image includes `sh`; Bash is not required. Open your application's public URL to continue setup. If retrieval fails, run the same command with `--setup-status` for the API version, configured state directory, and setup state without printing secrets. See [setup troubleshooting](docs/SELF_HOSTING.md#setup-code-and-container-troubleshooting) for missing state or an older image. These read commands require rc.5 or later.
 
 The default Compose stack runs Web and API in Production mode with persistent SQLite, bootstrap, data-protection, and attachment volumes. It is explicitly configured for localhost HTTP so local-account cookies use the valid `RatelDesk.Local` name. Deploy HTTPS and remove `Authentication__AllowInsecureLocalhost` for public hosting.
 

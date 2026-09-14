@@ -1,0 +1,89 @@
+.helpdesk-setup-page {
+    padding: clamp(24px, 5vh, 52px) 24px 40px;
+}
+
+.helpdesk-setup-page ::deep .helpdesk-setup-panel {
+    box-sizing: border-box;
+    width: min(100%, 1160px);
+    min-width: 0;
+    padding: clamp(24px, 3vw, 40px);
+    border-radius: 14px;
+    border: 1px solid var(--mud-palette-divider);
+    background: color-mix(in srgb, var(--mud-palette-surface) 98%, transparent);
+}
+
+.setup-header {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding-bottom: 12px;
+}
+
+.setup-logo { width: 76px; height: 76px; object-fit: contain; }
+.setup-eyebrow { color: var(--mud-palette-secondary); font-size: .8rem; font-weight: 650; text-transform: uppercase; letter-spacing: .08em; }
+.setup-header h1 { font-size: clamp(1.7rem, 3vw, 2.2rem); line-height: 1.2; font-weight: 650; margin: 4px 0 8px; }
+.setup-header p:last-child { color: var(--mud-palette-text-secondary); line-height: 1.5; }
+
+.setup-progress { padding: 6px 0 24px; border-bottom: 1px solid var(--mud-palette-divider); }
+.setup-progress ol { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+.setup-progress-step { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 12px 10px; border-radius: 8px; color: var(--mud-palette-text-secondary); }
+.setup-step-number { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border: 1px solid var(--mud-palette-divider); border-radius: 50%; font-size: .9rem; font-weight: 650; }
+.setup-step-title { font-size: .9rem; line-height: 1.3; font-weight: 600; overflow-wrap: anywhere; }
+.setup-step-state { display: block; margin-top: 5px; font-size: .75rem; font-weight: 400; }
+.setup-progress-step.current { color: var(--mud-palette-primary); background: color-mix(in srgb, var(--mud-palette-primary) 9%, var(--mud-palette-surface)); }
+.setup-progress-step.current .setup-step-number { color: var(--mud-palette-primary-text); background: var(--mud-palette-primary); border-color: var(--mud-palette-primary); }
+.setup-progress-step.complete { color: var(--mud-palette-success); }
+.setup-progress-step.complete .setup-step-number { border-color: var(--mud-palette-success); background: color-mix(in srgb, var(--mud-palette-success) 8%, var(--mud-palette-surface)); }
+
+/* The static progress list shows all stages without enabling navigation past validation. */
+.helpdesk-setup-page ::deep .setup-hidden-stepper-nav { display: none; }
+.helpdesk-setup-page ::deep .mud-stepper-content { padding: 16px 0 8px; min-width: 0; }
+.helpdesk-setup-page ::deep .mud-stepper-actions { margin-top: 24px; padding: 20px 0 0; border-top: 1px solid var(--mud-palette-divider); }
+.helpdesk-setup-page ::deep .mud-stepper-actions .mud-button-root { min-height: 44px; padding-inline: 24px; }
+.helpdesk-setup-page ::deep .mud-step { min-width: 0; }
+.helpdesk-setup-page ::deep .mud-input-control { margin-bottom: 14px; }
+.helpdesk-setup-page ::deep .mud-simple-table { overflow-wrap: anywhere; }
+
+h2 { font-size: 1.35rem; line-height: 1.3; font-weight: 650; margin-bottom: 10px; }
+h3 { font-size: 1rem; line-height: 1.4; font-weight: 650; margin-bottom: 8px; }
+p { line-height: 1.6; }
+.setup-stage-description { margin-bottom: 18px; color: var(--mud-palette-text-secondary); }
+.setup-unlock-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(270px, 1fr); gap: 28px; align-items: start; }
+.setup-instructions { min-width: 0; }
+.setup-instructions > p { color: var(--mud-palette-text-secondary); margin-bottom: 20px; }
+.setup-command-card { padding: 20px; background: var(--mud-palette-background-gray); border: 1px solid var(--mud-palette-divider); border-radius: 9px; }
+.setup-command-card p { margin-bottom: 16px; font-size: .92rem; }
+.setup-command { margin: 10px 0 16px; padding: 14px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; background: var(--mud-palette-surface); border: 1px solid var(--mud-palette-divider); border-radius: 6px; font-size: .86rem; line-height: 1.65; user-select: all; }
+.setup-copy-status { margin: 10px 0 0 !important; font-size: .85rem !important; }
+.setup-unlock-card { padding: 26px; border: 1px solid color-mix(in srgb, var(--mud-palette-primary) 28%, var(--mud-palette-divider)); border-radius: 9px; background: color-mix(in srgb, var(--mud-palette-primary) 4%, var(--mud-palette-surface)); }
+.setup-card-step { display: block; color: var(--mud-palette-primary); font-size: .8rem; font-weight: 650; margin-bottom: 14px; }
+.setup-unlock-card > p { color: var(--mud-palette-text-secondary); margin-bottom: 16px; }
+.setup-unlock-card .setup-account-note { margin: 16px 0 0; font-size: .9rem; }
+.setup-help { margin-top: 16px; border: 1px solid var(--mud-palette-divider); border-radius: 8px; padding: 14px 16px; font-size: .9rem; }
+.setup-help summary { cursor: pointer; font-weight: 600; line-height: 1.5; }
+.setup-help p { margin-top: 12px; }
+.setup-status { display: flex; align-items: center; gap: 14px; padding: 26px 0; }
+.setup-status-unavailable > p { margin: 20px 0; }
+
+@media (max-width: 900px) {
+    .setup-progress ol { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .setup-progress-step { flex-direction: row; align-items: center; padding: 10px; }
+    .setup-unlock-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+}
+
+@media (max-width: 600px) {
+    .helpdesk-setup-page { padding: 24px 12px; }
+    .helpdesk-setup-page ::deep .helpdesk-setup-panel { padding: 22px 16px; }
+    .setup-header { gap: 12px; align-items: flex-start; }
+    .setup-logo { width: 46px; height: 46px; }
+    .setup-eyebrow { font-size: .7rem; letter-spacing: .04em; }
+    .setup-header p:last-child { font-size: .9rem; }
+    .setup-progress { padding-bottom: 16px; }
+    .setup-progress ol { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+    .setup-progress-step { padding: 9px 6px; gap: 8px; }
+    .setup-step-title { font-size: .82rem; }
+    .setup-step-state { margin-top: 3px; }
+    .setup-step-number { width: 26px; height: 26px; }
+    .setup-command-card, .setup-unlock-card { padding: 18px; }
+    .setup-command { padding: 12px; font-size: .8rem; }
+}

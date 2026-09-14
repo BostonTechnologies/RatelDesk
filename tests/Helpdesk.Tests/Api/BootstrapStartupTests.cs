@@ -11,12 +11,45 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
+using System.Net;
+using System.Net.Http.Json;
 
 namespace Helpdesk.Tests.Api;
 
 public sealed class BootstrapStartupTests : IDisposable
 {
     private readonly string directory = Path.Combine(Path.GetTempPath(), $"rateldesk-startup-{Guid.NewGuid():N}");
+
+    [Fact]
+    public async Task Setup_unlock_rejects_bad_codes_with_401_and_the_sixth_attempt_with_429()
+    {
+        var (_, store, options) = Create();
+        await store.LoadOrCreateAsync();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(options);
+        builder.Services.AddSingleton<IBootstrapStateStore>(store);
+        builder.Services.AddSingleton<BootstrapSessionService>();
+        builder.Services.AddSingleton<BootstrapInitializationService>();
+        builder.Services.AddSingleton<PostgreSqlSetupPreflightService>();
+        builder.Services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
+        builder.Services.AddRateLimiter(BootstrapEndpoints.ConfigureRateLimiting);
+        await using var app = builder.Build();
+        app.UseRateLimiter();
+        app.MapBootstrapEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            using var rejected = await client.PostAsJsonAsync("/api/v1/setup/session", new { setupCode = "incorrect-test-code" });
+            Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+        }
+        using var limited = await client.PostAsJsonAsync("/api/v1/setup/session", new { setupCode = "incorrect-test-code" });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.Equal(BootstrapState.Unconfigured, (await store.LoadOrCreateAsync()).State);
+    }
 
     [Theory]
     [InlineData(BootstrapState.Unconfigured, "Unconfigured")]

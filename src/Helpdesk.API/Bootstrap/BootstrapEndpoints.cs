@@ -1,12 +1,29 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
+using System.Threading.RateLimiting;
 
 namespace Helpdesk.API.Bootstrap;
 
 public static class BootstrapEndpoints
 {
+    internal static void ConfigureRateLimiting(RateLimiterOptions options)
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddPolicy("SetupUnlock", context =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    AutoReplenishment = true,
+                    PermitLimit = 5,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0
+                }));
+    }
+
     public static void MapBootstrapEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/setup/status", async (

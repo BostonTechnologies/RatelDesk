@@ -40,7 +40,17 @@ premature_login_status="$(curl --silent --show-error --output /dev/null --write-
 [[ "$premature_login_status" == "303" ]]
 grep -Eiq '^location: /setup[[:space:]]*$' "$work_directory/entry.headers"
 
-setup_code="$(docker compose "${compose_arguments[@]}" exec -T api sh -c 'cat /var/lib/rateldesk/bootstrap/setup-code')"
+setup_code="$(docker compose "${compose_arguments[@]}" exec -T api dotnet /app/Helpdesk.API.dll --show-setup-code)"
+[[ -n "$setup_code" ]]
+[[ "$setup_code" == "$(docker compose "${compose_arguments[@]}" exec -T api dotnet /app/Helpdesk.API.dll --show-setup-code)" ]]
+docker compose "${compose_arguments[@]}" exec -T api dotnet /app/Helpdesk.API.dll --setup-status > "$work_directory/setup-status.txt"
+grep -q 'Setup state: Unconfigured' "$work_directory/setup-status.txt"
+if grep -Fq "$setup_code" "$work_directory/setup-status.txt"; then
+  echo "Setup diagnostics unexpectedly disclosed the setup code." >&2
+  exit 1
+fi
+# The shipped Alpine image supports sh and includes Npgsql's native GSS dependency.
+docker compose "${compose_arguments[@]}" exec -T api sh -c 'test -r /usr/lib/libgssapi_krb5.so.2'
 password="Smoke-$(openssl rand -hex 24)"
 
 session_payload="$(jq -nc --arg setupCode "$setup_code" '{setupCode: $setupCode}')"
@@ -248,6 +258,7 @@ for ticket_route in "incidents/$incident_id" "requests/$request_id" "changes/$ch
   curl --fail --silent --show-error --cookie "$cookie_jar" \
     "$api_base_url/api/v1/$ticket_route/timeline" | jq -e 'type == "array"' > /dev/null
 done
+docker compose "${compose_arguments[@]}" logs --no-color api > "$work_directory/api.log"
 docker compose "${compose_arguments[@]}" up --detach --no-deps --force-recreate api
 curl --retry 30 --retry-all-errors --retry-delay 2 --fail --silent --show-error \
   --cookie "$cookie_jar" "$api_base_url/api/v1/attachments/$attachment_id" > "$work_directory/restored.txt"
@@ -256,5 +267,24 @@ curl --fail --silent --show-error --cookie "$web_cookie_jar" \
   "$web_base_url/api/v1/auth/me" | jq -e '.isAuthenticated == true and .isHelpdeskAdmin == true' > /dev/null
 
 curl --fail --silent --show-error "$api_base_url/api/v1/setup/status" | jq -e '.state == "Ready"' > /dev/null
+
+docker compose "${compose_arguments[@]}" exec -T api dotnet /app/Helpdesk.API.dll --setup-status > "$work_directory/setup-status.txt"
+grep -q 'Setup state: Ready' "$work_directory/setup-status.txt"
+for closed_command in --show-setup-code --rotate-setup-code; do
+  if docker compose "${compose_arguments[@]}" exec -T api dotnet /app/Helpdesk.API.dll "$closed_command" > "$work_directory/closed-command.txt" 2>&1; then
+    echo "Completed setup unexpectedly accepted $closed_command." >&2
+    exit 1
+  fi
+done
+docker compose "${compose_arguments[@]}" exec -T api sh -c 'test ! -f /var/lib/rateldesk/bootstrap/setup-code'
+docker compose "${compose_arguments[@]}" logs --no-color api >> "$work_directory/api.log"
+if grep -Fq "$setup_code" "$work_directory/api.log"; then
+  echo "API logs unexpectedly disclosed the setup code." >&2
+  exit 1
+fi
+if grep -q 'Cannot load library libgssapi_krb5' "$work_directory/api.log"; then
+  echo "API image is missing Npgsql native GSS support." >&2
+  exit 1
+fi
 
 echo "First-run $setup_provider setup, local sign-in, core ticket CRUD, self-service request, and attachment smoke test passed."

@@ -8,7 +8,28 @@ For built-in roles, scoped custom roles, and the bounded tenant-member delegatio
 
 ## First use and Docker
 
-Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. After the first API start, retrieve the operator-only setup code from `/var/lib/rateldesk/bootstrap/setup-code` in the API container and open `http://localhost:8111/`. Fresh root and login visits automatically open `/setup`. The code is consumed at completion and is never returned by HTTP APIs. On success, the API exits its restricted setup host and Compose restarts it into the normal application host; wait briefly for the sign-in page to become available. Sign in with the administrator email and password created in the wizard. The setup code is only for unlocking the one-time wizard; it is not a login credential or an authenticator code. Initial login has no MFA step. An account that later enables two-factor authentication is asked for its authenticator or saved recovery code only after a correct password. Account activation links are issued by administrators for invited accounts and are not part of first-admin login.
+Use [docker/docker-compose.yml](../docker/docker-compose.yml) as the default starting point. It starts only Web and API in Production mode and persists four distinct concerns: bootstrap state, data-protection keys, SQLite data, and attachments. Run repository-relative Compose commands from a checked-out repository's root directory. After the first API start, open `http://localhost:8111/`, or your public application URL. Fresh root and login visits automatically open `/setup`.
+
+Retrieve the operator-only setup code using the running API's configuration:
+
+```sh
+docker compose -f docker/docker-compose.yml exec api dotnet /app/Helpdesk.API.dll --show-setup-code
+```
+
+For an existing Komodo or other managed deployment, use the actual container name instead. No Compose file or interactive shell is needed. Run the first command on the Docker host, find the API container, then replace `rateldesk-api-1` below with its name:
+
+```sh
+docker ps --format 'table {{.Names}}\t{{.Image}}'
+docker exec rateldesk-api-1 dotnet /app/Helpdesk.API.dll --show-setup-code
+```
+
+If already inside the API container, run `dotnet /app/Helpdesk.API.dll --show-setup-code`. Choose `sh` when opening a container terminal: the Alpine image has `sh`, and does not require Bash. The command reads the current code without rotating it. It supports custom `Bootstrap__StateDirectory` values and deployment-supplied `Bootstrap__SetupCode` values, so no hard-coded file path is needed. `--show-setup-code` and `--setup-status` are available from rc.5 onward.
+
+For a native .NET deployment, run the same switches with the published API assembly path and its deployment environment. Use absolute bootstrap, data, and key-ring paths if the service normally runs from a different working directory than its assembly. Operator commands resolve relative file paths from the API assembly directory and honor `DOTNET_CONTENTROOT` / `ASPNETCORE_CONTENTROOT` for mounted appsettings.
+
+Paste the printed code into **Unlock setup**. The seven visible stages guide you through storage, instance details, the first administrator, optional branding, review, and completion. The code is consumed at completion and is never returned by HTTP APIs or application logs. The API exits its restricted setup host after completion; configure your container manager to restart it, as the bundled Compose files do. The wizard waits for the normal application host to become available.
+
+Sign in with the administrator email and password created in the wizard. The setup code only unlocks the one-time wizard; it is not a login credential or an authenticator code. Initial login has no MFA step. An account that later enables two-factor authentication is asked for its authenticator or saved recovery code only after a correct password. Account activation links are issued by administrators for invited accounts and are not part of first-admin login.
 
 When `StorageOptions__ImageSigningSecret` is unset, a bootstrap-managed installation generates a cryptographically random image and public-ticket link signing key on its first normal runtime start. The value is protected with the same durable Data Protection key ring and stored on the bootstrap volume; it is not written to appsettings or returned by an API. Keep that volume and key ring in the recovery set so existing signed links remain valid. Set `StorageOptions__ImageSigningSecret` only when a deployment deliberately owns and rotates that secret; a deployment-provided value takes precedence over the generated one.
 
@@ -25,10 +46,41 @@ operator-controlled setup flow or unattended secret inputs instead.
 Before setup completes, an operator can replace a lost or exposed setup code without reopening a completed instance:
 
 ```bash
-docker compose -f docker/docker-compose.yml exec api dotnet Helpdesk.API.dll --rotate-setup-code
+docker exec rateldesk-api-1 dotnet /app/Helpdesk.API.dll --rotate-setup-code
 ```
 
-The replacement is printed once to the operator's terminal, written to the protected `setup-code` file, and invalidates existing setup sessions. The command refuses to run after setup is ready or when recovery is required.
+Replace the example container name with your API container. The replacement is printed to the operator's terminal, written to the protected `setup-code` file, and invalidates existing setup sessions. This is an explicit reset of the setup code; use `--show-setup-code` for normal retrieval. Rotation refuses to run after setup is ready, when recovery is required, or when no valid bootstrap descriptor exists.
+
+### Setup code and container troubleshooting
+
+From the Docker host, inspect the existing state without displaying secrets:
+
+```sh
+docker exec rateldesk-api-1 dotnet /app/Helpdesk.API.dll --setup-status
+```
+
+This reports the API version/build, effective bootstrap directory, recorded setup state, and whether a valid code is available. It does not start another API host, initialize state, contact the database, or check HTTP readiness.
+
+| Result | Next action |
+| --- | --- |
+| `Unconfigured` or `Configuring`, code available | Run `--show-setup-code` and paste the result into the wizard. |
+| Current code missing or stale, valid unfinished state | Run `--rotate-setup-code` and use the replacement; earlier unlocked setup sessions become invalid. |
+| `Ready` | Setup is complete. Sign in with the administrator created during setup. If Web still shows setup, verify its API destination and matching release versions. |
+| `Missing` or `Invalid` | Check the configured bootstrap directory, volume mount, API startup logs, and image version. The diagnostic command deliberately leaves state untouched. |
+| `RecoveryRequired` | Restore the matching database, bootstrap descriptor, and key ring; see [initialization recovery](#initialization-and-storage-recovery). |
+| Startup disabled | Remove the test-only `Helpdesk__SkipDatabaseStartup=true` setting and restart the API. |
+
+The default generated file is `/var/lib/rateldesk/bootstrap/setup-code`. A custom state directory changes that location; a deployment-supplied `Bootstrap__SetupCode` means a generated file is unnecessary. Data Protection XML files in the key-ring directory are unrelated to the setup code. Use the retrieval command rather than inspecting those files.
+
+If a command is unavailable or the Web cannot read setup status, check the running image labels. Substitute both actual container names:
+
+```sh
+docker inspect --format '{{.Name}} image={{.Config.Image}} version={{index .Config.Labels "org.opencontainers.image.version"}} revision={{index .Config.Labels "org.opencontainers.image.revision"}}' rateldesk-api-1 rateldesk-web-1
+```
+
+Deploy matching API and Web release tags. An image reference without a tag uses `latest`; release candidates do not advance that tag. Explicitly select the intended RC, pull both images, and recreate both application containers while retaining their existing volumes. The rc.5 wizard shows connection guidance and a retry action if setup status is unavailable or unsupported.
+
+For rc.4, which predates the two read commands, `dotnet /app/Helpdesk.API.dll --rotate-setup-code` is available inside the API container. It creates a replacement code for unfinished setup using the effective configuration and invalidates earlier setup sessions. Confirm the API is rc.4 or later before using this command; older versions may treat an unrecognized argument as a normal application launch.
 
 ### Operator-invoked unattended setup
 

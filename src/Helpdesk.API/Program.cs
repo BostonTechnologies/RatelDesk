@@ -96,7 +96,20 @@ using System.Threading.RateLimiting;
 using AppServices = Helpdesk.Application.Services;
 using SharedServices = Helpdesk.Shared.Services;
 
-var builder = WebApplication.CreateBuilder(args);
+var operatorCommand = BootstrapOperatorCommand.IsRequested(args);
+// The shipped API runs from /app. Keep relative storage paths anchored there
+// when a command is invoked from another shell directory. Explicit host
+// content roots still select mounted appsettings, independently of storage paths.
+if (operatorCommand) Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+var builder = operatorCommand
+    ? WebApplication.CreateBuilder(new WebApplicationOptions
+    {
+        Args = args,
+        ContentRootPath = BootstrapOperatorCommand.ResolveContentRoot(AppContext.BaseDirectory,
+            Environment.GetEnvironmentVariable("DOTNET_CONTENTROOT"),
+            Environment.GetEnvironmentVariable("ASPNETCORE_CONTENTROOT"))
+    })
+    : WebApplication.CreateBuilder(args);
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var systemTokenSecret = builder.Configuration["SYSTEM_TOKEN_SECRET"] ?? builder.Configuration["SystemTokenSecret"];
 var aiAgentOpsLogBuffer = new AiAgentOpsLogBuffer();
@@ -117,6 +130,16 @@ var bootstrapOptions = new BootstrapOptions
     }
 };
 var bootstrapStateStore = new FileBootstrapStateStore(bootstrapOptions);
+if (operatorCommand)
+{
+    var exitCode = await BootstrapOperatorCommand.ExecuteAsync(
+        args, builder.Configuration, bootstrapOptions, Console.Out, Console.Error);
+    if (exitCode.HasValue)
+    {
+        Environment.ExitCode = exitCode.Value;
+        return;
+    }
+}
 BootstrapDescriptor? bootstrapDescriptor = null;
 if (!skipDatabaseStartup)
 {
@@ -126,6 +149,35 @@ if (!skipDatabaseStartup)
     bootstrapDescriptor = await new BootstrapStartupService(bootstrapStateStore, bootstrapOptions, startupProtection)
         .ResolveAsync(builder.Configuration);
 }
+
+if (args is ["--rotate-setup-code"])
+{
+    if (bootstrapDescriptor is null)
+    {
+        await Console.Error.WriteLineAsync("No bootstrap-managed setup state was found for the selected configuration.");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    await using var rotationLease = await BootstrapOperationLease.AcquireAsync(bootstrapOptions.StateDirectory, CancellationToken.None);
+    var currentDescriptor = await bootstrapStateStore.LoadOrCreateAsync();
+    var rotationKeyPath = builder.Configuration["DataProtection:KeyRingPath"] ?? Path.Combine(bootstrapOptions.StateDirectory, "keys");
+    var rotationProtection = DataProtectionProvider.Create(new DirectoryInfo(rotationKeyPath),
+        options => options.SetApplicationName(builder.Configuration["DataProtection:ApplicationName"] ?? "Helpdesk-Keyring"));
+    await BootstrapStartupService.ReconcileSelectedMarkerAsync(
+        bootstrapStateStore, currentDescriptor, rotationProtection, CancellationToken.None);
+    var setupCode = await bootstrapStateStore.RotateSetupCodeAsync();
+    if (string.IsNullOrWhiteSpace(setupCode))
+    {
+        await Console.Error.WriteLineAsync("The setup code cannot be rotated after setup is complete or while recovery is required.");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    await Console.Out.WriteLineAsync(setupCode);
+    return;
+}
+
 
 if (bootstrapDescriptor is { State: BootstrapState.Ready, Provider: "Sqlite", SqlitePath: not null })
 {
@@ -232,25 +284,6 @@ if (args is ["--recover-local-admin", var recoveryEmail])
     return;
 }
 
-if (args is ["--rotate-setup-code"])
-{
-    if (bootstrapDescriptor is null)
-    {
-        await Console.Error.WriteLineAsync("No bootstrap-managed setup state was found for the selected configuration.");
-        return;
-    }
-
-    await using var rotationLease = await BootstrapOperationLease.AcquireAsync(bootstrapOptions.StateDirectory, CancellationToken.None);
-    var setupCode = await bootstrapStateStore.RotateSetupCodeAsync();
-    if (string.IsNullOrWhiteSpace(setupCode))
-    {
-        await Console.Error.WriteLineAsync("The setup code cannot be rotated after setup is complete or while recovery is required.");
-        return;
-    }
-
-    await Console.Out.WriteLineAsync(setupCode);
-    return;
-}
 
 if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not BootstrapState.Ready)
 {
@@ -267,21 +300,12 @@ if (bootstrapDescriptor is not null && bootstrapDescriptor.State is not Bootstra
     builder.Services.AddSingleton<PostgreSqlSetupPreflightService>();
     builder.Services.AddHostedService<BootstrapRuntimeTransitionWatcher>();
     builder.Services.AddProblemDetails();
-    builder.Services.AddRateLimiter(options =>
-    {
-        options.AddPolicy("SetupUnlock", context =>
-            RateLimitPartition.GetFixedWindowLimiter(
-                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                _ => new FixedWindowRateLimiterOptions
-                {
-                    AutoReplenishment = true,
-                    PermitLimit = 5,
-                    Window = TimeSpan.FromMinutes(1),
-                    QueueLimit = 0
-                }));
-    });
+    builder.Services.AddRateLimiter(BootstrapEndpoints.ConfigureRateLimiting);
 
     var bootstrapApp = builder.Build();
+    if (bootstrapDescriptor.State is BootstrapState.Unconfigured or BootstrapState.Configuring)
+        bootstrapApp.Services.GetRequiredService<ILoggerFactory>().CreateLogger("RatelDesk.Setup")
+            .LogInformation("RatelDesk setup is required. Open /setup and retrieve the setup code by running dotnet /app/Helpdesk.API.dll --show-setup-code in the API container. For non-secret diagnostics, run dotnet /app/Helpdesk.API.dll --setup-status. The setup code is not written to logs.");
     bootstrapApp.UseExceptionHandler();
     bootstrapApp.UseRateLimiter();
     bootstrapApp.MapGet("/health/live", () => Results.Ok(new { status = "alive" })).AllowAnonymous();
