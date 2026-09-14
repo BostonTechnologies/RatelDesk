@@ -6,7 +6,7 @@ test.use({ actionTimeout: 15_000, navigationTimeout: 30_000 });
 
 const setupCode = process.env.HELPDESK_E2E_SETUP_CODE;
 
-test('first-run setup initializes, survives restart, and supports isolated scoped accounts', async ({ page, browser, baseURL }) => {
+test('first-run setup initializes, survives restart, and supports isolated scoped accounts', async ({ page, browser, baseURL }, testInfo) => {
   test.setTimeout(180_000);
   if (!setupCode) {
     throw new Error('HELPDESK_E2E_SETUP_CODE is required for first-run setup validation.');
@@ -15,12 +15,66 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   const interactiveConnection = page.waitForResponse(response =>
     response.url().includes('/_blazor/negotiate') && response.ok());
 
-  await page.goto('/setup');
+  // Fresh visitors must discover setup from normal entry points, without knowing /setup.
+  const directLogin = await page.request.get('/login', { maxRedirects: 0 });
+  expect(directLogin.status()).toBe(302);
+  expect(directLogin.headers().location).toBe('/setup');
+  const prematureLogin = await page.request.post('/local-login', {
+    maxRedirects: 0, form: { email: 'admin@example.test', password: 'not-created-yet' }
+  });
+  expect(prematureLogin.status()).toBe(303);
+  expect(prematureLogin.headers().location).toBe('/setup');
+  await page.goto('/');
   await interactiveConnection;
+  await expect(page).toHaveURL(/\/setup$/);
   await expect(page.getByRole('heading', { name: 'Set up RatelDesk' })).toBeVisible();
-  await expect(page.getByText('operator-only setup code')).toBeVisible();
+  await expect(page.getByText('The one-time setup code confirms that you manage this server.')).toBeVisible();
 
   await expect(page.getByTestId('setup-wizard')).toHaveAttribute('data-interactive', 'true');
+  const progress = page.getByTestId('setup-progress');
+  const stages = progress.locator('li');
+  await expect(stages).toHaveCount(7);
+  await expect(progress.locator('[aria-current="step"]')).toHaveAttribute('data-step', '1');
+  await expect(progress.getByRole('button')).toHaveCount(0);
+  const desktopPanel = await page.locator('.helpdesk-setup-panel').boundingBox();
+  expect(desktopPanel!.width).toBeGreaterThanOrEqual(1_000);
+  const desktopStages = await stages.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top));
+  expect(new Set(desktopStages).size).toBe(1);
+
+  // Capture the fresh page before entering any installation code or account details.
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    for (let index = 0; index < 7; index++) {
+      await expect(stages.nth(index)).toBeInViewport();
+      const bounds = await stages.nth(index).boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await testInfo.attach(`first-run-setup-${viewport.width}px`, {
+      body: await page.screenshot({ path: testInfo.outputPath(`first-run-setup-${viewport.width}px.png`), fullPage: true }),
+      contentType: 'image/png'
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  const containerName = page.getByLabel('API container name', { exact: true });
+  const copyCommand = page.getByRole('button', { name: 'Copy command', exact: true });
+  await containerName.fill('api; echo invalid');
+  await containerName.press('Tab');
+  await expect(copyCommand).toBeDisabled();
+  await expect(page.getByTestId('setup-host-command')).not.toContainText('echo invalid');
+  await containerName.fill('rateldesk-preview-api-1');
+  await containerName.press('Tab');
+  const expectedCommand = 'docker exec rateldesk-preview-api-1 dotnet /app/Helpdesk.API.dll --show-setup-code';
+  await expect(page.getByTestId('setup-host-command')).toHaveText(expectedCommand);
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (value: string) => { document.documentElement.dataset.copiedSetupCommand = value; } }
+  }));
+  await copyCommand.click();
+  await expect(page.locator('html')).toHaveAttribute('data-copied-setup-command', expectedCommand);
+  await expect(page.getByText('Command copied. Run it on your Docker host.', { exact: true })).toBeVisible();
   const setupCodeInput = page.getByLabel('Setup code');
   await setupCodeInput.fill(setupCode);
   await setupCodeInput.press('Tab');
@@ -28,6 +82,8 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   await page.getByRole('button', { name: 'Continue' }).click();
   const prepareStorage = page.getByRole('button', { name: 'Prepare storage' });
   await expect(prepareStorage).toBeVisible();
+  await expect(progress.locator('[data-step="1"]')).toHaveAttribute('data-state', 'complete');
+  await expect(progress.locator('[aria-current="step"]')).toHaveAttribute('data-step', '2');
   await prepareStorage.click();
   await expect(page.getByLabel('Initial organization')).toBeVisible();
   await page.getByLabel('Initial organization').fill('Browser Wizard Organization');
@@ -68,12 +124,16 @@ test('first-run setup initializes, survives restart, and supports isolated scope
 
   // Login starts with an empty browser cookie jar. An earlier API login cannot mask failure.
   await page.context().clearCookies();
-  await page.goto('/login');
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Admin sign-in' }).click();
+  await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByTestId('local-login-form')).toHaveAttribute('data-interactive', 'true');
+  await expect(page.locator('input[name="twoFactorCode"], input[name="code"]')).toHaveCount(0);
+  await expect(page.locator('a[href="/activate"]')).toHaveCount(0);
   await page.getByLabel('Email', { exact: false }).fill('browser.wizard.admin@example.test');
   await page.getByLabel('Password', { exact: false }).fill('incorrect-browser-test-passphrase');
   await page.getByRole('button', { name: 'Sign in to Browser Wizard RatelDesk', exact: true }).click();
-  await expect(page.getByTestId('local-login-error')).toHaveText('Sign-in failed. Check your email, passphrase and authenticator or recovery code.');
+  await expect(page.getByTestId('local-login-error')).toHaveText('Sign-in failed. Check your email and password.');
   await signIn(page, 'browser.wizard.admin@example.test');
   const admin = await (await page.request.get('/api/v1/auth/me')).json();
   expect(admin.isHelpdeskAdmin).toBe(true);
@@ -156,9 +216,29 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   await page.getByLabel('Authenticator code', { exact: true }).fill(totp(sharedKey));
   await page.getByRole('button', { name: 'Enable authenticator', exact: true }).click();
   await expect(page.getByLabel('Recovery codes', { exact: true })).toBeVisible();
+  const recoveryCode = (await page.getByLabel('Recovery codes', { exact: true }).inputValue()).trim().split(/\s+/)[0];
   expect((await page.request.get('/api/v1/auth/me')).ok()).toBe(true);
   await page.getByRole('button', { name: 'I have saved my recovery codes' }).click();
   await expect(page).toHaveURL(/\/home(?:[?#].*)?$/);
+
+  // MFA is offered only after a correct password for an explicitly enrolled account.
+  for (const code of [totp(sharedKey), recoveryCode]) {
+    await page.context().clearCookies();
+    await page.goto('/login');
+    await expect(page.getByTestId('local-login-form')).toHaveAttribute('data-interactive', 'true');
+    await expect(page.getByLabel('Verification code')).toHaveCount(0);
+    await page.getByLabel('Email', { exact: false }).fill('browser.wizard.admin@example.test');
+    await page.getByLabel('Password', { exact: false }).fill(passphrase);
+    await page.getByRole('button', { name: 'Sign in to Browser Wizard RatelDesk', exact: true }).click();
+    await expect(page).toHaveURL(/\/login\/two-factor$/);
+    expect((await page.request.get('/api/v1/auth/me')).status()).toBe(401);
+    await expect(page.getByTestId('local-two-factor-form')).toHaveAttribute('data-interactive', 'true');
+    await expect(page.locator('input[name="password"]')).toHaveCount(0);
+    await page.getByLabel('Verification code').fill(code);
+    await page.getByRole('button', { name: 'Verify and sign in' }).click();
+    await expect(page).toHaveURL(/\/home(?:[?#].*)?$/);
+    expect((await (await page.request.get('/api/v1/auth/me')).json()).isHelpdeskAdmin).toBe(true);
+  }
 });
 
 const passphrase = 'browser-wizard-setup-passphrase';

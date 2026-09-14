@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Helpdesk.API;
 using Helpdesk.API.Endpoints.Authentication;
 using Helpdesk.API.Endpoints.Tickets;
@@ -17,6 +18,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -1570,15 +1572,156 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         using var loginClient = CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         var missingCode = await loginClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
             "admin@example.test", "correct horse battery staple"));
-        var withAuthenticator = await loginClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
-            "admin@example.test", "correct horse battery staple", TwoFactorCode: authenticatorCode));
+        Assert.Equal(HttpStatusCode.Accepted, missingCode.StatusCode);
+        var challengeCookie = missingCode.Headers.GetValues("Set-Cookie")
+            .Last(cookie => cookie.StartsWith("RatelDesk.LocalChallenge=", StringComparison.Ordinal));
+        Assert.Contains("httponly", challengeCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("samesite=strict", challengeCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("max-age=300", challengeCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await loginClient.GetAsync("/api/v1/auth/me")).StatusCode);
+        var incorrectCode = await loginClient.PostAsJsonAsync("/api/v1/local-auth/login/two-factor",
+            new LocalAuthenticationEndpoints.CompleteTwoFactorLoginRequest("invalid"));
+        Assert.Equal(HttpStatusCode.Unauthorized, incorrectCode.StatusCode);
+        Assert.False(incorrectCode.Headers.Contains("Set-Cookie"));
+        var withAuthenticator = await loginClient.PostAsJsonAsync("/api/v1/local-auth/login/two-factor",
+            new LocalAuthenticationEndpoints.CompleteTwoFactorLoginRequest(authenticatorCode));
         using var recoveryClient = CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
-        var withRecoveryCode = await recoveryClient.PostAsJsonAsync("/api/v1/local-auth/login", new LocalAuthenticationEndpoints.LocalLoginRequest(
-            "admin@example.test", "correct horse battery staple", TwoFactorCode: recoveryCodes.RecoveryCodes[0]));
+        Assert.Equal(HttpStatusCode.Accepted, (await recoveryClient.PostAsJsonAsync("/api/v1/local-auth/login",
+            new LocalAuthenticationEndpoints.LocalLoginRequest("admin@example.test", "correct horse battery staple"))).StatusCode);
+        var withRecoveryCode = await recoveryClient.PostAsJsonAsync("/api/v1/local-auth/login/two-factor",
+            new LocalAuthenticationEndpoints.CompleteTwoFactorLoginRequest(recoveryCodes.RecoveryCodes[0]));
 
-        Assert.Equal(HttpStatusCode.Unauthorized, missingCode.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, withAuthenticator.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await loginClient.GetAsync("/api/v1/auth/me")).StatusCode);
+        Assert.Contains(withAuthenticator.Headers.GetValues("Set-Cookie"), cookie => cookie.StartsWith("RatelDesk.LocalChallenge=;", StringComparison.Ordinal));
         Assert.Equal(HttpStatusCode.NoContent, withRecoveryCode.StatusCode);
+    }
+
+    [Fact]
+    public async Task First_administrator_signs_in_with_email_and_password_only_and_email_whitespace_is_ignored()
+    {
+        using var client = CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var response = await client.PostAsJsonAsync("/api/v1/local-auth/login",
+            new LocalAuthenticationEndpoints.LocalLoginRequest("  admin@example.test  ", "correct horse battery staple"));
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/auth/me")).StatusCode);
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var account = await scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().FindByEmailAsync("admin@example.test");
+        Assert.False(account!.TwoFactorEnabled);
+    }
+
+    [Fact]
+    public async Task Invalid_password_does_not_issue_a_second_factor_challenge()
+    {
+        await EnrollAdministratorAsync();
+        using var client = CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var response = await client.PostAsJsonAsync("/api/v1/local-auth/login",
+            new LocalAuthenticationEndpoints.LocalLoginRequest("admin@example.test", "incorrect password"));
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.DoesNotContain(response.Headers.GetValues("Set-Cookie"), cookie =>
+            cookie.StartsWith("RatelDesk.LocalChallenge=", StringComparison.Ordinal) && !cookie.StartsWith("RatelDesk.LocalChallenge=;", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("tampered")]
+    [InlineData("expired")]
+    [InlineData("password-changed")]
+    [InlineData("permissions-changed")]
+    [InlineData("disabled")]
+    public async Task Second_factor_rejects_missing_expired_or_revoked_password_verification(string state)
+    {
+        var (key, _) = await EnrollAdministratorAsync();
+        using var client = CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var password = await client.PostAsJsonAsync("/api/v1/local-auth/login",
+            new LocalAuthenticationEndpoints.LocalLoginRequest("admin@example.test", "correct horse battery staple"));
+        Assert.Equal(HttpStatusCode.Accepted, password.StatusCode);
+        var challengeCookie = password.Headers.GetValues("Set-Cookie")
+            .Last(cookie => cookie.StartsWith("RatelDesk.LocalChallenge=", StringComparison.Ordinal)).Split(';', 2)[0];
+        if (state == "tampered")
+            challengeCookie = "RatelDesk.LocalChallenge=invalid";
+        if (state is "expired" or "password-changed" or "permissions-changed" or "disabled")
+        {
+            await using var scope = _factory.Services.CreateAsyncScope();
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var account = (await users.FindByEmailAsync("admin@example.test"))!;
+            if (state == "expired")
+            {
+                var protector = scope.ServiceProvider.GetRequiredService<IDataProtectionProvider>()
+                    .CreateProtector(LocalSignInChallenge.ProtectionPurpose).ToTimeLimitedDataProtector();
+                var payload = new LocalSignInChallenge(account.Id, account.SecurityStamp!, account.AuthorizationRevision, false);
+                challengeCookie = "RatelDesk.LocalChallenge=" + protector.Protect(JsonSerializer.Serialize(payload), DateTimeOffset.UtcNow.AddMinutes(-1));
+            }
+            else if (state == "password-changed")
+                Assert.True((await users.UpdateSecurityStampAsync(account)).Succeeded);
+            else
+            {
+                if (state == "disabled") account.IsEnabled = false;
+                else account.AuthorizationRevision++;
+                Assert.True((await users.UpdateAsync(account)).Succeeded);
+            }
+        }
+        if (state != "missing")
+            client.DefaultRequestHeaders.Add("Cookie", challengeCookie);
+
+        var response = await client.PostAsJsonAsync("/api/v1/local-auth/login/two-factor",
+            new LocalAuthenticationEndpoints.CompleteTwoFactorLoginRequest(CreateTotp(key)));
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.DoesNotContain(response.Headers.GetValues("Set-Cookie"), cookie => cookie.StartsWith("RatelDesk.Local=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Invalid_second_factor_locks_the_account_without_password_step_resetting_the_counter()
+    {
+        await EnrollAdministratorAsync();
+        using var client = CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/v1/local-auth/login",
+                new LocalAuthenticationEndpoints.LocalLoginRequest("admin@example.test", "correct horse battery staple"))).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/v1/local-auth/login/two-factor",
+                new LocalAuthenticationEndpoints.CompleteTwoFactorLoginRequest("invalid"))).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/v1/local-auth/login",
+            new LocalAuthenticationEndpoints.LocalLoginRequest("admin@example.test", "correct horse battery staple"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Recovery_code_can_only_be_used_once_across_password_challenges()
+    {
+        var (_, recoveryCode) = await EnrollAdministratorAsync();
+        using var client = CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/v1/local-auth/login",
+                new LocalAuthenticationEndpoints.LocalLoginRequest("admin@example.test", "correct horse battery staple"))).StatusCode);
+            var verify = await client.PostAsJsonAsync("/api/v1/local-auth/login/two-factor",
+                new LocalAuthenticationEndpoints.CompleteTwoFactorLoginRequest(recoveryCode));
+            Assert.Equal(attempt == 0 ? HttpStatusCode.NoContent : HttpStatusCode.Unauthorized, verify.StatusCode);
+        }
+    }
+
+    [Theory]
+    [InlineData("/api/v1/local-auth/login/two-factor")]
+    [InlineData("/api/v1/local-auth/login/two-factor/")]
+    public async Task Anonymous_second_factor_rejects_cross_site_and_unmarked_requests(string route)
+    {
+        using var client = _factory.CreateClient();
+        var code = new LocalAuthenticationEndpoints.CompleteTwoFactorLoginRequest("123456");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(route, code)).StatusCode);
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "cross-site");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(route, code)).StatusCode);
+    }
+
+    private async Task<(string Key, string RecoveryCode)> EnrollAdministratorAsync()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var account = (await users.FindByEmailAsync("admin@example.test"))!;
+        Assert.True((await users.ResetAuthenticatorKeyAsync(account)).Succeeded);
+        Assert.True((await users.SetTwoFactorEnabledAsync(account, true)).Succeeded);
+        var recovery = (await users.GenerateNewTwoFactorRecoveryCodesAsync(account, 2))!.ToArray();
+        return ((await users.GetAuthenticatorKeyAsync(account))!, recovery[0]);
     }
 
     [Fact]

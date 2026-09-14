@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using System.Data;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.Auth;
@@ -8,6 +10,7 @@ using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,62 +26,82 @@ public static class LocalAuthenticationEndpoints
             [FromBody] LocalLoginRequest request,
             [FromServices] UserManager<ApplicationUser> users,
             [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] IDataProtectionProvider protection,
+            [FromServices] IConfiguration configuration,
             HttpContext context) =>
         {
-            var user = await users.FindByEmailAsync(request.Email);
-            if (user is null || !user.IsEnabled || await users.IsLockedOutAsync(user))
-            {
+            context.Response.Headers.CacheControl = "no-store";
+            ClearLoginChallenge(context, configuration);
+            if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrEmpty(request.Password))
                 return Results.Unauthorized();
-            }
 
-            if (!await users.CheckPasswordAsync(user, request.Password) ||
-                !await IsSecondFactorValidAsync(users, user, request.TwoFactorCode))
+            var user = await users.FindByEmailAsync(request.Email.Trim());
+            if (user is null || !user.IsEnabled || await users.IsLockedOutAsync(user))
+                return Results.Unauthorized();
+
+            if (!await users.CheckPasswordAsync(user, request.Password))
             {
                 await users.AccessFailedAsync(user);
                 return Results.Unauthorized();
             }
 
-            await users.ResetAccessFailedCountAsync(user);
-            var claims = new[]
+            if (await users.GetTwoFactorEnabledAsync(user))
             {
-                new Claim(ClaimTypes.NameIdentifier, user.Id),
-                new Claim(ClaimTypes.Name, string.IsNullOrWhiteSpace(user.DisplayName) ? user.UserName ?? user.Email! : user.DisplayName),
-                new Claim(ClaimTypes.Email, user.Email ?? string.Empty),
-                new Claim("auth_mode", "local"),
-                new Claim("security_stamp", user.SecurityStamp ?? string.Empty),
-                new Claim("authorization_revision", user.AuthorizationRevision.ToString(global::System.Globalization.CultureInfo.InvariantCulture))
-            }.Concat(user.IsInstanceAdministrator
-                ? [new Claim(ClaimTypes.Role, "HelpdeskAdmin"), new Claim("roles", "HelpdeskAdmin")]
-                : []);
-            var identity = new ClaimsIdentity(
-                claims,
-                LocalAuthenticationOptions.Scheme,
-                ClaimTypes.Name,
-                ClaimTypes.Role);
-            var principal = new ClaimsPrincipal(identity);
-            var access = await accessService.ResolveAsync(principal, context.RequestAborted);
-            foreach (var role in access.RoleBundles.Concat(access.Permissions).Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (!identity.HasClaim(ClaimTypes.Role, role))
+                if (string.IsNullOrWhiteSpace(request.TwoFactorCode))
                 {
-                    identity.AddClaim(new Claim(ClaimTypes.Role, role));
+                    var challenge = new LocalSignInChallenge(user.Id, user.SecurityStamp ?? string.Empty,
+                        user.AuthorizationRevision, request.RememberMe);
+                    var protectedChallenge = protection.CreateProtector(LocalSignInChallenge.ProtectionPurpose)
+                        .ToTimeLimitedDataProtector().Protect(JsonSerializer.Serialize(challenge), LocalSignInChallenge.Lifetime);
+                    context.Response.Cookies.Append(LoginChallengeCookieName(configuration), protectedChallenge,
+                        LoginChallengeCookieOptions(configuration, LocalSignInChallenge.Lifetime));
+                    return Results.Accepted(value: new { requiresTwoFactor = true });
                 }
 
-                if (!identity.HasClaim("roles", role))
+                // Preserve credential-plus-code API clients; the browser uses the challenge step.
+                if (!await IsSecondFactorValidAsync(users, user, request.TwoFactorCode))
                 {
-                    identity.AddClaim(new Claim("roles", role));
+                    await users.AccessFailedAsync(user);
+                    return Results.Unauthorized();
                 }
             }
-            if (access.UsesScopedPermissions)
-                identity.AddClaim(new Claim("permission_scope_mode", "scoped"));
-            foreach (var grant in access.ScopedPermissionGrants)
-                identity.AddClaim(new Claim("scoped_permission", grant.ToString()));
-            await context.SignInAsync(LocalAuthenticationOptions.Scheme, principal, new AuthenticationProperties
-            {
-                IsPersistent = request.RememberMe,
-                ExpiresUtc = DateTimeOffset.UtcNow.AddHours(request.RememberMe ? 24 : 8)
-            });
 
+            await CompleteLoginAsync(users, user, accessService, context, request.RememberMe);
+            return Results.NoContent();
+        })
+        .AllowAnonymous()
+        .RequireRateLimiting("LocalLogin");
+
+        group.MapPost("/login/two-factor", async (
+            [FromBody] CompleteTwoFactorLoginRequest request,
+            [FromServices] UserManager<ApplicationUser> users,
+            [FromServices] ICurrentUserAccessService accessService,
+            [FromServices] IDataProtectionProvider protection,
+            [FromServices] IConfiguration configuration,
+            HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var challenge = ReadLoginChallenge(context, configuration, protection);
+            var user = challenge is null ? null : await users.FindByIdAsync(challenge.UserId);
+            if (user is null || !user.IsEnabled || await users.IsLockedOutAsync(user) ||
+                !await users.GetTwoFactorEnabledAsync(user) ||
+                !string.Equals(user.SecurityStamp, challenge!.SecurityStamp, StringComparison.Ordinal) ||
+                user.AuthorizationRevision != challenge.AuthorizationRevision)
+            {
+                ClearLoginChallenge(context, configuration);
+                return Results.Unauthorized();
+            }
+
+            if (!await IsSecondFactorValidAsync(users, user, request.Code))
+            {
+                await users.AccessFailedAsync(user);
+                if (await users.IsLockedOutAsync(user))
+                    ClearLoginChallenge(context, configuration);
+                return Results.Unauthorized();
+            }
+
+            ClearLoginChallenge(context, configuration);
+            await CompleteLoginAsync(users, user, accessService, context, challenge!.RememberMe);
             return Results.NoContent();
         })
         .AllowAnonymous()
@@ -575,6 +598,8 @@ public static class LocalAuthenticationEndpoints
 
     public sealed record LocalLoginRequest(string Email, string Password, bool RememberMe = false, string? TwoFactorCode = null);
 
+    public sealed record CompleteTwoFactorLoginRequest(string Code);
+
     public sealed record ChangeLocalPasswordRequest(string CurrentPassword, string NewPassword);
 
     public sealed record CreateLocalAccountRequest
@@ -623,6 +648,90 @@ public static class LocalAuthenticationEndpoints
     public sealed record AuthenticatorSetupResponse(string SharedKey, string AuthenticatorUri);
 
     public sealed record TwoFactorRecoveryCodesResponse(IReadOnlyList<string> RecoveryCodes);
+
+    private static async Task CompleteLoginAsync(
+        UserManager<ApplicationUser> users,
+        ApplicationUser user,
+        ICurrentUserAccessService accessService,
+        HttpContext context,
+        bool rememberMe)
+    {
+        await users.ResetAccessFailedCountAsync(user);
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, user.Id),
+            new Claim(ClaimTypes.Name, string.IsNullOrWhiteSpace(user.DisplayName) ? user.UserName ?? user.Email! : user.DisplayName),
+            new Claim(ClaimTypes.Email, user.Email ?? string.Empty),
+            new Claim("auth_mode", "local"),
+            new Claim("security_stamp", user.SecurityStamp ?? string.Empty),
+            new Claim("authorization_revision", user.AuthorizationRevision.ToString(global::System.Globalization.CultureInfo.InvariantCulture))
+        }.Concat(user.IsInstanceAdministrator
+            ? [new Claim(ClaimTypes.Role, "HelpdeskAdmin"), new Claim("roles", "HelpdeskAdmin")]
+            : []);
+        var identity = new ClaimsIdentity(
+            claims,
+            LocalAuthenticationOptions.Scheme,
+            ClaimTypes.Name,
+            ClaimTypes.Role);
+        var principal = new ClaimsPrincipal(identity);
+        var access = await accessService.ResolveAsync(principal, context.RequestAborted);
+        foreach (var role in access.RoleBundles.Concat(access.Permissions).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!identity.HasClaim(ClaimTypes.Role, role))
+            {
+                identity.AddClaim(new Claim(ClaimTypes.Role, role));
+            }
+
+            if (!identity.HasClaim("roles", role))
+            {
+                identity.AddClaim(new Claim("roles", role));
+            }
+        }
+        if (access.UsesScopedPermissions)
+            identity.AddClaim(new Claim("permission_scope_mode", "scoped"));
+        foreach (var grant in access.ScopedPermissionGrants)
+            identity.AddClaim(new Claim("scoped_permission", grant.ToString()));
+        await context.SignInAsync(LocalAuthenticationOptions.Scheme, principal, new AuthenticationProperties
+        {
+            IsPersistent = rememberMe,
+            ExpiresUtc = DateTimeOffset.UtcNow.AddHours(rememberMe ? 24 : 8)
+        });
+    }
+
+    private static string LoginChallengeCookieName(IConfiguration configuration) =>
+        LocalSignInChallenge.CookieName(configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost"));
+
+    private static CookieOptions LoginChallengeCookieOptions(IConfiguration configuration, TimeSpan? lifetime = null) => new()
+    {
+        HttpOnly = true,
+        Secure = !configuration.GetValue<bool>("Authentication:AllowInsecureLocalhost"),
+        SameSite = SameSiteMode.Strict,
+        Path = "/",
+        IsEssential = true,
+        MaxAge = lifetime
+    };
+
+    private static void ClearLoginChallenge(HttpContext context, IConfiguration configuration) =>
+        context.Response.Cookies.Delete(LoginChallengeCookieName(configuration), LoginChallengeCookieOptions(configuration));
+
+    private static LocalSignInChallenge? ReadLoginChallenge(
+        HttpContext context, IConfiguration configuration, IDataProtectionProvider protection)
+    {
+        var value = context.Request.Cookies[LoginChallengeCookieName(configuration)];
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        try
+        {
+            var payload = protection.CreateProtector(LocalSignInChallenge.ProtectionPurpose)
+                .ToTimeLimitedDataProtector().Unprotect(value);
+            return JsonSerializer.Deserialize<LocalSignInChallenge>(payload);
+        }
+        catch (Exception exception) when (exception is CryptographicException or JsonException)
+        {
+            return null;
+        }
+    }
 
     private static Task<ApplicationUser?> GetLocalUserAsync(UserManager<ApplicationUser> users, ClaimsPrincipal principal) =>
         principal.HasClaim("auth_mode", "local") ? users.GetUserAsync(principal) : Task.FromResult<ApplicationUser?>(null);

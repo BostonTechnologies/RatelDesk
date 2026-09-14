@@ -29,6 +29,11 @@ jobs:
       - name: Check out triggering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install repository validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
+
       - name: Reject private references and secret-bearing files
         run: tools/ci/check-public-disclosure.sh
 
@@ -37,7 +42,7 @@ jobs:
           docker run --rm
           --volume "${{ github.workspace }}:/repo:ro"
           zricethezav/gitleaks:v8.30.1
-          detect --no-git --source /repo --redact 100 --no-banner
+          detect --no-git --source /repo --redact 100 --no-banner --verbose
 
   dotnet:
     name: .NET validation
@@ -251,6 +256,11 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
+
+      - name: Install repository validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
 
       - name: Validate repository layout and active path references
         run: tools/ci/validate-layout.sh

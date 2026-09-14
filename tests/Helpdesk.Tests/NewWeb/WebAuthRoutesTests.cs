@@ -2,6 +2,11 @@ extern alias NewWeb;
 
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Helpdesk.Shared.Auth;
+using Microsoft.AspNetCore.DataProtection;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using NewWeb::HelpDesk.NewWeb;
@@ -79,7 +84,8 @@ public class WebAuthRoutesTests
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         using var form = new FormUrlEncodedContent(new Dictionary<string, string> { ["email"] = "user@example.test", ["password"] = "password" });
         var response = await client.PostAsync("/local-login", form);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/login?status=form-expired", response.Headers.Location?.OriginalString);
     }
 
     [Fact]
@@ -198,9 +204,152 @@ public class WebAuthRoutesTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("action=\"/local-login\"", content, StringComparison.Ordinal);
-        Assert.Contains("Authenticator or recovery code", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Authenticator or recovery code", content, StringComparison.Ordinal);
+        var inputNames = ReadNativeInputNames(content);
+        Assert.DoesNotContain("twoFactorCode", inputNames);
+        Assert.DoesNotContain("code", inputNames);
+        Assert.DoesNotContain("href=\"/activate\"", content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("email", inputNames);
+        Assert.Contains("password", inputNames);
         Assert.Contains("Sign in to RatelDesk", content, StringComparison.Ordinal);
         Assert.DoesNotContain("href=\"/login-authentik\"", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Local_password_form_forwards_only_credentials_then_copies_the_authentication_cookie()
+    {
+        string? submitted = null;
+        using var factory = CreateFactory(localAuthentication: true, loginApi: async (request, cancellationToken) =>
+        {
+            submitted = await request.Content!.ReadAsStringAsync(cancellationToken);
+            var response = new HttpResponseMessage(HttpStatusCode.NoContent);
+            response.Headers.Add("Set-Cookie", "RatelDesk.Local=authenticated-ticket; path=/; httponly");
+            return response;
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var token = await ReadFormTokenAsync(client, "/login");
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = token,
+            ["email"] = "  admin@example.test  ",
+            ["password"] = "a strong test password",
+            ["rememberMe"] = "true"
+        });
+        var response = await client.PostAsync("/local-login", form);
+        Assert.Equal("/home", response.Headers.Location?.OriginalString);
+        Assert.Contains(response.Headers.GetValues("Set-Cookie"), cookie => cookie.StartsWith("RatelDesk.Local=", StringComparison.Ordinal));
+        using var payload = JsonDocument.Parse(submitted!);
+        Assert.Equal("admin@example.test", payload.RootElement.GetProperty("email").GetString());
+        Assert.True(payload.RootElement.GetProperty("rememberMe").GetBoolean());
+        Assert.False(payload.RootElement.TryGetProperty("twoFactorCode", out _));
+    }
+
+    [Theory]
+    [InlineData(401, "Sign-in%20failed")]
+    [InlineData(404, "service-unavailable")]
+    [InlineData(503, "service-unavailable")]
+    [InlineData(429, "rate-limited")]
+    public async Task Local_login_distinguishes_invalid_credentials_from_api_service_failures(int status, string expectedStatus)
+    {
+        using var factory = CreateFactory(localAuthentication: true,
+            loginApi: (_, _) => Task.FromResult(new HttpResponseMessage((HttpStatusCode)status)));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var token = await ReadFormTokenAsync(client, "/login");
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = token, ["email"] = "admin@example.test", ["password"] = "test password"
+        });
+        var response = await client.PostAsync("/local-login", form);
+        Assert.Equal("/login?status=" + expectedStatus, response.Headers.Location?.OriginalString);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Second_factor_form_requires_a_valid_password_challenge(bool forgedCookie)
+    {
+        using var factory = CreateFactory(localAuthentication: true);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        if (forgedCookie)
+            client.DefaultRequestHeaders.Add("Cookie", "RatelDesk.LocalChallenge=forged");
+        var response = await client.GetAsync("/login/two-factor");
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/login?status=verification-expired", new Uri(client.BaseAddress!, response.Headers.Location!).PathAndQuery);
+    }
+
+    [Fact]
+    public async Task Enrolled_account_uses_a_separate_code_form_with_only_the_protected_challenge_forwarded()
+    {
+        string? protectedChallenge = null;
+        string? verificationJson = null;
+        string? verificationCookie = null;
+        using var factory = CreateFactory(localAuthentication: true, loginApi: async (request, cancellationToken) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/two-factor", StringComparison.Ordinal))
+            {
+                verificationJson = await request.Content!.ReadAsStringAsync(cancellationToken);
+                verificationCookie = string.Join(";", request.Headers.GetValues("Cookie"));
+                var complete = new HttpResponseMessage(HttpStatusCode.NoContent);
+                complete.Headers.Add("Set-Cookie", "RatelDesk.Local=authenticated-ticket; path=/; httponly");
+                complete.Headers.Add("Set-Cookie", "RatelDesk.LocalChallenge=; path=/; max-age=0; httponly");
+                return complete;
+            }
+            var challenge = new HttpResponseMessage(HttpStatusCode.Accepted)
+            {
+                Content = JsonContent.Create(new { requiresTwoFactor = true })
+            };
+            challenge.Headers.Add("Set-Cookie", $"RatelDesk.LocalChallenge={protectedChallenge}; path=/; max-age=300; httponly; samesite=strict");
+            return challenge;
+        });
+        var protector = factory.Services.GetRequiredService<IDataProtectionProvider>()
+            .CreateProtector(LocalSignInChallenge.ProtectionPurpose).ToTimeLimitedDataProtector();
+        protectedChallenge = protector.Protect(JsonSerializer.Serialize(new LocalSignInChallenge("account-id", "stamp", 1, false)), LocalSignInChallenge.Lifetime);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var token = await ReadFormTokenAsync(client, "/login");
+        using var password = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = token, ["email"] = "admin@example.test", ["password"] = "test password"
+        });
+        var first = await client.PostAsync("/local-login", password);
+        Assert.Equal("/login/two-factor", first.Headers.Location?.OriginalString);
+        var page = await client.GetAsync("/login/two-factor");
+        var html = await page.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        Assert.Contains("Verify your sign-in", html, StringComparison.Ordinal);
+        var inputNames = ReadNativeInputNames(html);
+        Assert.Contains("code", inputNames);
+        Assert.DoesNotContain("password", inputNames);
+        Assert.DoesNotContain("email", inputNames);
+        Assert.DoesNotContain("test password", html, StringComparison.Ordinal);
+        using var verification = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = ExtractFormToken(html), ["code"] = "123456"
+        });
+        var second = await client.PostAsync("/local-login/two-factor", verification);
+        Assert.Equal("/home", second.Headers.Location?.OriginalString);
+        Assert.Equal("RatelDesk.LocalChallenge=" + protectedChallenge, verificationCookie);
+        using var payload = JsonDocument.Parse(verificationJson!);
+        Assert.Equal("123456", payload.RootElement.GetProperty("code").GetString());
+        Assert.False(payload.RootElement.TryGetProperty("password", out _));
+    }
+
+    // HTML attribute names are case-insensitive. MudBlazor preserves the casing
+    // of unmatched attributes when it renders them on the native input element.
+    private static string[] ReadNativeInputNames(string html) =>
+        Regex.Matches(html, @"<input\b[^>]*>", RegexOptions.IgnoreCase)
+            .Select(input => Regex.Match(input.Value, "\\bname\\s*=\\s*\"([^\"]+)\"", RegexOptions.IgnoreCase))
+            .Where(attribute => attribute.Success)
+            .Select(attribute => WebUtility.HtmlDecode(attribute.Groups[1].Value))
+            .ToArray();
+
+    private static async Task<string> ReadFormTokenAsync(HttpClient client, string route) =>
+        ExtractFormToken(await client.GetStringAsync(route));
+
+    private static string ExtractFormToken(string html)
+    {
+        var match = Regex.Match(html, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"");
+        Assert.True(match.Success, "The sign-in form must have an antiforgery token.");
+        return WebUtility.HtmlDecode(match.Groups[1].Value);
     }
 
     [Fact]
@@ -352,7 +501,8 @@ public class WebAuthRoutesTests
         bool localAuthentication = false,
         string? authenticationMode = null,
         bool omitAuthenticationMode = false,
-        bool stubApi = true)
+        bool stubApi = true,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? loginApi = null)
     {
         return new WebApplicationFactory<TokenService>().WithWebHostBuilder(builder =>
         {
@@ -408,7 +558,7 @@ public class WebAuthRoutesTests
                 if (stubApi)
                 {
                     foreach (var clientName in new[] { "HelpdeskApi", "HelpdeskApiStreaming", "SystemApi", "SystemApiNoAuth" })
-                        services.AddHttpClient(clientName).ConfigurePrimaryHttpMessageHandler(() => new BrandingApiHandler());
+                        services.AddHttpClient(clientName).ConfigurePrimaryHttpMessageHandler(() => new BrandingApiHandler(loginApi));
                 }
 
                 services.PostConfigure<OpenIdConnectOptions>("Authentik", options =>
@@ -437,14 +587,19 @@ public class WebAuthRoutesTests
         });
     }
 
-    private sealed class BrandingApiHandler : HttpMessageHandler
+    private sealed class BrandingApiHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? loginApi) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            if (request.RequestUri?.AbsolutePath.StartsWith("/api/v1/local-auth/", StringComparison.Ordinal) == true && loginApi is not null)
+                return loginApi(request, cancellationToken);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"applicationName\":\"RatelDesk\",\"compactLogoUrl\":\"/branding/rateldesk-mark.webp\",\"faviconUrl\":\"/favicon.ico\"}",
-                    System.Text.Encoding.UTF8, "application/json")
+                Content = request.RequestUri?.AbsolutePath == "/api/v1/setup/status"
+                    ? JsonContent.Create(new { state = "Ready" })
+                    : JsonContent.Create(new { applicationName = "RatelDesk", compactLogoUrl = "/branding/rateldesk-mark.webp", faviconUrl = "/favicon.ico" })
             });
+        }
     }
 
     private sealed class StubTokenService : ITokenService

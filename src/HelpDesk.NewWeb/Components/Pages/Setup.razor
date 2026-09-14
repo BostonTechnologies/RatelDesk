@@ -5,14 +5,33 @@
 
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>Set up RatelDesk</PageTitle>
 
-<section class="helpdesk-login-page" data-testid="setup-wizard" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")">
-    <MudPaper Elevation="2" Class="helpdesk-login-panel">
+<section class="helpdesk-login-page helpdesk-setup-page" data-testid="setup-wizard" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")">
+    <MudPaper Elevation="2" Class="helpdesk-setup-panel">
         <MudStack Spacing="2">
-            <MudText Typo="Typo.h4" HtmlTag="h1">Set up RatelDesk</MudText>
-            <MudText Typo="Typo.body1">Complete first-time initialization with the operator-only setup code.</MudText>
+            <header class="setup-header">
+                <img class="setup-logo" src="/branding/rateldesk-mark.webp" alt="" />
+                <div>
+                    <p class="setup-eyebrow">Your service desk starts here</p>
+                    <h1>Set up RatelDesk</h1>
+                    <p>Choose your storage, create your administrator account and make this instance your own.</p>
+                </div>
+            </header>
+            <nav aria-label="Setup progress" class="setup-progress" data-testid="setup-progress">
+                <ol>
+                    @for (var index = 0; index < StepTitles.Length; index++)
+                    {
+                        var state = index < CurrentStep ? "complete" : index == CurrentStep ? "current" : "upcoming";
+                        <li class="setup-progress-step @state" aria-current="@(index == CurrentStep ? "step" : null)" data-step="@(index + 1)" data-state="@state">
+                            <span class="setup-step-number" aria-hidden="true">@(index + 1)</span>
+                            <span class="setup-step-title">@StepTitles[index]<span class="setup-step-state">@(state == "complete" ? "Complete" : state == "current" ? "Current step" : $"Step {index + 1}")</span></span>
+                        </li>
+                    }
+                </ol>
+            </nav>
             @if (_managedFields.Count > 0) { <MudAlert Severity="Severity.Info">Deployment-managed setup values are shown read-only.</MudAlert> }
             @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
             @if (_ready)
@@ -20,7 +39,22 @@
                 <MudAlert Severity="@(_applicationReady ? Severity.Success : Severity.Info)">@(_applicationReady ? "Your instance is ready. Sign in with your administrator account." : "RatelDesk is restarting into its normal application host. You can sign in shortly.")</MudAlert>
             }
 
-            @if (_recoveryRequired)
+            @if (_checkingStatus)
+            {
+                <div class="setup-status" role="status" data-testid="setup-loading">
+                    <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Small" />
+                    <p>Checking this installation…</p>
+                </div>
+            }
+            else if (_statusError is not null)
+            {
+                <div class="setup-status-unavailable" data-testid="setup-status-unavailable">
+                    <MudAlert Severity="Severity.Error">@_statusError</MudAlert>
+                    <p>Check that the Web and API containers use the same RatelDesk release and that Web can reach the API. In rc.5, run <code>dotnet /app/Helpdesk.API.dll --setup-status</code> inside the API container to inspect its version and setup state.</p>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ReadSetupStatusAsync">Check connection again</MudButton>
+                </div>
+            }
+            else if (_recoveryRequired)
             {
                 <MudAlert Severity="Severity.Error">This instance needs storage recovery. Restore its matching application database, bootstrap state and data-protection keys, then restart the API. Initialization is unavailable while the saved instance and database do not match.</MudAlert>
             }
@@ -32,15 +66,50 @@
                     <MudButton OnClick="WaitForApplicationAsync">Check again</MudButton>
                 }
             }
-            else
+            else if (_setupAvailable)
             {
-            <MudStepper @ref="_stepper" @bind-ActiveIndex="_step" NonLinear="false">
+            <MudStepper @ref="_stepper" @bind-ActiveIndex="_step" NonLinear="false" NavClass="setup-hidden-stepper-nav" Class="setup-stepper">
                 <ChildContent>
                     <MudStep Title="Unlock setup">
-                        <MudText Typo="Typo.body2">Enter the code retrieved from the API container. It is never returned by this page.</MudText>
-                        <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" Disabled="@(!RendererInfo.IsInteractive)" InputType="InputType.Password" Required="true" FullWidth="true" />
+                        <div class="setup-unlock-grid">
+                            <div class="setup-instructions">
+                                <h2>Unlock this installation</h2>
+                                <p>The one-time setup code confirms that you manage this server. Retrieve it with the command below, then paste it into the setup code field.</p>
+                                <div class="setup-command-card">
+                                    <h3>Run on your Docker host</h3>
+                                    <p>Use the name of your <strong>API</strong> container from <code>docker ps</code>. This command works directly from your host terminal; no container shell or Compose file is needed.</p>
+                                    <MudTextField T="string" @bind-Value="_containerName" Label="API container name" Variant="Variant.Outlined" FullWidth="true" HelperText="Replace this example with the API container name shown by docker ps." Error="@(!IsValidContainerName)" ErrorText="Use the API container name from docker ps (letters, numbers, dots, underscores and hyphens)." />
+                                    <pre class="setup-command"><code data-testid="setup-host-command">@HostCommand("--show-setup-code")</code></pre>
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ContentCopy" OnClick="CopySetupCommandAsync" Disabled="@(!RendererInfo.IsInteractive || !IsValidContainerName)">Copy command</MudButton>
+                                    @if (_copyMessage is not null) { <p role="status" class="setup-copy-status">@_copyMessage</p> }
+                                </div>
+                                <details class="setup-help">
+                                    <summary>Already in a container terminal?</summary>
+                                    <p>Select <code>sh</code> as the terminal shell, then run this command inside the API container. Bash is not required.</p>
+                                    <pre class="setup-command"><code>dotnet /app/Helpdesk.API.dll --show-setup-code</code></pre>
+                                </details>
+                                <details class="setup-help">
+                                    <summary>The command cannot retrieve a setup code</summary>
+                                    <p>Run this diagnostic command on your Docker host. It reports the installed version, setup state and configured storage location without printing the setup code.</p>
+                                    <pre class="setup-command"><code>@HostCommand("--setup-status")</code></pre>
+                                    <p>The code is not printed in container logs. Its location depends on your deployment, so use the command instead of searching for a fixed file path.</p>
+                                    <p>If setup is still incomplete and the code is missing or no longer accepted, replace it with the command below. This invalidates previously unlocked setup sessions; paste the new code here to continue.</p>
+                                    <pre class="setup-command"><code>@HostCommand("--rotate-setup-code")</code></pre>
+                                    <p>On rc.4, use <code>--rotate-setup-code</code> to obtain a new code; the show and diagnostic commands require rc.5.</p>
+                                </details>
+                            </div>
+                            <aside class="setup-unlock-card" aria-label="Installation verification">
+                                <span class="setup-card-step">Step 1 of 7</span>
+                                <h2>Enter your setup code</h2>
+                                <p>Paste the code printed by the API command.</p>
+                                <MudTextField T="string" @bind-Value="_setupCode" Label="Setup code" Variant="Variant.Outlined" Disabled="@(!RendererInfo.IsInteractive)" InputType="InputType.Password" Required="true" FullWidth="true" autocomplete="off" data-testid="setup-code-input" />
+                                <p class="setup-account-note">You will choose your administrator email and password in <strong>step 4</strong>. This setup code is only for installing RatelDesk; it is not a login password or an authenticator code.</p>
+                            </aside>
+                        </div>
                     </MudStep>
                     <MudStep Title="Storage">
+                        <h2>Choose where to store your data</h2>
+                        <p class="setup-stage-description">SQLite is ready to use without another service. Choose PostgreSQL to connect to your database server or sidecar.</p>
                         <MudSelect T="string" @bind-Value="_provider" Disabled="@_storageManaged" Label="Storage provider" FullWidth="true">
                             <MudSelectItem Value="@("Sqlite")">Embedded SQLite — no database service required</MudSelectItem>
                             <MudSelectItem Value="@("PostgreSql")">PostgreSQL</MudSelectItem>
@@ -57,18 +126,23 @@
                         }
                     </MudStep>
                     <MudStep Title="Instance">
+                        <h2>Name your instance</h2>
+                        <p class="setup-stage-description">Use the address people will open in their browser. RatelDesk also uses it for links in email notifications.</p>
                         <MudTextField T="string" @bind-Value="_organization" Label="Initial organization" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.OrganizationName))" />
                         <MudTextField T="string" @bind-Value="_applicationName" Label="Application name" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.ApplicationName))" />
                         <MudTextField T="string" @bind-Value="_applicationUrl" Label="Public application URL" InputType="InputType.Url" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.ApplicationUrl))" HelperText="HTTPS is required except for localhost HTTP." />
                         <MudTextField T="string" @bind-Value="_timeZoneId" Label="Time zone" Required="true" FullWidth="true" Disabled="@IsManaged(nameof(SetupDefaults.TimeZoneId))" HelperText="IANA time-zone ID; UTC is the default (for example, Africa/Johannesburg)." />
                     </MudStep>
                     <MudStep Title="First administrator">
+                        <h2>Create your administrator account</h2>
+                        <p class="setup-stage-description">After setup, sign in with this email and password. You can add other users and optionally enable two-factor authentication after signing in.</p>
                         <MudTextField T="string" @bind-Value="_displayName" Label="Display name" Required="true" FullWidth="true" />
                         <MudTextField T="string" @bind-Value="_email" Label="Email" InputType="InputType.Email" Required="true" FullWidth="true" />
                         <MudTextField T="string" @bind-Value="_password" Label="Passphrase" InputType="InputType.Password" Required="true" FullWidth="true" HelperText="Use a memorable passphrase of at least 15 characters." />
                         <MudTextField T="string" @bind-Value="_confirmPassword" Label="Confirm passphrase" InputType="InputType.Password" Required="true" FullWidth="true" />
                     </MudStep>
                     <MudStep Title="Branding">
+                        <h2>Make it your own</h2>
                         <MudText Typo="Typo.body2">Keep the RatelDesk defaults or set supported instance branding now. All fields remain editable after sign-in.</MudText>
                         <MudCheckBox T="bool" @bind-Value="_keepDefaults" Label="Keep RatelDesk defaults" />
                         @if (!_keepDefaults)
@@ -88,6 +162,8 @@
                         }
                     </MudStep>
                     <MudStep Title="Review">
+                        <h2>Review your setup</h2>
+                        <p class="setup-stage-description">Initialize the instance to save these settings and create your administrator account.</p>
                         <MudSimpleTable Dense="true"><tbody>
                             <tr><td>Storage</td><td>@(_provider == "PostgreSql" ? (_storageManaged ? "PostgreSQL (managed by deployment)" : $"PostgreSQL at {_host}:{_port}/{_database}") : "Embedded SQLite")</td></tr>
                             <tr><td>Organization</td><td>@_organization</td></tr>
@@ -115,8 +191,30 @@
 </section>
 
 @code {
+    private static readonly string[] StepTitles = ["Unlock setup", "Storage", "Instance", "First administrator", "Branding", "Review", "Ready"];
+    private int CurrentStep => _ready ? 6 : _step;
+    private string _containerName = "rateldesk-api-1";
+    private string? _copyMessage;
+    private bool IsValidContainerName => System.Text.RegularExpressions.Regex.IsMatch(_containerName?.Trim() ?? string.Empty, @"\A[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\z");
+    private string HostCommand(string option) => $"docker exec {(IsValidContainerName ? _containerName.Trim() : "<api-container>")} dotnet /app/Helpdesk.API.dll {option}";
+    private async Task CopySetupCommandAsync()
+    {
+        if (!IsValidContainerName) return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", HostCommand("--show-setup-code"));
+            _copyMessage = "Command copied. Run it on your Docker host.";
+        }
+        catch (JSException)
+        {
+            _copyMessage = "Select and copy the command above; clipboard access is unavailable in this browser.";
+        }
+    }
+
     private MudStepper _stepper = default!;
     private int _step;
+    private bool _checkingStatus = true, _setupAvailable;
+    private string? _statusError;
     private bool _storageManaged, _recoveryRequired;
     private readonly CancellationTokenSource _lifetime = new();
     private bool _applicationReady;
@@ -131,20 +229,36 @@
     protected override async Task OnInitializedAsync()
     {
         _applicationUrl = Navigation.BaseUri.TrimEnd('/');
+        await ReadSetupStatusAsync();
+    }
+
+    private async Task ReadSetupStatusAsync()
+    {
+        _checkingStatus = true; _setupAvailable = false; _statusError = null;
         try
         {
-            var status = await HttpClientFactory.CreateClient("SystemApiNoAuth").GetFromJsonAsync<SetupStatus>("/api/v1/setup/status");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            var status = await HttpClientFactory.CreateClient("SystemApiNoAuth").GetFromJsonAsync<SetupStatus>("/api/v1/setup/status", timeout.Token);
             if (status?.State == "Ready") { Navigation.NavigateTo("/login", forceLoad: true); return; }
             if (status?.State == "Restarting") { _ready = true; await WaitForApplicationAsync(); return; }
             _recoveryRequired = status?.State == "RecoveryRequired";
+            _setupAvailable = status?.State is "Unconfigured" or "Configuring";
+            if (!_setupAvailable && !_recoveryRequired)
+            {
+                _statusError = "The API did not return a supported setup state. Setup cannot continue until the application services are connected and compatible.";
+                return;
+            }
             _storageManaged = status?.StorageManaged == true;
             if (!string.IsNullOrWhiteSpace(status?.Provider)) _provider = status.Provider;
             ApplyDeploymentDefaults(status?.Defaults);
         }
-        catch (HttpRequestException exception)
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is HttpRequestException or System.Text.Json.JsonException or OperationCanceledException)
         {
-            System.Diagnostics.Debug.WriteLine($"Setup status endpoint unavailable while rendering setup: {exception.Message}");
+            _statusError = "RatelDesk could not check the API setup state. The API may still be starting, unavailable or running a different release.";
         }
+        finally { _checkingStatus = false; }
     }
 
     private async Task UnlockAsync()
@@ -153,12 +267,32 @@
         _busy = true; _error = null;
         try
         {
-            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync("/api/v1/setup/session", new { setupCode = _setupCode });
-            var session = response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<SetupSession>() : null;
-            if (string.IsNullOrWhiteSpace(session?.Session)) { _error = "The setup code was not accepted."; return; }
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").PostAsJsonAsync("/api/v1/setup/session", new { setupCode = _setupCode }, _lifetime.Token);
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            {
+                _error = "The setup code was not accepted. Copy the current code from the API container and try again.";
+                return;
+            }
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                _error = "Too many setup attempts. Wait a moment, then try again with the current setup code.";
+                return;
+            }
+            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                await ReadSetupStatusAsync();
+                if (_setupAvailable) _error = "The installation state changed. Retrieve the current setup code and try again.";
+                return;
+            }
+            if (!response.IsSuccessStatusCode) { _error = "The setup service is unavailable. Check that the API is running, then retry."; return; }
+            var session = await response.Content.ReadFromJsonAsync<SetupSession>(_lifetime.Token);
+            if (string.IsNullOrWhiteSpace(session?.Session)) { _error = "The setup service returned an incomplete response. Check that Web and API use the same release, then retry."; return; }
             _session = session.Session; _setupCode = string.Empty; await _stepper.NextStepAsync();
         }
         catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        catch (System.Text.Json.JsonException) { _error = "The setup service returned an invalid response. Check that Web and API use the same release, then retry."; }
+        catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested) { _error = "The setup service took too long to respond. Check the API container, then retry."; }
+        catch (OperationCanceledException) { }
         finally { _busy = false; }
     }
 
@@ -171,11 +305,14 @@
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/storage") { Content = JsonContent.Create(new { provider = _provider, postgreSqlHost = _provider == "PostgreSql" ? _host : null, postgreSqlPort = _provider == "PostgreSql" ? _port : (int?)null, postgreSqlDatabase = _provider == "PostgreSql" ? _database : null, postgreSqlUsername = _provider == "PostgreSql" ? _username : null, postgreSqlPassword = _provider == "PostgreSql" ? _databasePassword : null, postgreSqlUseTls = _useTls }) };
             request.Headers.Add("X-RatelDesk-Setup-Session", _session);
-            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request, _lifetime.Token);
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden) { ExpireSession(); return; }
             if (!response.IsSuccessStatusCode) { _error = "Storage could not be prepared. Check the connection and extension requirements."; return; }
             _databasePassword = string.Empty; await _stepper.NextStepAsync();
         }
         catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested) { _error = "Storage preparation took too long to respond. Check the API and database containers, then retry."; }
+        catch (OperationCanceledException) { }
         finally { _busy = false; }
     }
 
@@ -198,13 +335,16 @@
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/setup/initialize") { Content = JsonContent.Create(new { email = _email, displayName = _displayName, password = _password, organizationName = _organization, applicationName = _applicationName, applicationUrl = _applicationUrl, timeZoneId = _timeZoneId, supportUrl = _keepDefaults ? null : _supportUrl, supportEmail = _keepDefaults ? null : _supportEmail, logoUrl = _keepDefaults ? null : _logoUrl, compactLogoUrl = _keepDefaults ? null : _compactLogoUrl, emailFromDisplayName = _keepDefaults ? null : _emailFromDisplayName, tagline = _keepDefaults ? null : _tagline }) };
             request.Headers.Add("X-RatelDesk-Setup-Session", _session);
-            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request);
+            using var response = await HttpClientFactory.CreateClient("SystemApiNoAuth").SendAsync(request, _lifetime.Token);
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden) { ExpireSession(); return; }
             if (!response.IsSuccessStatusCode) { _error = "Initialization could not be completed. Check the setup details and passphrase."; return; }
             _password = _confirmPassword = string.Empty; _session = null; _ready = true;
             await InvokeAsync(StateHasChanged);
             await WaitForApplicationAsync();
         }
         catch (HttpRequestException) { _error = "The setup service is unavailable. Please retry."; }
+        catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested) { _error = "Initialization took too long to respond. Check the API setup status before trying again."; }
+        catch (OperationCanceledException) { }
         finally { _busy = false; }
     }
 

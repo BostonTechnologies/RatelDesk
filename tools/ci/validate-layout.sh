@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+for dependency in git rg dotnet; do
+  if ! command -v "$dependency" >/dev/null 2>&1; then
+    printf 'layout validation: required tool is missing: %s\n' "$dependency" >&2
+    exit 1
+  fi
+done
+
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 

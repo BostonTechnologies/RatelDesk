@@ -20,7 +20,6 @@ compose_file=docker/docker-compose.e2e.yml
 mkdir -p "$artifact_dir"
 
 e2e_system_secret=$(openssl rand -hex 32)
-setup_code='e2e-operator-setup-code'
 api_log="$artifact_dir/api.log"
 web_log="$artifact_dir/web.log"
 database_log="$artifact_dir/postgres.log"
@@ -118,7 +117,6 @@ run_setup_wizard_validation() {
       DataProtection__KeyRingPath="$setup_state_dir/keys" \
       Bootstrap__StateDirectory="$setup_state_dir/state" \
       Bootstrap__DataDirectory="$setup_state_dir/data" \
-      Bootstrap__SetupCode="$setup_code" \
       StorageOptions__RootPath="$setup_state_dir/storage" \
       dotnet run --project src/Helpdesk.API/Helpdesk.API.csproj --configuration Release --no-build --no-launch-profile >>"$setup_api_log" 2>&1 &
       child_pid=$!
@@ -127,6 +125,12 @@ run_setup_wizard_validation() {
   ) &
   setup_api_pid=$!
   wait_for_health 'Bootstrap Helpdesk API' "$setup_api_pid" "$setup_api_url" '/health/ready' "$setup_api_log"
+
+  # Exercise the operator command against the actual generated code and custom path.
+  setup_code="$(ASPNETCORE_ENVIRONMENT=Production \
+    Bootstrap__StateDirectory="$setup_state_dir/state" \
+    dotnet src/Helpdesk.API/bin/Release/net10.0/Helpdesk.API.dll --show-setup-code)"
+  [[ -n "$setup_code" ]]
 
   ASPNETCORE_ENVIRONMENT=Production \
   ASPNETCORE_CONTENTROOT="$setup_web_publish" \
@@ -139,11 +143,12 @@ run_setup_wizard_validation() {
   setup_web_pid=$!
   wait_for_health 'Bootstrap Helpdesk web' "$setup_web_pid" "$setup_web_url" '/' "$setup_web_log"
 
+  PLAYWRIGHT_HTML_OUTPUT_DIR="$artifact_dir/setup-report" \
   HELPDESK_E2E_BASE_URL="$setup_web_url" \
   HELPDESK_E2E_IGNORE_HTTPS_ERRORS=true \
   HELPDESK_E2E_SETUP_CODE="$setup_code" \
   HELPDESK_E2E_RUN_SETUP_WIZARD=true \
-  npm run test:ux -- tests/ux/setup.spec.ts
+  npm run test:ux -- tests/ux/setup.spec.ts --output="$artifact_dir/setup-test-results"
 
   stop_process "$setup_web_pid"
   setup_web_pid=''

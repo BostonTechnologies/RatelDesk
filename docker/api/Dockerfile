@@ -2,7 +2,8 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.12-alpine3.23 AS base
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:8222
-RUN apk add --no-cache icu-libs
+# Npgsql's GSS negotiation needs libgssapi_krb5, which the .NET Alpine base omits.
+RUN apk add --no-cache icu-libs krb5-libs
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
 EXPOSE 8222 8222
 
