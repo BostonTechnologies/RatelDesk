@@ -1450,14 +1450,10 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
         var requestUpdate = await harness.Client.PutAsJsonAsync("/api/v1/requests/req-self-service-update", new UpdateRequestDto { State = TicketState.Resolved });
         var changeUpdate = await harness.Client.PutAsJsonAsync("/api/v1/changes/chg-self-service-update", new UpdateChangeDto { State = TicketState.Resolved, Priority = TicketPriority.Low });
         var changeDelete = await harness.Client.DeleteAsync("/api/v1/changes/chg-self-service-update");
-        var runReview = await harness.Client.PostAsJsonAsync("/api/v1/changes/chg-self-service-update/ai-review", new { });
-        var acknowledgeReview = await harness.Client.PostAsJsonAsync("/api/v1/changes/chg-self-service-update/ai-review/acknowledge", new { });
 
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, requestUpdate.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeUpdate.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeDelete.StatusCode);
-        Assert.True(runReview.StatusCode == System.Net.HttpStatusCode.Forbidden, await runReview.Content.ReadAsStringAsync());
-        Assert.True(acknowledgeReview.StatusCode == System.Net.HttpStatusCode.Forbidden, await acknowledgeReview.Content.ReadAsStringAsync());
         await harness.WithDbAsync(async db =>
         {
             Assert.Equal(TicketState.New, (await db.Requests.FindAsync("req-self-service-update"))!.State);
@@ -1466,7 +1462,7 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
-    public async Task RequestTaskAndAiAuditEndpoints_RespectRequestScope()
+    public async Task RequestTaskEndpoints_RespectRequestScope()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
         await harness.SeedAsync(db =>
@@ -1485,13 +1481,11 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
 
         var ownTasks = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/tasks");
         var foreignTasks = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks/tasks");
-        var ownAiAudit = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/ai-audit");
         var ownRequest = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks");
         var foreignRequest = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks");
 
         Assert.Equal(System.Net.HttpStatusCode.OK, ownTasks.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignTasks.StatusCode);
-        Assert.Equal(System.Net.HttpStatusCode.Forbidden, ownAiAudit.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.OK, ownRequest.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignRequest.StatusCode);
     }

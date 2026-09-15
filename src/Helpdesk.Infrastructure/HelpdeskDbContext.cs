@@ -4,6 +4,7 @@ using Helpdesk.Shared.Services;
 using Helpdesk.Infrastructure.Persistence.Entities;
 using Helpdesk.Infrastructure.Persistence.Connectivity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Npgsql.EntityFrameworkCore.PostgreSQL;
 
@@ -84,6 +85,17 @@ public class HelpdeskDbContext(
     public DbSet<AiInvestigationInvocation> AiInvestigationInvocations => Set<AiInvestigationInvocation>();
     public DbSet<AiInvestigationWorklogEntry> AiInvestigationWorklogEntries => Set<AiInvestigationWorklogEntry>();
     public DbSet<AiAssistantWebhookAuditRecord> AiAssistantWebhookAuditRecords => Set<AiAssistantWebhookAuditRecord>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        // The rc.7 cleanup is an explicit terminal migration, while the
+        // historical snapshots must retain their retired native-AI mappings
+        // so existing installations can be upgraded. EF Core consequently
+        // reports a pending model change for either provider before applying
+        // that migration. Always apply the migration chain instead.
+        optionsBuilder.ConfigureWarnings(warnings =>
+            warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

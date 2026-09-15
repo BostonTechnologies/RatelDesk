@@ -790,7 +790,13 @@ public sealed class BootstrapStateStoreTests
         var establishedMigrator = established.GetService<IMigrator>();
         await establishedMigrator.MigrateAsync("20260912082029_AddRoleDefinitions");
         var organization = new Organization { Name = "Established organization" };
-        established.Organizations.Add(organization);
+        // The historical target still requires EnableAiIntake, removed from
+        // the rc.7 entity model. Seed that legacy shape before exercising the
+        // upgrade path with current entities.
+        await established.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "Organizations" ("Id", "Name", "EnableAiIntake", "State")
+            VALUES ({organization.Id}, {organization.Name}, {false}, {(int)organization.State});
+            """);
         var customer = new Customer
         {
             Name = "Established OIDC customer",
