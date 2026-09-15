@@ -1,0 +1,74 @@
+@using System.Net.Http.Json
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDivider Class="my-3" />
+<MudText Typo="Typo.subtitle2">Organization roles</MudText>
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="my-2">@error <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="LoadAsync">Retry</MudButton></MudAlert>
+}
+else if (loading)
+{
+    <MudProgressLinear Indeterminate="true" Class="my-2" />
+}
+else
+{
+    <MudStack Spacing="0" Class="mt-2">
+        @foreach (var role in roles)
+        {
+            <MudCheckBox T="bool" Value="@selectedRoleKeys.Contains(role.Key)" ValueChanged="enabled => SetRole(role.Key, enabled)" Label="@role.Name" />
+        }
+    </MudStack>
+    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="@(!dirty || saving)" OnClick="SaveAsync" Class="mt-2">@(saving ? "Saving…" : "Save organization roles")</MudButton>
+}
+
+@code {
+    [Parameter, EditorRequired] public string OrganizationId { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string UserId { get; set; } = string.Empty;
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    private readonly List<RoleOption> roles = [];
+    private HashSet<string> originalRoleKeys = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> selectedRoleKeys = new(StringComparer.OrdinalIgnoreCase);
+    private bool loading = true;
+    private bool saving;
+    private string? error;
+    private bool dirty => !originalRoleKeys.SetEquals(selectedRoleKeys);
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+    private async Task LoadAsync()
+    {
+        loading = true;
+        error = null;
+        try
+        {
+            var roleResponse = await Api.GetFromJsonAsync<List<RoleOption>>($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(OrganizationId)}/users/roles") ?? [];
+            var membership = await Api.GetFromJsonAsync<Membership>($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(OrganizationId)}/users/{Uri.EscapeDataString(UserId)}/assignments");
+            roles.Clear();
+            roles.AddRange(roleResponse);
+            originalRoleKeys = membership?.RoleKeys.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);
+            selectedRoleKeys = new HashSet<string>(originalRoleKeys, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (HttpRequestException)
+        {
+            error = "Organization roles could not be loaded for this account.";
+        }
+        finally { loading = false; }
+    }
+    private void SetRole(string key, bool enabled) { if (enabled) selectedRoleKeys.Add(key); else selectedRoleKeys.Remove(key); }
+    private async Task SaveAsync()
+    {
+        saving = true;
+        error = null;
+        try
+        {
+            using var response = await Api.PutAsJsonAsync($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(OrganizationId)}/users/{Uri.EscapeDataString(UserId)}/assignments", new ReplaceMembership(selectedRoleKeys.Order(StringComparer.OrdinalIgnoreCase).ToArray()));
+            if (!response.IsSuccessStatusCode) { error = await response.Content.ReadAsStringAsync(); return; }
+            await LoadAsync();
+        }
+        catch (HttpRequestException) { error = "Organization roles could not be saved."; }
+        finally { saving = false; }
+    }
+    private sealed record RoleOption(string Key, string Name);
+    private sealed record Membership(string UserId, string OrganizationId, IReadOnlyList<string> RoleKeys);
+    private sealed record ReplaceMembership(IReadOnlyList<string> RoleKeys);
+}

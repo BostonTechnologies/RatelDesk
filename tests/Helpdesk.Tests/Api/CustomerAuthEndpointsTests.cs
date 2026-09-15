@@ -1,15 +1,19 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json.Nodes;
 using Helpdesk.API;
 using Helpdesk.Infrastructure.Auth.Authentik;
+using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.DTOs.Customer;
+using Helpdesk.Shared.Models;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -34,6 +38,25 @@ public sealed class CustomerAuthEndpointsTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Contains("Customer invitation is not configured", body, StringComparison.Ordinal);
         Assert.Contains("Authentication:AuthentikAdmin:ApiToken", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Invite_ForUnlinkedCustomer_WhenProviderIsUnconfigured_LeavesNoProvisionalLink()
+    {
+        var invitationService = new ThrowingInvitationService(new InvalidOperationException("The invitation service must not be called."));
+        using var factory = CreateFactory(invitationService, authentikConfigured: false);
+        await SeedCustomerAsync(factory);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "HelpdeskAdmin");
+
+        var status = await client.GetFromJsonAsync<CustomerAuthStatusDto>("/api/v1/customers/customer-1/auth/status");
+        var response = await client.PostAsync("/api/v1/customers/customer-1/auth/invite", null);
+
+        Assert.NotNull(status);
+        Assert.False(status.CanInvite);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(0, invitationService.InvocationCount);
+        await AssertSeedVisibleFromNewScopeAsync(factory, 0);
     }
 
     [Fact]
@@ -74,6 +97,26 @@ public sealed class CustomerAuthEndpointsTests
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         Assert.Contains("Customer invitation request could not be completed", body, StringComparison.Ordinal);
         Assert.Contains("Authentik rejected create recovery link (500 InternalServerError): upstream failure", body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Local", 1, "local account")]
+    [InlineData("Authentik", 2, "Multiple linked identities")]
+    public async Task ExternalInviteAction_RejectsLocalOrAmbiguousLinks_BeforeCallingInvitationService(string provider, int linkCount, string expectedMessage)
+    {
+        var invitationService = new ThrowingInvitationService(new InvalidOperationException("The invitation service must not be called."));
+        using var factory = CreateFactory(invitationService);
+        await SeedLinksAsync(factory, provider, linkCount);
+        await AssertSeedVisibleFromNewScopeAsync(factory, linkCount);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "HelpdeskAdmin");
+
+        var response = await client.PostAsync("/api/v1/customers/customer-1/auth/resend-invite", null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains(expectedMessage, (await response.Content.ReadAsStringAsync()), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, invitationService.InvocationCount);
+        await AssertSeedVisibleFromNewScopeAsync(factory, linkCount);
     }
 
     [Fact]
@@ -137,9 +180,12 @@ public sealed class CustomerAuthEndpointsTests
         Assert.Equal("internal", payload["type"]?.GetValue<string>());
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(ICustomerInvitationService invitationService)
+    private static WebApplicationFactory<Program> CreateFactory(ICustomerInvitationService invitationService, bool authentikConfigured = true)
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseSetting("Helpdesk:TestDatabaseName", $"customer-auth-{Guid.NewGuid():N}");
+            builder.UseSetting("Authentication:AuthentikAdmin:BaseUrl", "https://auth.example.test/");
+            builder.UseSetting("Authentication:AuthentikAdmin:ApiToken", authentikConfigured ? "test-token" : string.Empty);
             builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
@@ -157,22 +203,61 @@ public sealed class CustomerAuthEndpointsTests
             });
         });
 
+    private static async Task SeedLinksAsync(WebApplicationFactory<Program> factory, string provider, int count)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        db.Customers.Add(new Customer { Id = "customer-1", Name = "Customer", Email = "customer@example.test", OrganizationId = "organization-1" });
+        for (var index = 0; index < count; index++)
+        {
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-1",
+                AuthProviderType = index == 0 ? provider : "Authentik",
+                LocalAccountId = index == 0 && string.Equals(provider, "Local", StringComparison.OrdinalIgnoreCase) ? "local-account" : null
+            });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedCustomerAsync(WebApplicationFactory<Program> factory)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        db.Customers.Add(new Customer { Id = "customer-1", Name = "Customer", Email = "customer@example.test", OrganizationId = "organization-1" });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task AssertSeedVisibleFromNewScopeAsync(WebApplicationFactory<Program> factory, int expectedLinkCount)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        Assert.Equal(expectedLinkCount, await db.CustomerAuthLinks.CountAsync(link => link.CustomerId == "customer-1"));
+    }
+
     private sealed class ThrowingInvitationService(Exception exception) : ICustomerInvitationService
     {
+        public int InvocationCount { get; private set; }
         public Task<CustomerAuthStatusDto> GetStatusAsync(string customerId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
 
         public Task<CustomerAuthStatusDto> InviteAsync(string customerId, string invitedByUserId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
 
         public Task<CustomerAuthStatusDto> ResendInviteAsync(string customerId, string invitedByUserId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
 
         public Task<CustomerAuthStatusDto> DisableLoginAsync(string customerId, string disabledByUserId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
 
         public Task<CustomerAuthStatusDto> SyncAuthentikAsync(string customerId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
+
+        private Task<CustomerAuthStatusDto> Throw()
+        {
+            InvocationCount++;
+            return Task.FromException<CustomerAuthStatusDto>(exception);
+        }
     }
 
     private sealed class TestAuthHandler(

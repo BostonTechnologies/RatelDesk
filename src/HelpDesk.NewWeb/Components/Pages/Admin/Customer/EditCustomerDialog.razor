@@ -16,32 +16,38 @@
 
     <DialogContent>
         <MudForm @ref="form" Model="model" OnValidSubmit="Submit" Class="mt-2">
-            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
-            <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
+            <MudTabs>
+                <MudTabPanel Text="Details">
+                    <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+                    <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
 
-            <MudSelect T="string" @bind-Value="model.OrganizationId" Label="Organization" Required="true">
+                    <MudSelect T="string" @bind-Value="model.OrganizationId" Label="Organization" Required="true" Disabled="@(authStatus?.IsLinkedLogin == true)">
                 @foreach (var org in Organizations)
                 {
                     <MudSelectItem T="string" Value="@org.Id">@org.Name</MudSelectItem>
                 }
-            </MudSelect>
+                    </MudSelect>
+                    @if (authStatus?.IsLinkedLogin == true)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">A linked login keeps its current organization access. Use the explicit access workflow to move it.</MudText>
+                    }
 
-            <!-- Correct MudSwitch binding -->
-            <MudSwitch T="bool"
+                    <MudSwitch T="bool"
                        @bind-Value="model.Enabled"
                        For="@(() => model.Enabled)"
-                       Label="Enabled" />
+                               Label="Enabled" />
+                </MudTabPanel>
 
-            <MudDivider Class="my-4" />
-
-            <MudText Typo="Typo.subtitle2">Authentication / Helpdesk Access</MudText>
-            <MudStack Spacing="1" Class="mt-2">
+                <MudTabPanel Text="Access &amp; roles">
+                    <MudText Typo="Typo.subtitle2">Account access</MudText>
+                    <MudStack Spacing="1" Class="mt-2">
                 <MudChip T="string" Dense="true" Color="@GetAuthStatusColor(authStatus?.InviteStatus)" Variant="Variant.Outlined">
                     @(authStatus?.StatusText ?? "Not invited")
                 </MudChip>
                 @if (authStatus is not null)
                 {
-                    <MudText Typo="Typo.caption">Authentik user: @(authStatus.AuthentikUserId ?? "Not linked")</MudText>
+                    <MudText Typo="Typo.caption">@(authStatus.IdentitySummary ?? "No linked login")</MudText>
+                    <MudText Typo="Typo.caption">Account type: @(authStatus.AuthProviderType ?? "None")</MudText>
                     <MudText Typo="Typo.caption">Last invite: @FormatDate(authStatus.InviteSentAtUtc)</MudText>
                     <MudText Typo="Typo.caption">Last login: @FormatDate(authStatus.LastLoginAtUtc)</MudText>
                     @if (!string.IsNullOrWhiteSpace(authStatus.LastAuthError))
@@ -49,7 +55,9 @@
                         <MudAlert Severity="Severity.Error" Dense="true">@authStatus.LastAuthError</MudAlert>
                     }
                 }
-                <MudStack Row="true" Spacing="1">
+                @if (!string.Equals(authStatus?.AuthProviderType, "Local", StringComparison.OrdinalIgnoreCase) && authStatus?.HasMultipleIdentityLinks != true)
+                {
+                    <MudStack Row="true" Spacing="1">
                     <MudButton Variant="Variant.Outlined"
                                Color="Color.Primary"
                                Disabled="@IsInviteDisabled"
@@ -64,8 +72,32 @@
                                OnClick="DisableLogin">
                         Disable access
                     </MudButton>
-                </MudStack>
-            </MudStack>
+                    </MudStack>
+                }
+                else if (string.Equals(authStatus?.AuthProviderType, "Local", StringComparison.OrdinalIgnoreCase))
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Local activation and account lifecycle actions are managed from the organization member editor.</MudText>
+                    @if (authStatus.InviteStatus == CustomerInviteStatus.Pending)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="GenerateLocalActivationToken">Generate activation token</MudButton>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(localActivationToken))
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true">Copy this activation token now. It is shown only in this dialog.</MudAlert>
+                        <MudTextField Value="@localActivationToken" Label="Activation token" ReadOnly="true" />
+                    }
+                }
+                @if (!string.IsNullOrWhiteSpace(authStatus?.LocalAccountId))
+                {
+                    <CustomerRoleAccessEditor OrganizationId="@Customer.OrganizationId" UserId="@authStatus.LocalAccountId" />
+                }
+                else if (authStatus?.IsLinkedLogin == true)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">This provider-managed identity has no supported local role-assignment workflow.</MudText>
+                }
+                    </MudStack>
+                </MudTabPanel>
+            </MudTabs>
         </MudForm>
     </DialogContent>
 
@@ -85,6 +117,7 @@
     private MudForm form = default!;
     private EditCustomerModel model = new();
     private CustomerAuthStatusDto? authStatus;
+    private string? localActivationToken;
 
     protected override void OnParametersSet()
     {
@@ -150,6 +183,14 @@
 
     private Task DisableLogin() => RunAuthAction("disable-login", "Login access disabled.");
 
+    private async Task GenerateLocalActivationToken()
+    {
+        using var response = await HelpdeskApi.PostAsync($"api/v1/customers/{Customer.Id}/auth/local-activation-token", null);
+        if (!response.IsSuccessStatusCode) { Snackbar.Add(await ReadProblemMessageAsync(response), Severity.Error); return; }
+        var token = await response.Content.ReadFromJsonAsync<LocalActivationTokenResponse>();
+        localActivationToken = token?.ActivationToken;
+    }
+
     private async Task RunAuthAction(string route, string successMessage)
     {
         try
@@ -172,7 +213,12 @@
         }
     }
 
-    private bool IsInviteDisabled => !model.Enabled || authStatus?.InviteStatus is CustomerInviteStatus.Active or CustomerInviteStatus.Disabled;
+    private bool IsInviteDisabled => !model.Enabled || authStatus?.InviteStatus switch
+    {
+        CustomerInviteStatus.Pending or CustomerInviteStatus.Failed or CustomerInviteStatus.Expired => authStatus.CanResend != true,
+        CustomerInviteStatus.Active or CustomerInviteStatus.Disabled => true,
+        _ => authStatus?.CanInvite != true
+    };
 
     private static async Task<string> ReadProblemMessageAsync(HttpResponseMessage response)
     {
@@ -194,6 +240,7 @@
     }
 
     private sealed record ProblemResponse(string? Title, string? Detail);
+    private sealed record LocalActivationTokenResponse(string UserId, string Email, string ActivationToken);
 
     private string InviteButtonText => authStatus?.InviteStatus switch
     {

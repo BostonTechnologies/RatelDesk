@@ -80,6 +80,34 @@ public static class RoleDefinitionEndpoints
             return Results.Ok(ToResponse(role, await assignments.CountAsync(cancellationToken)));
         });
 
+        group.MapGet("/{id}/assignments", async (
+            string id,
+            HttpContext context,
+            ICurrentUserAccessService accessService,
+            HelpdeskDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var access = await accessService.ResolveAsync(context.User, cancellationToken);
+            var role = await db.Roles.AsNoTracking().SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+            if (role is null) return Results.NotFound();
+            if (!access.IsHelpdeskAdmin && ManagedOrganizationIds(access).Count == 0) return Results.Forbid();
+            if (!role.IsBuiltIn && !CanManageOrganization(access, role.OwnerOrganizationId)) return Results.Forbid();
+
+            var assignments = db.ScopedRoleAssignments.AsNoTracking().Where(assignment => assignment.RoleKey == role.Key);
+            if (!access.IsHelpdeskAdmin)
+            {
+                var organizationIds = ManagedOrganizationIds(access);
+                assignments = assignments.Where(assignment => organizationIds.Contains(assignment.OrganizationId));
+            }
+
+            return Results.Ok(await (
+                from assignment in assignments
+                join user in db.Users.AsNoTracking() on assignment.UserId equals user.Id
+                orderby user.Name, assignment.OrganizationId
+                select new RoleAssignmentResponse(user.Id, user.Name, user.Email, assignment.OrganizationId)
+            ).Take(200).ToArrayAsync(cancellationToken));
+        });
+
         group.MapPost("/", async (
             CreateRoleDefinitionRequest request,
             HttpContext context,
@@ -281,6 +309,7 @@ public static class RoleDefinitionEndpoints
     public sealed record CreateRoleDefinitionRequest(string Name, string? Key, string? OwnerOrganizationId, IReadOnlyList<string> Permissions);
     public sealed record UpdateRoleDefinitionRequest(string Name, IReadOnlyList<string> Permissions);
     public sealed record RoleDefinitionResponse(string Id, string Key, string Name, RoleScopeKind Scope, string? OwnerOrganizationId, bool IsBuiltIn, bool IsProtected, IReadOnlyList<string> Permissions, int AssignmentCount);
+    public sealed record RoleAssignmentResponse(string UserId, string Name, string Email, string OrganizationId);
 
     private sealed record RoleValidation(string? Key, IReadOnlyList<string>? Permissions, ValidationError? Error)
     {

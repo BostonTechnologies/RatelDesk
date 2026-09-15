@@ -41,6 +41,7 @@ public sealed record InstanceBrandingFieldState(
     string Name,
     string? PersistedValue,
     string EffectiveValue,
+    string DefaultValue,
     InstanceBrandingValueSource Source,
     bool IsAdminEditable);
 

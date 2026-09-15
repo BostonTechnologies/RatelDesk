@@ -157,18 +157,12 @@ public sealed class AuthentikAdminClient(HttpClient httpClient, IOptions<Authent
 
     private async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, object? payload, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_options.ApiToken))
+        if (!_options.IsConfigured)
         {
-            throw new AuthentikAdminConfigurationException(
-                "Customer invitation is not configured. Set Authentication:AuthentikAdmin:ApiToken for this environment.");
+            throw new AuthentikAdminConfigurationException(_options.ConfigurationError);
         }
 
-        if (!Uri.TryCreate(_options.BaseUrl, UriKind.Absolute, out var baseUri))
-        {
-            throw new AuthentikAdminConfigurationException(
-                "Customer invitation is not configured. Set Authentication:AuthentikAdmin:BaseUrl to an absolute URL.");
-        }
-
+        Uri.TryCreate(_options.BaseUrl, UriKind.Absolute, out var baseUri);
         _httpClient.BaseAddress ??= baseUri;
         using var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiToken);

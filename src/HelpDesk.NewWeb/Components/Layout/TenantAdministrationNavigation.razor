@@ -1,11 +1,14 @@
-<AuthorizeView Roles="Tenant.Roles.Assign,HelpdeskAdmin">
-    <MudNavLink Href="/tenant-administration" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Groups">Tenant members</MudNavLink>
-    <AuthorizeView Roles="HelpdeskAdmin" Context="tenantRoleAdmin">
-        <NotAuthorized>
-            <MudNavLink Href="/admin/roles" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Security">Tenant roles</MudNavLink>
-        </NotAuthorized>
-    </AuthorizeView>
-</AuthorizeView>
-<AuthorizeView Roles="Tenant.Settings.Manage,HelpdeskAdmin">
-    <MudNavLink Href="/tenant-settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Apartment">Tenant settings</MudNavLink>
+<AuthorizeView Roles="HelpdeskAdmin" Context="instanceAdmin">
+    <NotAuthorized>
+        <AuthorizeView Roles="Tenant.Roles.Assign,Tenant.Settings.Manage" Context="delegatedAdmin">
+            <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="false">
+                <MudNavGroup Title="Accounts &amp; Orgs" Icon="@Icons.Material.Filled.AccountTree" Expanded="false">
+                    <MudNavLink Href="/admin/organizations" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Apartment">Organizations</MudNavLink>
+                </MudNavGroup>
+                <AuthorizeView Roles="Tenant.Roles.Assign" Context="roleAdministrator">
+                    <MudNavLink Href="/admin/roles" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Security">Roles &amp; Permissions</MudNavLink>
+                </AuthorizeView>
+            </MudNavGroup>
+        </AuthorizeView>
+    </NotAuthorized>
 </AuthorizeView>

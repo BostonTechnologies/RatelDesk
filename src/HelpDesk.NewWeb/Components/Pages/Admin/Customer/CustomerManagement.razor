@@ -235,8 +235,14 @@
             return true;
         }
 
-        var status = customer.AuthStatus?.InviteStatus ?? CustomerInviteStatus.NotInvited;
-        return status is CustomerInviteStatus.Active or CustomerInviteStatus.Disabled;
+        var auth = customer.AuthStatus;
+        var status = auth?.InviteStatus ?? CustomerInviteStatus.NotInvited;
+        return status switch
+        {
+            CustomerInviteStatus.Pending or CustomerInviteStatus.Failed or CustomerInviteStatus.Expired => auth?.CanResend != true,
+            CustomerInviteStatus.Active or CustomerInviteStatus.Disabled => true,
+            _ => auth?.CanInvite != true
+        };
     }
 
     private static string GetInviteActionLabel(CustomerDto customer)

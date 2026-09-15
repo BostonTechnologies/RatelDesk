@@ -25,7 +25,7 @@ environment:
   Branding__EmailFromDisplayName: Acme Service Desk
 ```
 
-`ApplicationUrl` is the canonical base for generated application links. Use an HTTPS public URL in production; it must be an absolute HTTP(S) URL. Host logos and favicons on a publicly reachable HTTPS endpoint, or retain the bundled `/branding/` artwork.
+`ApplicationUrl`, organization/site URL, and support URL must be absolute HTTP(S) URLs. Asset URLs for the main logo, compact logo, and favicon may instead be safe root-relative application paths such as `/branding/rateldesk-wordmark.webp`; protocol-relative and non-HTTP schemes are rejected. The administrator editor retains database overrides separately from effective values, so saving one field does not turn inherited defaults into overrides. Use **Use default** on a field to remove only that database override.
 
 The bundled browser defaults are `/branding/rateldesk-mark.webp`, `/branding/rateldesk-wordmark.webp`, and `/branding/rateldesk-splash.webp`; PNG counterparts are included for transparent-image fallback. The email default is the mail-client-compatible `/email-brand/rateldesk-email-wordmark.png`. `LogoUrl`, `CompactLogoUrl`, and `FaviconUrl` continue to override these upstream defaults, and tenant branding remains more specific where configured.
 

@@ -2,6 +2,7 @@
 @using Helpdesk.Shared.DTOs.Orchestration
 @using Helpdesk.Shared.DTOs.Organization
 @using Helpdesk.Shared.Models
+@using HelpDesk.NewWeb.Components.Pages.Admin.User
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
 
@@ -33,6 +34,9 @@
                             <MudSelectItem T="int?" Value="@tenant.TenantId">@tenant.Name (@tenant.TenantId)</MudSelectItem>
                         }
                     </MudSelect>
+                </MudTabPanel>
+                <MudTabPanel Text="Members &amp; access">
+                    <TenantAdministration IsCanonical="true" OrganizationId="@Organization.Id" />
                 </MudTabPanel>
             </MudTabs>
         </MudForm>

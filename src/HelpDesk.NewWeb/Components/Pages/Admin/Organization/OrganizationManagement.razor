@@ -1,15 +1,19 @@
 @page "/admin/organizations"
-@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Tenant.Roles.Assign,Tenant.Settings.Manage,HelpdeskAdmin")]
 @inject IHttpClientFactory HttpClientFactory
 @inject IDialogService DialogService
 @inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthenticationState
 
 @using Helpdesk.Shared.DTOs.Orchestration
 @using Helpdesk.Shared.DTOs.Organization
+@using HelpDesk.NewWeb.Components.Pages.Admin.User
 @using MudBlazor
 
 <PageTitle>Organization Management</PageTitle>
 
+<AuthorizeView Roles="HelpdeskAdmin" Context="instanceAdmin">
+<Authorized Context="instanceAdministrator">
 <MudPaper Class="pa-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudText Typo="Typo.h5">Organization Management</MudText>
@@ -48,15 +52,30 @@
         </RowTemplate>
     </MudTable>
 </MudPaper>
+</Authorized>
+<NotAuthorized Context="delegatedAdministrator">
+    <MudTabs ActivePanelIndex="@DelegatedTabIndex">
+        <MudTabPanel Text="General &amp; settings"><TenantSettings IsCanonical="true" OrganizationId="@OrganizationId" /></MudTabPanel>
+        <MudTabPanel Text="Members &amp; access"><TenantAdministration IsCanonical="true" OrganizationId="@OrganizationId" /></MudTabPanel>
+    </MudTabs>
+</NotAuthorized>
+</AuthorizeView>
 
 @code {
     [SupplyParameterFromQuery(Name = "search")]
     public string? QuerySearch { get; set; }
+    [SupplyParameterFromQuery(Name = "section")] public string? Section { get; set; }
+    [SupplyParameterFromQuery(Name = "organizationId")] public string? OrganizationId { get; set; }
 
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<OrganizationDto> organizations = new();
     private List<OrchestrationCatalogTenantDto> orchestrationTenants = new();
     private string searchText = string.Empty;
+    private bool isInstanceAdministrator;
+    private bool canAssignTenantRoles;
+    private int DelegatedTabIndex => string.Equals(Section, "settings", StringComparison.OrdinalIgnoreCase)
+        ? 0
+        : string.Equals(Section, "members", StringComparison.OrdinalIgnoreCase) || canAssignTenantRoles ? 1 : 0;
 
     private IEnumerable<OrganizationDto> FilteredOrganizations => organizations
         .Where(org => string.IsNullOrWhiteSpace(searchText)
@@ -67,6 +86,10 @@
 
     protected override async Task OnInitializedAsync()
     {
+        var user = (await AuthenticationState.GetAuthenticationStateAsync()).User;
+        isInstanceAdministrator = user.IsInRole("HelpdeskAdmin");
+        canAssignTenantRoles = user.IsInRole("Tenant.Roles.Assign") || isInstanceAdministrator;
+        if (!isInstanceAdministrator) return;
         searchText = QuerySearch ?? string.Empty;
         await LoadOrganizations();
     }

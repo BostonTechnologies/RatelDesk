@@ -36,18 +36,27 @@ public static class InstanceBrandingEndpoints
 
     private static IEnumerable<string> FindInvalidUrls(InstanceBrandingUpdate update)
     {
-        foreach (var (name, value) in new[]
+        foreach (var (name, value, allowsRootRelative) in new[]
         {
-            (nameof(update.ApplicationUrl), update.ApplicationUrl), (nameof(update.OrganizationUrl), update.OrganizationUrl),
-            (nameof(update.SupportUrl), update.SupportUrl), (nameof(update.LogoUrl), update.LogoUrl),
-            (nameof(update.CompactLogoUrl), update.CompactLogoUrl), (nameof(update.FaviconUrl), update.FaviconUrl)
+            (nameof(update.ApplicationUrl), update.ApplicationUrl, false), (nameof(update.OrganizationUrl), update.OrganizationUrl, false),
+            (nameof(update.SupportUrl), update.SupportUrl, false), (nameof(update.LogoUrl), update.LogoUrl, true),
+            (nameof(update.CompactLogoUrl), update.CompactLogoUrl, true), (nameof(update.FaviconUrl), update.FaviconUrl, true)
         })
         {
-            if (!string.IsNullOrWhiteSpace(value) &&
-                (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
-                 (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
-                  !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))))
+            if (!string.IsNullOrWhiteSpace(value) && !IsAllowedUrl(value, allowsRootRelative))
                 yield return name;
         }
+    }
+
+    private static bool IsAllowedUrl(string value, bool allowsRootRelative)
+    {
+        if (allowsRootRelative && value.StartsWith("/", StringComparison.Ordinal) && !value.StartsWith("//", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+               (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase));
     }
 }

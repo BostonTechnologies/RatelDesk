@@ -8,6 +8,11 @@ public class CustomerAuthStatusDto
     public CustomerInviteStatus InviteStatus { get; set; } = CustomerInviteStatus.NotInvited;
     public string StatusText { get; set; } = "Not invited";
     public string? AuthProviderType { get; set; }
+    public string? LocalAccountId { get; set; }
+    public string? DomainUserId { get; set; }
+    public string? IdentitySummary { get; set; }
+    public bool HasMultipleIdentityLinks { get; set; }
+    public bool IsLinkedLogin { get; set; }
     public string? OidcIssuer { get; set; }
     public string? OidcSubject { get; set; }
     public string? AuthentikUserId { get; set; }

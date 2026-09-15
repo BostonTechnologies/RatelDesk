@@ -2,7 +2,10 @@
 @attribute [Authorize(Roles = "Tenant.Roles.Assign,HelpdeskAdmin")]
 @using System.Net.Http.Json
 @using Helpdesk.Shared.Models
+@using Helpdesk.Shared.Auth
 @inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
+@inject AuthenticationStateProvider AuthenticationState
 
 <PageTitle>Roles & Permissions</PageTitle>
 
@@ -87,12 +90,13 @@
                     }
                 </MudTd>
                 <MudTd DataLabel="Permissions">
-                    @foreach (var permission in context.Permissions)
+                    @foreach (var permission in context.Permissions.Take(3))
                     {
                         <MudChip T="string" Size="Size.Small" Class="mr-1 mb-1">@PermissionLabel(permission)</MudChip>
                     }
+                    @if (context.Permissions.Count > 3) { <MudText Typo="Typo.caption">+@(context.Permissions.Count - 3) more</MudText> }
                 </MudTd>
-                <MudTd DataLabel="Assignments">@context.AssignmentCount</MudTd>
+                <MudTd DataLabel="Explicit assignments"><MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => OpenAssignments(context)">@context.AssignmentCount assignment@(context.AssignmentCount == 1 ? string.Empty : "s")</MudButton></MudTd>
                 <MudTd>
                     @if (!context.IsProtected)
                     {
@@ -108,17 +112,11 @@
 </MudPaper>
 
 @code {
-    private static readonly IReadOnlyList<PermissionOption> PermissionOptions =
-    [
-        new("SelfService.User", "Self-service access"),
-        new("Incident.User", "Incidents: reader"),
-        new("Incident.Manager", "Incidents: writer"),
-        new("Request.User", "Requests: reader"),
-        new("Request.Manager", "Requests: writer"),
-        new("Change.User", "Changes: reader"),
-        new("Change.Manager", "Changes: writer"),
-        new("DataManagement.Admin", "Data management")
-    ];
+    private IReadOnlyList<PermissionOption> PermissionOptions => (isInstanceAdministrator
+            ? HelpdeskPermissions.AssignablePermissions.AsEnumerable()
+            : RoleDefinitionCatalog.TenantAdministratorPermissionCeiling.AsEnumerable())
+        .OrderBy(permission => permission, StringComparer.OrdinalIgnoreCase)
+        .Select(permission => new PermissionOption(permission, PermissionLabel(permission))).ToArray();
 
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<RoleDefinition> roles = [];
@@ -131,8 +129,13 @@
     private string draftName = string.Empty;
     private string? draftOwnerOrganizationId;
     private HashSet<string> draftPermissions = new(StringComparer.OrdinalIgnoreCase);
+    private bool isInstanceAdministrator;
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        isInstanceAdministrator = (await AuthenticationState.GetAuthenticationStateAsync()).User.IsInRole("HelpdeskAdmin");
+        await LoadAsync();
+    }
 
     private async Task LoadAsync()
     {
@@ -206,7 +209,8 @@
 
             if (!response.IsSuccessStatusCode)
             {
-                error = "The role could not be saved. Confirm the owner and permission dependencies, then try again.";
+                error = await response.Content.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(error)) error = "The role could not be saved. Confirm the owner and permission dependencies, then try again.";
                 return;
             }
 
@@ -239,6 +243,15 @@
 
     private void CancelEdit() => showEditor = false;
 
+    private async Task OpenAssignments(RoleDefinition role)
+    {
+        await DialogService.ShowAsync<RoleAssignmentDetailsDialog>("Role assignments", new DialogParameters
+        {
+            ["Role"] = role,
+            ["Organizations"] = organizations
+        }, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+    }
+
     private string OrganizationLabel(string? organizationId) => organizations.FirstOrDefault(organization => organization.Id == organizationId)?.Name ?? organizationId ?? "Instance";
     private static string ScopeLabel(RoleScopeKind scope) => scope switch
     {
@@ -246,11 +259,18 @@
         RoleScopeKind.OwnResource => "Self-service",
         _ => "Tenant"
     };
-    private static string PermissionLabel(string permission) => PermissionOptions.FirstOrDefault(option => option.Key == permission)?.Label ?? permission;
+    private static string PermissionLabel(string permission) => permission switch
+    {
+        HelpdeskPermissions.IncidentRead => "Read incidents", HelpdeskPermissions.IncidentWrite => "Write incidents", HelpdeskPermissions.IncidentDelete => "Delete incidents",
+        HelpdeskPermissions.RequestRead => "Read requests", HelpdeskPermissions.RequestWrite => "Write requests", HelpdeskPermissions.RequestDelete => "Delete requests", HelpdeskPermissions.RequestExecute => "Execute requests",
+        HelpdeskPermissions.ChangeRead => "Read changes", HelpdeskPermissions.ChangeWrite => "Write changes", HelpdeskPermissions.ChangeDelete => "Delete changes", HelpdeskPermissions.ChangeApprove => "Approve changes",
+        HelpdeskPermissions.TenantUsersManage => "Manage tenant users", HelpdeskPermissions.TenantRolesAssign => "Assign tenant roles", HelpdeskPermissions.TenantSettingsManage => "Manage tenant settings",
+        HelpdeskPermissions.SelfServiceUser => "Self-service access", _ => permission
+    };
 
     private sealed record PermissionOption(string Key, string Label);
-    private sealed record TenantOrganization(string Id, string Name);
-    private sealed record RoleDefinition(string Id, string Key, string Name, RoleScopeKind Scope, string? OwnerOrganizationId, bool IsBuiltIn, bool IsProtected, IReadOnlyList<string> Permissions, int AssignmentCount);
+    public sealed record TenantOrganization(string Id, string Name);
+    public sealed record RoleDefinition(string Id, string Key, string Name, RoleScopeKind Scope, string? OwnerOrganizationId, bool IsBuiltIn, bool IsProtected, IReadOnlyList<string> Permissions, int AssignmentCount);
     private sealed record CreateRoleDefinitionRequest(string Name, string? Key, string? OwnerOrganizationId, IReadOnlyList<string> Permissions);
     private sealed record UpdateRoleDefinitionRequest(string Name, IReadOnlyList<string> Permissions);
 }

@@ -350,6 +350,7 @@ builder.Services.AddHelpdeskInfrastructure(builder.Configuration);
 if (skipDatabaseStartup)
 {
     var testDatabaseRoot = new InMemoryDatabaseRoot();
+    var testDatabaseName = builder.Configuration["Helpdesk:TestDatabaseName"] ?? $"helpdesk-tests-{Guid.NewGuid():N}";
 #pragma warning disable ASP0000
     var testDatabaseProvider = new ServiceCollection()
         .AddEntityFrameworkInMemoryDatabase()
@@ -359,7 +360,7 @@ if (skipDatabaseStartup)
     builder.Services.RemoveAll<DbContextOptions<HelpdeskDbContext>>();
     builder.Services.AddDbContext<HelpdeskDbContext>(options =>
         options
-            .UseInMemoryDatabase($"helpdesk-tests-{Guid.NewGuid():N}", testDatabaseRoot)
+            .UseInMemoryDatabase(testDatabaseName, testDatabaseRoot)
             .UseInternalServiceProvider(testDatabaseProvider)
             .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
 }
@@ -1467,12 +1468,26 @@ static void MapCrudEndpoints<T>(WebApplication app, string route) where T : clas
         return Results.Problem("ID assignment failed", statusCode: 400);
     });
 
-    group.MapPut("/{id}", async ([FromRoute] string id, [FromBody] T entity, [FromServices] SharedServices.IRepository<T> repo) =>
+    group.MapPut("/{id}", async ([FromRoute] string id, [FromBody] T entity, [FromServices] SharedServices.IRepository<T> repo, [FromServices] HelpdeskDbContext db) =>
     {
         var idProperty = typeof(T).GetProperty("Id");
         if (idProperty is null)
         {
             return Results.Problem("Invalid entity", statusCode: 400);
+        }
+
+        if (entity is Customer requestedCustomer)
+        {
+            var existingCustomer = await db.Customers.AsNoTracking().SingleOrDefaultAsync(customer => customer.Id == id);
+            if (existingCustomer is not null &&
+                !string.Equals(existingCustomer.OrganizationId, requestedCustomer.OrganizationId, StringComparison.OrdinalIgnoreCase) &&
+                await db.CustomerAuthLinks.AsNoTracking().AnyAsync(link => link.CustomerId == id))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["organizationId"] = ["Customers with a linked login cannot be moved here. Use an explicit access move workflow so existing organization access is not stranded."]
+                });
+            }
         }
 
         idProperty.SetValue(entity, id);
