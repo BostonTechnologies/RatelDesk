@@ -13,6 +13,12 @@ public sealed class InstanceBrandingFieldState
 {
     public string Name { get; set; } = string.Empty;
 
+    // Keep the override separate from Effective. A missing persisted value means
+    // that the deployment/default resolver remains responsible for this field.
+    public string? PersistedValue { get; set; }
+
+    public string EffectiveValue { get; set; } = string.Empty;
+
     public InstanceBrandingValueSource Source { get; set; }
 
     public bool IsAdminEditable { get; set; }

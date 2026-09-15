@@ -16,32 +16,38 @@
 
     <DialogContent>
         <MudForm @ref="form" Model="model" OnValidSubmit="Submit" Class="mt-2">
-            <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
-            <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
+            <MudTabs>
+                <MudTabPanel Text="Details">
+                    <MudTextField @bind-Value="model.Name" Label="Name" Required="true" />
+                    <MudTextField @bind-Value="model.Email" Label="Email" Required="true" />
 
-            <MudSelect T="string" @bind-Value="model.OrganizationId" Label="Organization" Required="true">
+                    <MudSelect T="string" @bind-Value="model.OrganizationId" Label="Organization" Required="true" Disabled="@(authStatus?.IsLinkedLogin == true)">
                 @foreach (var org in Organizations)
                 {
                     <MudSelectItem T="string" Value="@org.Id">@org.Name</MudSelectItem>
                 }
-            </MudSelect>
+                    </MudSelect>
+                    @if (authStatus?.IsLinkedLogin == true)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">A linked login keeps its current organization access. Use the explicit access workflow to move it.</MudText>
+                    }
 
-            <!-- Correct MudSwitch binding -->
-            <MudSwitch T="bool"
+                    <MudSwitch T="bool"
                        @bind-Value="model.Enabled"
                        For="@(() => model.Enabled)"
-                       Label="Enabled" />
+                               Label="Enabled" />
+                </MudTabPanel>
 
-            <MudDivider Class="my-4" />
-
-            <MudText Typo="Typo.subtitle2">Authentication / Helpdesk Access</MudText>
-            <MudStack Spacing="1" Class="mt-2">
+                <MudTabPanel Text="Access &amp; roles">
+                    <MudText Typo="Typo.subtitle2">Account access</MudText>
+                    <MudStack Spacing="1" Class="mt-2">
                 <MudChip T="string" Dense="true" Color="@GetAuthStatusColor(authStatus?.InviteStatus)" Variant="Variant.Outlined">
                     @(authStatus?.StatusText ?? "Not invited")
                 </MudChip>
                 @if (authStatus is not null)
                 {
-                    <MudText Typo="Typo.caption">Authentik user: @(authStatus.AuthentikUserId ?? "Not linked")</MudText>
+                    <MudText Typo="Typo.caption">@(authStatus.IdentitySummary ?? "No linked login")</MudText>
+                    <MudText Typo="Typo.caption">Account type: @(authStatus.AuthProviderType ?? "None")</MudText>
                     <MudText Typo="Typo.caption">Last invite: @FormatDate(authStatus.InviteSentAtUtc)</MudText>
                     <MudText Typo="Typo.caption">Last login: @FormatDate(authStatus.LastLoginAtUtc)</MudText>
                     @if (!string.IsNullOrWhiteSpace(authStatus.LastAuthError))
@@ -49,7 +55,9 @@
                         <MudAlert Severity="Severity.Error" Dense="true">@authStatus.LastAuthError</MudAlert>
                     }
                 }
-                <MudStack Row="true" Spacing="1">
+                @if (!string.Equals(authStatus?.AuthProviderType, "Local", StringComparison.OrdinalIgnoreCase) && authStatus?.HasMultipleIdentityLinks != true)
+                {
+                    <MudStack Row="true" Spacing="1">
                     <MudButton Variant="Variant.Outlined"
                                Color="Color.Primary"
                                Disabled="@IsInviteDisabled"
@@ -64,8 +72,15 @@
                                OnClick="DisableLogin">
                         Disable access
                     </MudButton>
-                </MudStack>
-            </MudStack>
+                    </MudStack>
+                }
+                else if (string.Equals(authStatus?.AuthProviderType, "Local", StringComparison.OrdinalIgnoreCase))
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Local activation and account lifecycle actions are managed from the organization member editor.</MudText>
+                }
+                    </MudStack>
+                </MudTabPanel>
+            </MudTabs>
         </MudForm>
     </DialogContent>
 

@@ -5,6 +5,7 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject AuthenticationStateProvider AuthenticationState
 @inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
 
 <PageTitle>Tenant settings</PageTitle>
 <div class="helpdesk-page">
@@ -27,6 +28,7 @@
 </div>
 
 @code {
+    [Parameter] public bool IsCanonical { get; set; }
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<TenantOrganization> organizations = new();
     private TenantSettingsModel? settings;
@@ -37,7 +39,8 @@
         var profile = CurrentUserAccessProfile.FromClaims((await AuthenticationState.GetAuthenticationStateAsync()).User);
         organizations = (await Api.GetFromJsonAsync<List<TenantOrganization>>("api/v1/tenant-admin/organizations?permission=Tenant.Settings.Manage") ?? new())
             .Where(organization => profile.HasPermission(HelpdeskPermissions.TenantSettingsManage, organization.Id)).ToList();
-        if (organizations.Count > 0) await SelectAsync(organizations[0].Id);
+        if (organizations.Count > 0 && !IsCanonical) NavigationManager.NavigateTo("/admin/organizations", replace: true);
+        else if (organizations.Count > 0) await SelectAsync(organizations[0].Id);
     }
     private async Task SelectAsync(string? value)
     {

@@ -1,15 +1,19 @@
 @page "/admin/organizations"
-@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Tenant.Roles.Assign,Tenant.Settings.Manage,HelpdeskAdmin")]
 @inject IHttpClientFactory HttpClientFactory
 @inject IDialogService DialogService
 @inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthenticationState
 
 @using Helpdesk.Shared.DTOs.Orchestration
 @using Helpdesk.Shared.DTOs.Organization
+@using HelpDesk.NewWeb.Components.Pages.Admin.User
 @using MudBlazor
 
 <PageTitle>Organization Management</PageTitle>
 
+<AuthorizeView Roles="HelpdeskAdmin" Context="instanceAdmin">
+<Authorized Context="instanceAdministrator">
 <MudPaper Class="pa-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudText Typo="Typo.h5">Organization Management</MudText>
@@ -48,6 +52,14 @@
         </RowTemplate>
     </MudTable>
 </MudPaper>
+</Authorized>
+<NotAuthorized Context="delegatedAdministrator">
+    <AuthorizeView Roles="Tenant.Roles.Assign" Context="rolesAdministrator">
+        <Authorized Context="memberAdministrator"><TenantAdministration IsCanonical="true" /></Authorized>
+        <NotAuthorized Context="settingsAdministrator"><TenantSettings IsCanonical="true" /></NotAuthorized>
+    </AuthorizeView>
+</NotAuthorized>
+</AuthorizeView>
 
 @code {
     [SupplyParameterFromQuery(Name = "search")]
@@ -57,6 +69,7 @@
     private List<OrganizationDto> organizations = new();
     private List<OrchestrationCatalogTenantDto> orchestrationTenants = new();
     private string searchText = string.Empty;
+    private bool isInstanceAdministrator;
 
     private IEnumerable<OrganizationDto> FilteredOrganizations => organizations
         .Where(org => string.IsNullOrWhiteSpace(searchText)
@@ -67,6 +80,8 @@
 
     protected override async Task OnInitializedAsync()
     {
+        isInstanceAdministrator = (await AuthenticationState.GetAuthenticationStateAsync()).User.IsInRole("HelpdeskAdmin");
+        if (!isInstanceAdministrator) return;
         searchText = QuerySearch ?? string.Empty;
         await LoadOrganizations();
     }

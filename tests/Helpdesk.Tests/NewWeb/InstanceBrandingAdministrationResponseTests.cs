@@ -18,6 +18,8 @@ public class InstanceBrandingAdministrationResponseTests
               "fields": [
                 {
                   "name": "ApplicationName",
+                  "persistedValue": "Custom Desk",
+                  "effectiveValue": "Deployment Desk",
                   "source": {{source}},
                   "isAdminEditable": false
                 }
@@ -31,6 +33,8 @@ public class InstanceBrandingAdministrationResponseTests
 
         var field = Assert.Single(response!.Fields);
         Assert.Equal("ApplicationName", field.Name);
+        Assert.Equal("Custom Desk", field.PersistedValue);
+        Assert.Equal("Deployment Desk", field.EffectiveValue);
         Assert.Equal(InstanceBrandingValueSource.Environment, field.Source);
         Assert.False(field.IsAdminEditable);
     }

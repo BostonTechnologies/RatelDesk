@@ -56,6 +56,25 @@ public sealed class InstanceBrandingProviderTests
             Assert.Single(administration.Fields, x => x.Name == nameof(InstanceBranding.ApplicationUrl)).Source);
     }
 
+    [Fact]
+    public async Task SaveAsync_ClearOneOverride_PreservesInheritedDefaultsForOtherFields()
+    {
+        var provider = CreateProvider(new ConfigurationBuilder().Build(), out var stored);
+        stored.Value = new InstanceBranding
+        {
+            ApplicationName = "Custom Desk",
+            LogoUrl = "https://example.test/custom-logo.svg"
+        };
+
+        var administration = await provider.SaveAsync(new InstanceBrandingUpdate(
+            null, null, null, null, null, null, null, null, null, null, null));
+
+        Assert.Null(stored.Value?.ApplicationName);
+        Assert.Null(stored.Value?.LogoUrl);
+        Assert.Equal("RatelDesk", administration.Effective.ApplicationName);
+        Assert.Equal("/branding/rateldesk-wordmark.webp", administration.Effective.LogoUrl);
+    }
+
     private static InstanceBrandingProvider CreateProvider(IConfiguration configuration, out BrandingState stored)
     {
         stored = new BrandingState();

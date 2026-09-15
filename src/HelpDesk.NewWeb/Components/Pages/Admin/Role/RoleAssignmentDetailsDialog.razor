@@ -1,0 +1,29 @@
+@using System.Net.Http.Json
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog>
+    <TitleContent><MudText Typo="Typo.h6">@Role.Name assignments</MudText></TitleContent>
+    <DialogContent>
+        <MudTabs>
+            <MudTabPanel Text="Permissions"><MudList T="string" Dense="true">@foreach (var permission in Role.Permissions) { <MudListItem T="string" Value="@permission">@permission</MudListItem> }</MudList></MudTabPanel>
+            <MudTabPanel Text="Assignments">
+                <MudText Typo="Typo.caption" Class="mb-2">Explicit user-role-organization assignments (up to 200).</MudText>
+                @if (loading) { <MudProgressLinear Indeterminate="true" /> }
+                else { <MudTable Items="assignments" Dense="true"><HeaderContent><MudTh>Person</MudTh><MudTh>Email</MudTh><MudTh>Organization</MudTh></HeaderContent><RowTemplate><MudTd>@context.Name</MudTd><MudTd>@context.Email</MudTd><MudTd>@OrganizationName(context.OrganizationId)</MudTd></RowTemplate></MudTable> }
+            </MudTabPanel>
+        </MudTabs>
+    </DialogContent>
+    <DialogActions><MudButton OnClick="@(() => Dialog.Cancel())">Close</MudButton></DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public RoleManagement.RoleDefinition Role { get; set; } = default!;
+    [Parameter] public IReadOnlyList<RoleManagement.TenantOrganization> Organizations { get; set; } = [];
+    private readonly List<RoleAssignment> assignments = [];
+    private bool loading = true;
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    protected override async Task OnInitializedAsync() { assignments.AddRange(await Api.GetFromJsonAsync<List<RoleAssignment>>($"api/v1/admin/role-definitions/{Role.Id}/assignments") ?? []); loading = false; }
+    private string OrganizationName(string id) => Organizations.FirstOrDefault(organization => organization.Id == id)?.Name ?? id;
+    private sealed record RoleAssignment(string UserId, string Name, string Email, string OrganizationId);
+}

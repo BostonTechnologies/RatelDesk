@@ -1,0 +1,20 @@
+<MudItem xs="12" md="6">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+        <MudTextField Value="Value" ValueChanged="ValueChanged" Label="@Label" Disabled="Disabled" Class="flex-grow-1" />
+        @if (!Disabled)
+        {
+            <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => OnUseDefault.InvokeAsync(Field)">Use default</MudButton>
+        }
+    </MudStack>
+    <MudText Typo="Typo.caption" Color="@(Disabled ? Color.Warning : Color.Secondary)">@Source</MudText>
+</MudItem>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Field { get; set; } = string.Empty;
+    [Parameter] public string Value { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Source { get; set; } = "Default";
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback<string> OnUseDefault { get; set; }
+}

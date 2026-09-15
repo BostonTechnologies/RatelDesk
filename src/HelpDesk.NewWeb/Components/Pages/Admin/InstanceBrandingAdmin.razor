@@ -4,60 +4,129 @@
 @using HelpDesk.NewWeb.Models
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
 
 <PageTitle>Branding &amp; Identity</PageTitle>
 
 <MudPaper Class="pa-4">
     <MudText Typo="Typo.h4">Branding &amp; Identity</MudText>
-    <MudText Typo="Typo.body2" Class="mb-4">Deployment configuration is authoritative. Environment-managed fields are shown but cannot be edited here.</MudText>
+    <MudText Typo="Typo.body2" Class="mb-4">Organization name identifies the instance operator; it does not rename an organization. Deployment-managed fields are read-only.</MudText>
     @if (_administration is null)
     {
         <MudProgressCircular Indeterminate="true" />
     }
     else
     {
+        <MudText Typo="Typo.h6" Class="mb-2">Identity</MudText>
         <MudGrid Spacing="2">
-            <MudItem xs="12" md="6"><MudTextField Label="Application name" @bind-Value="_model.ApplicationName" Disabled="@Managed(nameof(_model.ApplicationName))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Organization name" @bind-Value="_model.OrganizationName" Disabled="@Managed(nameof(_model.OrganizationName))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Application URL" @bind-Value="_model.ApplicationUrl" Disabled="@Managed(nameof(_model.ApplicationUrl))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Organization/public site URL" @bind-Value="_model.OrganizationUrl" Disabled="@Managed(nameof(_model.OrganizationUrl))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Support URL" @bind-Value="_model.SupportUrl" Disabled="@Managed(nameof(_model.SupportUrl))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Support email" @bind-Value="_model.SupportEmail" Disabled="@Managed(nameof(_model.SupportEmail))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Main logo URL" @bind-Value="_model.LogoUrl" Disabled="@Managed(nameof(_model.LogoUrl))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Compact logo URL" @bind-Value="_model.CompactLogoUrl" Disabled="@Managed(nameof(_model.CompactLogoUrl))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Favicon URL" @bind-Value="_model.FaviconUrl" Disabled="@Managed(nameof(_model.FaviconUrl))" /></MudItem>
-            <MudItem xs="12" md="6"><MudTextField Label="Email sender display name" @bind-Value="_model.EmailFromDisplayName" Disabled="@Managed(nameof(_model.EmailFromDisplayName))" /></MudItem>
-            <MudItem xs="12"><MudTextField Label="Tagline" @bind-Value="_model.Tagline" Disabled="@Managed(nameof(_model.Tagline))" /></MudItem>
+            <BrandingField Label="Application name" Field="@nameof(_model.ApplicationName)" Source="@Source(nameof(_model.ApplicationName))" Disabled="@Managed(nameof(_model.ApplicationName))" OnUseDefault="UseDefault" @bind-Value="_model.ApplicationName" />
+            <BrandingField Label="Organization name" Field="@nameof(_model.OrganizationName)" Source="@Source(nameof(_model.OrganizationName))" Disabled="@Managed(nameof(_model.OrganizationName))" OnUseDefault="UseDefault" @bind-Value="_model.OrganizationName" />
+            <BrandingField Label="Tagline" Field="@nameof(_model.Tagline)" Source="@Source(nameof(_model.Tagline))" Disabled="@Managed(nameof(_model.Tagline))" OnUseDefault="UseDefault" @bind-Value="_model.Tagline" />
         </MudGrid>
-        <MudDivider Class="my-4" />
-        <MudText Typo="Typo.subtitle2">Effective value sources</MudText>
-        <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1" Class="mt-2">
-            @foreach (var field in _administration.Fields)
-            {
-                <MudChip T="string" Size="Size.Small" Color="@(field.IsAdminEditable ? Color.Default : Color.Warning)">@field.Name: @field.Source</MudChip>
-            }
-        </MudStack>
-        <MudStack Row="true" Class="mt-4"><MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveAsync">Save branding</MudButton><MudButton Variant="Variant.Outlined" OnClick="LoadAsync">Reload</MudButton></MudStack>
+        <MudText Typo="Typo.h6" Class="mt-4 mb-2">Logos</MudText>
+        <MudGrid Spacing="2">
+            <BrandingField Label="Main logo URL" Field="@nameof(_model.LogoUrl)" Source="@Source(nameof(_model.LogoUrl))" Disabled="@Managed(nameof(_model.LogoUrl))" OnUseDefault="UseDefault" @bind-Value="_model.LogoUrl" />
+            <BrandingField Label="Compact logo URL" Field="@nameof(_model.CompactLogoUrl)" Source="@Source(nameof(_model.CompactLogoUrl))" Disabled="@Managed(nameof(_model.CompactLogoUrl))" OnUseDefault="UseDefault" @bind-Value="_model.CompactLogoUrl" />
+            <BrandingField Label="Favicon URL" Field="@nameof(_model.FaviconUrl)" Source="@Source(nameof(_model.FaviconUrl))" Disabled="@Managed(nameof(_model.FaviconUrl))" OnUseDefault="UseDefault" @bind-Value="_model.FaviconUrl" />
+            <MudItem xs="12">
+                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2" AlignItems="AlignItems.Center">
+                    <img src="@_model.LogoUrl" alt="Main logo preview" style="max-height:48px;max-width:220px" />
+                    <img src="@_model.CompactLogoUrl" alt="Compact logo preview" style="height:32px;max-width:64px" />
+                    <img src="@_model.FaviconUrl" alt="Favicon preview" style="height:24px;width:24px" />
+                    <MudPaper Outlined="true" Class="pa-2"><MudText Typo="Typo.subtitle2">@_model.ApplicationName</MudText><MudText Typo="Typo.caption">@_model.Tagline</MudText></MudPaper>
+                </MudStack>
+            </MudItem>
+        </MudGrid>
+        <MudText Typo="Typo.h6" Class="mt-4 mb-2">Links &amp; contact</MudText>
+        <MudGrid Spacing="2">
+            <BrandingField Label="Application URL" Field="@nameof(_model.ApplicationUrl)" Source="@Source(nameof(_model.ApplicationUrl))" Disabled="@Managed(nameof(_model.ApplicationUrl))" OnUseDefault="UseDefault" @bind-Value="_model.ApplicationUrl" />
+            <BrandingField Label="Organization/public site URL" Field="@nameof(_model.OrganizationUrl)" Source="@Source(nameof(_model.OrganizationUrl))" Disabled="@Managed(nameof(_model.OrganizationUrl))" OnUseDefault="UseDefault" @bind-Value="_model.OrganizationUrl" />
+            <BrandingField Label="Support URL" Field="@nameof(_model.SupportUrl)" Source="@Source(nameof(_model.SupportUrl))" Disabled="@Managed(nameof(_model.SupportUrl))" OnUseDefault="UseDefault" @bind-Value="_model.SupportUrl" />
+            <BrandingField Label="Support email" Field="@nameof(_model.SupportEmail)" Source="@Source(nameof(_model.SupportEmail))" Disabled="@Managed(nameof(_model.SupportEmail))" OnUseDefault="UseDefault" @bind-Value="_model.SupportEmail" />
+            <BrandingField Label="Email sender display name" Field="@nameof(_model.EmailFromDisplayName)" Source="@Source(nameof(_model.EmailFromDisplayName))" Disabled="@Managed(nameof(_model.EmailFromDisplayName))" OnUseDefault="UseDefault" @bind-Value="_model.EmailFromDisplayName" />
+        </MudGrid>
+        <MudStack Row="true" Class="mt-4"><MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="saving" OnClick="SaveAsync">@(saving ? "Saving…" : "Save branding")</MudButton><MudButton Variant="Variant.Outlined" Disabled="saving" OnClick="LoadAsync">Discard changes</MudButton></MudStack>
     }
 </MudPaper>
 
 @code {
     private InstanceBrandingAdministrationResponse? _administration;
     private InstanceBrandingUpdate _model = new();
+    private readonly HashSet<string> _useDefaultFields = new(StringComparer.Ordinal);
+    private bool saving;
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
 
     protected override Task OnInitializedAsync() => LoadAsync();
     private async Task LoadAsync()
     {
         _administration = await Api.GetFromJsonAsync<InstanceBrandingAdministrationResponse>("api/v1/admin/branding/");
-        if (_administration is not null) _model = InstanceBrandingUpdate.From(_administration.Effective);
+        if (_administration is not null)
+        {
+            _model = InstanceBrandingUpdate.From(_administration.Effective);
+            _useDefaultFields.Clear();
+        }
     }
     private bool Managed(string name) => _administration?.Fields.Any(x => x.Name == name && !x.IsAdminEditable) == true;
+    private string Source(string name) => _administration?.Fields.FirstOrDefault(x => x.Name == name)?.Source switch
+    {
+        InstanceBrandingValueSource.Database => "Custom",
+        InstanceBrandingValueSource.Environment => "Managed by deployment",
+        _ => "Default"
+    };
+    private void UseDefault(string name)
+    {
+        var field = _administration?.Fields.FirstOrDefault(x => x.Name == name);
+        if (field is null || !field.IsAdminEditable) return;
+        _useDefaultFields.Add(name);
+        SetValue(name, field.EffectiveValue);
+    }
+    private void SetValue(string name, string? value)
+    {
+        var normalized = value ?? string.Empty;
+        switch (name)
+        {
+            case nameof(_model.ApplicationName): _model.ApplicationName = normalized; break;
+            case nameof(_model.OrganizationName): _model.OrganizationName = normalized; break;
+            case nameof(_model.ApplicationUrl): _model.ApplicationUrl = normalized; break;
+            case nameof(_model.OrganizationUrl): _model.OrganizationUrl = normalized; break;
+            case nameof(_model.SupportUrl): _model.SupportUrl = normalized; break;
+            case nameof(_model.SupportEmail): _model.SupportEmail = normalized; break;
+            case nameof(_model.LogoUrl): _model.LogoUrl = normalized; break;
+            case nameof(_model.CompactLogoUrl): _model.CompactLogoUrl = normalized; break;
+            case nameof(_model.FaviconUrl): _model.FaviconUrl = normalized; break;
+            case nameof(_model.EmailFromDisplayName): _model.EmailFromDisplayName = normalized; break;
+            case nameof(_model.Tagline): _model.Tagline = normalized; break;
+            default: throw new ArgumentOutOfRangeException(nameof(name));
+        }
+    }
+    private string? ValueToSave(string name, string value)
+    {
+        if (_useDefaultFields.Contains(name)) return null;
+        var field = _administration!.Fields.Single(x => x.Name == name);
+        return string.Equals(value, field.EffectiveValue, StringComparison.Ordinal) ? field.PersistedValue : value;
+    }
+    private InstanceBrandingUpdate UpdateForSave() => new()
+    {
+        ApplicationName = ValueToSave(nameof(_model.ApplicationName), _model.ApplicationName),
+        OrganizationName = ValueToSave(nameof(_model.OrganizationName), _model.OrganizationName),
+        ApplicationUrl = ValueToSave(nameof(_model.ApplicationUrl), _model.ApplicationUrl),
+        OrganizationUrl = ValueToSave(nameof(_model.OrganizationUrl), _model.OrganizationUrl),
+        SupportUrl = ValueToSave(nameof(_model.SupportUrl), _model.SupportUrl),
+        SupportEmail = ValueToSave(nameof(_model.SupportEmail), _model.SupportEmail),
+        LogoUrl = ValueToSave(nameof(_model.LogoUrl), _model.LogoUrl),
+        CompactLogoUrl = ValueToSave(nameof(_model.CompactLogoUrl), _model.CompactLogoUrl),
+        FaviconUrl = ValueToSave(nameof(_model.FaviconUrl), _model.FaviconUrl),
+        EmailFromDisplayName = ValueToSave(nameof(_model.EmailFromDisplayName), _model.EmailFromDisplayName),
+        Tagline = ValueToSave(nameof(_model.Tagline), _model.Tagline)
+    };
     private async Task SaveAsync()
     {
-        var response = await Api.PutAsJsonAsync("api/v1/admin/branding/", _model);
-        if (!response.IsSuccessStatusCode) { Snackbar.Add("Branding was not saved. Check URL values.", Severity.Error); return; }
+        saving = true;
+        using var response = await Api.PutAsJsonAsync("api/v1/admin/branding/", UpdateForSave());
+        if (!response.IsSuccessStatusCode) { Snackbar.Add("Branding was not saved. URLs must be HTTP(S), except root-relative logo assets.", Severity.Error); saving = false; return; }
         _administration = await response.Content.ReadFromJsonAsync<InstanceBrandingAdministrationResponse>();
+        if (_administration is not null) _model = InstanceBrandingUpdate.From(_administration.Effective);
         Snackbar.Add("Branding saved.", Severity.Success);
+        NavigationManager.NavigateTo(NavigationManager.Uri, forceLoad: true);
     }
 }
