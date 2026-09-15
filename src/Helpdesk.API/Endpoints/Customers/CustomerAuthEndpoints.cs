@@ -7,6 +7,7 @@ using Helpdesk.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Helpdesk.API.Endpoints.Customers;
 
@@ -23,39 +24,44 @@ public static class CustomerAuthEndpoints
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] UserManager<ApplicationUser> users,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            Results.Ok(await GetStatusAsync(customerId, invitationService, db, users, ct)));
+            Results.Ok(await GetStatusAsync(customerId, invitationService, db, users, authentikOptions.Value, ct)));
 
         group.MapPost("/invite", async (
             [FromRoute] string customerId,
             ClaimsPrincipal user,
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            await RunExternalCustomerAuthActionAsync(customerId, db, () => invitationService.InviteAsync(customerId, ResolveUserId(user), ct), ct));
+            await RunExternalCustomerAuthActionAsync(customerId, db, authentikOptions.Value, () => invitationService.InviteAsync(customerId, ResolveUserId(user), ct), ct));
 
         group.MapPost("/resend-invite", async (
             [FromRoute] string customerId,
             ClaimsPrincipal user,
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            await RunExternalCustomerAuthActionAsync(customerId, db, () => invitationService.ResendInviteAsync(customerId, ResolveUserId(user), ct), ct));
+            await RunExternalCustomerAuthActionAsync(customerId, db, authentikOptions.Value, () => invitationService.ResendInviteAsync(customerId, ResolveUserId(user), ct), ct));
 
         group.MapPost("/disable-login", async (
             [FromRoute] string customerId,
             ClaimsPrincipal user,
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            await RunExternalCustomerAuthActionAsync(customerId, db, () => invitationService.DisableLoginAsync(customerId, ResolveUserId(user), ct), ct));
+            await RunExternalCustomerAuthActionAsync(customerId, db, authentikOptions.Value, () => invitationService.DisableLoginAsync(customerId, ResolveUserId(user), ct), ct));
 
         group.MapPost("/sync-authentik", async (
             [FromRoute] string customerId,
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            await RunExternalCustomerAuthActionAsync(customerId, db, () => invitationService.SyncAuthentikAsync(customerId, ct), ct));
+            await RunExternalCustomerAuthActionAsync(customerId, db, authentikOptions.Value, () => invitationService.SyncAuthentikAsync(customerId, ct), ct));
 
         group.MapPost("/local-activation-token", async (
             [FromRoute] string customerId,
@@ -80,39 +86,44 @@ public static class CustomerAuthEndpoints
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] UserManager<ApplicationUser> users,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            Results.Ok(await GetStatusAsync(customerId, invitationService, db, users, ct)));
+            Results.Ok(await GetStatusAsync(customerId, invitationService, db, users, authentikOptions.Value, ct)));
 
         adminGroup.MapPost("/invite", async (
             [FromRoute] string customerId,
             ClaimsPrincipal user,
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            await RunExternalCustomerAuthActionAsync(customerId, db, () => invitationService.InviteAsync(customerId, ResolveUserId(user), ct), ct));
+            await RunExternalCustomerAuthActionAsync(customerId, db, authentikOptions.Value, () => invitationService.InviteAsync(customerId, ResolveUserId(user), ct), ct));
 
         adminGroup.MapPost("/resend-invite", async (
             [FromRoute] string customerId,
             ClaimsPrincipal user,
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            await RunExternalCustomerAuthActionAsync(customerId, db, () => invitationService.ResendInviteAsync(customerId, ResolveUserId(user), ct), ct));
+            await RunExternalCustomerAuthActionAsync(customerId, db, authentikOptions.Value, () => invitationService.ResendInviteAsync(customerId, ResolveUserId(user), ct), ct));
 
         adminGroup.MapPost("/disable-login", async (
             [FromRoute] string customerId,
             ClaimsPrincipal user,
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            await RunExternalCustomerAuthActionAsync(customerId, db, () => invitationService.DisableLoginAsync(customerId, ResolveUserId(user), ct), ct));
+            await RunExternalCustomerAuthActionAsync(customerId, db, authentikOptions.Value, () => invitationService.DisableLoginAsync(customerId, ResolveUserId(user), ct), ct));
 
         adminGroup.MapPost("/sync-authentik", async (
             [FromRoute] string customerId,
             [FromServices] ICustomerInvitationService invitationService,
             [FromServices] HelpdeskDbContext db,
+            [FromServices] IOptions<AuthentikOptions> authentikOptions,
             CancellationToken ct) =>
-            await RunExternalCustomerAuthActionAsync(customerId, db, () => invitationService.SyncAuthentikAsync(customerId, ct), ct));
+            await RunExternalCustomerAuthActionAsync(customerId, db, authentikOptions.Value, () => invitationService.SyncAuthentikAsync(customerId, ct), ct));
     }
 
     private static async Task<IResult> RunCustomerAuthActionAsync<T>(Func<Task<T>> action)
@@ -150,6 +161,7 @@ public static class CustomerAuthEndpoints
     private static async Task<IResult> RunExternalCustomerAuthActionAsync<T>(
         string customerId,
         HelpdeskDbContext db,
+        AuthentikOptions authentikOptions,
         Func<Task<T>> action,
         CancellationToken ct)
     {
@@ -166,6 +178,13 @@ public static class CustomerAuthEndpoints
         {
             return Results.Conflict(new { message = "This customer has a local account. Use the local activation workflow; external invitation actions are unavailable." });
         }
+        if (!authentikOptions.IsConfigured)
+        {
+            return Results.Problem(
+                detail: authentikOptions.ConfigurationError,
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                title: "Customer invitation is not configured");
+        }
         return await RunCustomerAuthActionAsync(action);
     }
 
@@ -174,6 +193,7 @@ public static class CustomerAuthEndpoints
         ICustomerInvitationService invitationService,
         HelpdeskDbContext db,
         UserManager<ApplicationUser> users,
+        AuthentikOptions authentikOptions,
         CancellationToken ct)
     {
         var customer = await db.Customers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == customerId, ct)
@@ -186,7 +206,7 @@ public static class CustomerAuthEndpoints
 
         if (links.Count == 0)
         {
-            return NoLinkedLogin(customer.Id);
+            return NoLinkedLogin(customer.Id, authentikOptions.IsConfigured);
         }
 
         if (links.Count > 1)
@@ -255,13 +275,15 @@ public static class CustomerAuthEndpoints
         };
     }
 
-    private static CustomerAuthStatusDto NoLinkedLogin(string customerId) => new()
+    private static CustomerAuthStatusDto NoLinkedLogin(string customerId, bool canInvite) => new()
     {
         CustomerId = customerId,
         InviteStatus = CustomerInviteStatus.NotInvited,
         StatusText = "No linked login",
-        IdentitySummary = "This contact has no login link.",
-        CanInvite = true
+        IdentitySummary = canInvite
+            ? "This contact has no login link."
+            : "This contact has no login link. External invitations are not configured.",
+        CanInvite = canInvite
     };
 
     public sealed record LocalActivationTokenResponse(string UserId, string Email, string ActivationToken);

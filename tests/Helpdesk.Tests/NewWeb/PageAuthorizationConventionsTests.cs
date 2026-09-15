@@ -64,11 +64,15 @@ public class PageAuthorizationConventionsTests
         Assert.Contains("@page \"/tenant-administration\"", page, StringComparison.Ordinal);
         Assert.Contains("@attribute [Authorize(Roles = \"Tenant.Roles.Assign,HelpdeskAdmin\")]", page, StringComparison.Ordinal);
         Assert.Contains("api/v1/tenant-admin/organizations", page, StringComparison.Ordinal);
+        Assert.Contains("OnParametersSetAsync", page, StringComparison.Ordinal);
+        Assert.Contains("ApplyOrganizationParameterAsync", page, StringComparison.Ordinal);
         Assert.Contains("Roles=\"Tenant.Roles.Assign,Tenant.Settings.Manage\"", navigation, StringComparison.Ordinal);
         Assert.Contains("Href=\"/admin/organizations\"", navigation, StringComparison.Ordinal);
         var settingsPage = File.ReadAllText(Path.Combine(repoRoot, "src", "HelpDesk.NewWeb", "Components", "Pages", "Admin", "User", "TenantSettings.razor"));
         Assert.Contains("api/v1/tenant-admin/organizations?permission=Tenant.Settings.Manage", settingsPage, StringComparison.Ordinal);
         Assert.Contains("profile.HasPermission(HelpdeskPermissions.TenantSettingsManage, organization.Id)", settingsPage, StringComparison.Ordinal);
+        Assert.Contains("OnParametersSetAsync", settingsPage, StringComparison.Ordinal);
+        Assert.Contains("ApplyOrganizationParameterAsync", settingsPage, StringComparison.Ordinal);
         Assert.Contains("Href=\"/admin/roles\"", navigation, StringComparison.Ordinal);
         Assert.DoesNotContain("Href=\"/tenant-administration\"", navigation, StringComparison.Ordinal);
         Assert.DoesNotContain("Href=\"/tenant-settings\"", navigation, StringComparison.Ordinal);

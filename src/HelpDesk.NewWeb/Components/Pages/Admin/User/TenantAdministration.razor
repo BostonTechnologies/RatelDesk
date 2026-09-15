@@ -108,11 +108,15 @@
     private List<TenantMember> members = new();
     private List<TenantDelegableRole> availableRoles = new();
     private readonly Dictionary<string, HashSet<string>> roleAssignments = new(StringComparer.OrdinalIgnoreCase);
-    private string? selectedOrganizationId;
+    private readonly TenantOrganizationSelection organizationSelection = new();
+    private string? selectedOrganizationId => organizationSelection.SelectedOrganizationId;
     private string? savingUserId;
     private string? error;
     private bool loading;
     private bool inviting;
+    private bool organizationsLoaded;
+    private bool hasAppliedOrganizationParameter;
+    private string? appliedOrganizationId;
     private string inviteName = string.Empty;
     private string inviteEmail = string.Empty;
     private TenantLocalAccountInvitation? invitation;
@@ -127,14 +131,36 @@
         }
 
         organizations = await response.Content.ReadFromJsonAsync<List<TenantOrganization>>() ?? new();
-        selectedOrganizationId = !string.IsNullOrWhiteSpace(OrganizationId)
-            ? organizations.FirstOrDefault(organization => string.Equals(organization.Id, OrganizationId, StringComparison.OrdinalIgnoreCase))?.Id
-            : organizations.FirstOrDefault()?.Id;
-        if (!string.IsNullOrWhiteSpace(OrganizationId) && string.IsNullOrWhiteSpace(selectedOrganizationId))
+        organizationsLoaded = true;
+        await ApplyOrganizationParameterAsync();
+    }
+
+    protected override Task OnParametersSetAsync()
+    {
+        if (!organizationsLoaded ||
+            (hasAppliedOrganizationParameter && string.Equals(appliedOrganizationId, OrganizationId, StringComparison.OrdinalIgnoreCase)))
         {
+            return Task.CompletedTask;
+        }
+
+        return ApplyOrganizationParameterAsync();
+    }
+
+    private async Task ApplyOrganizationParameterAsync()
+    {
+        error = null;
+        hasAppliedOrganizationParameter = true;
+        appliedOrganizationId = OrganizationId;
+        if (!organizationSelection.ApplyRouteParameter(OrganizationId, organizations.Select(organization => organization.Id)))
+        {
+            members = new();
+            availableRoles = new();
+            roleAssignments.Clear();
             error = "The requested organization is unavailable or you do not have permission to manage its members.";
             return;
         }
+
+        invitation = null;
         if (!string.IsNullOrWhiteSpace(selectedOrganizationId) && !IsCanonical)
         {
             NavigationManager.NavigateTo($"/admin/organizations?section=members&organizationId={Uri.EscapeDataString(selectedOrganizationId)}", replace: true);
@@ -147,7 +173,7 @@
 
     private async Task SelectOrganization(string organizationId)
     {
-        selectedOrganizationId = organizationId;
+        organizationSelection.Select(organizationId);
         invitation = null;
         await LoadMembers();
     }
@@ -168,7 +194,7 @@
         try
         {
             var response = await HelpdeskApi.PostAsJsonAsync(
-                $"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/",
+                organizationSelection.Path("users/"),
                 new CreateTenantLocalAccountRequest(inviteName, inviteEmail));
             if (!response.IsSuccessStatusCode)
             {
@@ -198,14 +224,14 @@
         error = null;
         try
         {
-            var rolesResponse = await HelpdeskApi.GetAsync($"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/roles");
+            var rolesResponse = await HelpdeskApi.GetAsync(organizationSelection.Path("users/roles"));
             if (!rolesResponse.IsSuccessStatusCode)
             {
                 error = "Delegable tenant roles could not be loaded. Refresh the page and try again.";
                 return;
             }
 
-            var response = await HelpdeskApi.GetAsync($"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/");
+            var response = await HelpdeskApi.GetAsync(organizationSelection.Path("users/"));
             if (!response.IsSuccessStatusCode)
             {
                 error = "Tenant members could not be loaded. Refresh the page and try again.";
@@ -260,7 +286,7 @@
         try
         {
             var response = await HelpdeskApi.PutAsJsonAsync(
-                $"api/v1/tenant-admin/organizations/{selectedOrganizationId}/users/{member.UserId}/assignments",
+                $"{organizationSelection.Path("users")}/{Uri.EscapeDataString(member.UserId)}/assignments",
                 new ReplaceTenantMembershipRequest(CurrentRoleKeys(member)
                     .OrderBy(roleKey => roleKey, StringComparer.OrdinalIgnoreCase)
                     .ToArray()));

@@ -36,30 +36,77 @@
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<TenantOrganization> organizations = new();
     private TenantSettingsModel? settings;
-    private string? organizationId, error;
+    private readonly TenantOrganizationSelection organizationSelection = new();
+    private string? organizationId => organizationSelection.SelectedOrganizationId;
+    private string? error;
     private bool busy;
+    private bool organizationsLoaded;
+    private bool hasAppliedOrganizationParameter;
+    private string? appliedOrganizationId;
+
     protected override async Task OnInitializedAsync()
     {
         var profile = CurrentUserAccessProfile.FromClaims((await AuthenticationState.GetAuthenticationStateAsync()).User);
         organizations = (await Api.GetFromJsonAsync<List<TenantOrganization>>("api/v1/tenant-admin/organizations?permission=Tenant.Settings.Manage") ?? new())
             .Where(organization => profile.HasPermission(HelpdeskPermissions.TenantSettingsManage, organization.Id)).ToList();
-        var selected = !string.IsNullOrWhiteSpace(OrganizationId)
-            ? organizations.FirstOrDefault(organization => string.Equals(organization.Id, OrganizationId, StringComparison.OrdinalIgnoreCase))?.Id
-            : organizations.FirstOrDefault()?.Id;
-        if (!string.IsNullOrWhiteSpace(OrganizationId) && string.IsNullOrWhiteSpace(selected))
+        organizationsLoaded = true;
+        await ApplyOrganizationParameterAsync();
+    }
+
+    protected override Task OnParametersSetAsync()
+    {
+        if (!organizationsLoaded ||
+            (hasAppliedOrganizationParameter && string.Equals(appliedOrganizationId, OrganizationId, StringComparison.OrdinalIgnoreCase)))
         {
+            return Task.CompletedTask;
+        }
+
+        return ApplyOrganizationParameterAsync();
+    }
+
+    private async Task ApplyOrganizationParameterAsync()
+    {
+        error = null;
+        hasAppliedOrganizationParameter = true;
+        appliedOrganizationId = OrganizationId;
+        if (!organizationSelection.ApplyRouteParameter(OrganizationId, organizations.Select(organization => organization.Id)))
+        {
+            settings = null;
             error = "The requested organization is unavailable or you do not have permission to edit its settings.";
             return;
         }
-        if (!string.IsNullOrWhiteSpace(selected) && !IsCanonical) NavigationManager.NavigateTo($"/admin/organizations?section=settings&organizationId={Uri.EscapeDataString(selected)}", replace: true);
-        else if (!string.IsNullOrWhiteSpace(selected)) await SelectAsync(selected);
+
+        if (!string.IsNullOrWhiteSpace(organizationId) && !IsCanonical)
+        {
+            NavigationManager.NavigateTo($"/admin/organizations?section=settings&organizationId={Uri.EscapeDataString(organizationId)}", replace: true);
+        }
+        else if (!string.IsNullOrWhiteSpace(organizationId))
+        {
+            await LoadSettingsAsync();
+        }
     }
+
     private async Task SelectAsync(string? value)
     {
-        organizationId = value; settings = null; error = null;
-        if (string.IsNullOrWhiteSpace(value)) return;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            organizationSelection.ApplyRouteParameter(null, organizations.Select(organization => organization.Id));
+        }
+        else
+        {
+            organizationSelection.Select(value);
+        }
+
+        await LoadSettingsAsync();
+    }
+
+    private async Task LoadSettingsAsync()
+    {
+        settings = null;
+        error = null;
+        if (string.IsNullOrWhiteSpace(organizationId)) return;
         busy = true;
-        try { settings = await Api.GetFromJsonAsync<TenantSettingsModel>($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(value)}/settings"); }
+        try { settings = await Api.GetFromJsonAsync<TenantSettingsModel>(organizationSelection.Path("settings")); }
         catch (HttpRequestException) { error = "The tenant settings could not be loaded."; }
         finally { busy = false; }
     }
@@ -70,7 +117,7 @@
         busy = true; error = null;
         try
         {
-            using var response = await Api.PutAsJsonAsync($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(organizationId)}/settings", settings);
+            using var response = await Api.PutAsJsonAsync(organizationSelection.Path("settings"), settings);
             if (!response.IsSuccessStatusCode) { error = "The tenant settings could not be saved. Check your access and the entered values."; return; }
             Snackbar.Add("Tenant settings saved.", Severity.Success);
             var index = organizations.FindIndex(organization => organization.Id == organizationId);

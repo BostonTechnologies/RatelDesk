@@ -123,6 +123,7 @@ public sealed class CustomerInvitationService(
         bool allowExistingInvite,
         CancellationToken ct)
     {
+        EnsureConfigured();
         var customer = await FindCustomerAsync(customerId, ct);
         if (!customer.IsEnabled)
         {
@@ -232,6 +233,8 @@ public sealed class CustomerInvitationService(
             return link;
         }
 
+        EnsureConfigured();
+
         link = new CustomerAuthLink
         {
             CustomerId = customer.Id,
@@ -241,6 +244,14 @@ public sealed class CustomerInvitationService(
         _db.CustomerAuthLinks.Add(link);
         await _db.SaveChangesAsync(ct);
         return link;
+    }
+
+    private void EnsureConfigured()
+    {
+        if (!_options.IsConfigured)
+        {
+            throw new AuthentikAdminConfigurationException(_options.ConfigurationError);
+        }
     }
 
     private async Task AuditAsync(string customerId, string userId, string message, CancellationToken ct)
@@ -352,7 +363,7 @@ public sealed class CustomerInvitationService(
         return rendered;
     }
 
-    private static CustomerAuthStatusDto ToStatus(Customer customer, CustomerAuthLink? link)
+    private CustomerAuthStatusDto ToStatus(Customer customer, CustomerAuthLink? link)
     {
         var status = link?.InviteStatus ?? CustomerInviteStatus.NotInvited;
         return new CustomerAuthStatusDto
@@ -381,9 +392,12 @@ public sealed class CustomerInvitationService(
             LastAuthSyncAtUtc = link?.LastAuthSyncAtUtc,
             LastAuthError = link?.LastAuthError,
             InviteLinkExpiresAtUtc = link?.InviteLinkExpiresAtUtc,
-            CanInvite = customer.IsEnabled && status is CustomerInviteStatus.NotInvited or CustomerInviteStatus.Failed or CustomerInviteStatus.Expired,
-            CanResend = customer.IsEnabled && status is CustomerInviteStatus.Pending or CustomerInviteStatus.Failed or CustomerInviteStatus.Expired,
-            CanDisableLogin = status is CustomerInviteStatus.Pending or CustomerInviteStatus.Active
+            CanInvite = _options.IsConfigured && customer.IsEnabled &&
+                status is CustomerInviteStatus.NotInvited or CustomerInviteStatus.Failed or CustomerInviteStatus.Expired,
+            CanResend = _options.IsConfigured && customer.IsEnabled &&
+                status is CustomerInviteStatus.Pending or CustomerInviteStatus.Failed or CustomerInviteStatus.Expired,
+            CanDisableLogin = _options.IsConfigured &&
+                status is CustomerInviteStatus.Pending or CustomerInviteStatus.Active
         };
     }
 

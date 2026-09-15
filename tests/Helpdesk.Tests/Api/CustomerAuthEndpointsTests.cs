@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -37,6 +38,25 @@ public sealed class CustomerAuthEndpointsTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Contains("Customer invitation is not configured", body, StringComparison.Ordinal);
         Assert.Contains("Authentication:AuthentikAdmin:ApiToken", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Invite_ForUnlinkedCustomer_WhenProviderIsUnconfigured_LeavesNoProvisionalLink()
+    {
+        var invitationService = new ThrowingInvitationService(new InvalidOperationException("The invitation service must not be called."));
+        using var factory = CreateFactory(invitationService, authentikConfigured: false);
+        await SeedCustomerAsync(factory);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "HelpdeskAdmin");
+
+        var status = await client.GetFromJsonAsync<CustomerAuthStatusDto>("/api/v1/customers/customer-1/auth/status");
+        var response = await client.PostAsync("/api/v1/customers/customer-1/auth/invite", null);
+
+        Assert.NotNull(status);
+        Assert.False(status.CanInvite);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(0, invitationService.InvocationCount);
+        await AssertSeedVisibleFromNewScopeAsync(factory, 0);
     }
 
     [Fact]
@@ -160,10 +180,12 @@ public sealed class CustomerAuthEndpointsTests
         Assert.Equal("internal", payload["type"]?.GetValue<string>());
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(ICustomerInvitationService invitationService)
+    private static WebApplicationFactory<Program> CreateFactory(ICustomerInvitationService invitationService, bool authentikConfigured = true)
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Helpdesk:TestDatabaseName", $"customer-auth-{Guid.NewGuid():N}");
+            builder.UseSetting("Authentication:AuthentikAdmin:BaseUrl", "https://auth.example.test/");
+            builder.UseSetting("Authentication:AuthentikAdmin:ApiToken", authentikConfigured ? "test-token" : string.Empty);
             builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
@@ -195,6 +217,14 @@ public sealed class CustomerAuthEndpointsTests
                 LocalAccountId = index == 0 && string.Equals(provider, "Local", StringComparison.OrdinalIgnoreCase) ? "local-account" : null
             });
         }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedCustomerAsync(WebApplicationFactory<Program> factory)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        db.Customers.Add(new Customer { Id = "customer-1", Name = "Customer", Email = "customer@example.test", OrganizationId = "organization-1" });
         await db.SaveChangesAsync();
     }
 
