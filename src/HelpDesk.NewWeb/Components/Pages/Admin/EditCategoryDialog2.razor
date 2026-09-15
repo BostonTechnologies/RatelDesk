@@ -1,0 +1,51 @@
+@using Helpdesk.Shared.DTOs.Category
+@using Helpdesk.Shared.Enums
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form">
+            <MudTextField T="string" Label="Name" @bind-Value="model.Name" Required="true" />
+            <MudTextField T="string" Label="Description" @bind-Value="model.Description" Lines="3" />
+            <MudSelect T="TicketCategoryType" Label="Type" @bind-Value="model.Type">
+                @foreach (TicketCategoryType type in Enum.GetValues(typeof(TicketCategoryType)))
+                {
+                    <MudSelectItem T="TicketCategoryType" Value="@type">@type</MudSelectItem>
+                }
+            </MudSelect>
+            <MudNumericField T="int" Label="Sort order" @bind-Value="model.SortOrder" />
+            <MudCheckBox T="bool" Label="Active" @bind-Value="model.IsActive" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Dialog.Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveAsync">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public TicketCategoryDto? Category { get; set; }
+    [Parameter] public TicketCategoryType DefaultType { get; set; }
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    private MudForm form = default!;
+    private EditModel model = new();
+
+    protected override void OnParametersSet() => model = Category is null
+        ? new EditModel { Type = DefaultType, IsActive = true }
+        : new EditModel { Name = Category.Name, Description = Category.Description, Type = Category.Type, SortOrder = Category.SortOrder, IsActive = Category.IsActive };
+
+    private async Task SaveAsync()
+    {
+        await form.ValidateAsync();
+        if (!form.IsValid || string.IsNullOrWhiteSpace(model.Name)) return;
+        var response = Category is null
+            ? await Api.PostAsJsonAsync("api/v1/categories", new CreateTicketCategoryDto { Name = model.Name.Trim(), Description = model.Description, Type = model.Type, SortOrder = model.SortOrder, IsActive = model.IsActive })
+            : await Api.PutAsJsonAsync($"api/v1/categories/{Category.Id}", new UpdateTicketCategoryDto { Name = model.Name.Trim(), Description = model.Description, Type = model.Type, SortOrder = model.SortOrder, IsActive = model.IsActive });
+        Dialog.Close(response.IsSuccessStatusCode ? DialogResult.Ok(true) : DialogResult.Ok(new DialogError(await response.Content.ReadAsStringAsync())));
+    }
+
+    private sealed class EditModel { public string Name { get; set; } = string.Empty; public string? Description { get; set; } public TicketCategoryType Type { get; set; } public int SortOrder { get; set; } public bool IsActive { get; set; } }
+    public sealed class DialogError(string message) { public string Message { get; } = message; }
+}

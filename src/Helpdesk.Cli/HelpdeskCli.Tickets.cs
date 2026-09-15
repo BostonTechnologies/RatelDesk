@@ -26,9 +26,6 @@ internal static partial class HelpdeskCli
         var changes = BuildTicketCollectionCommand(runtime, globals, "changes", "Manage changes.", "/api/v1/changes");
         var lifecycle = BodyCommand(runtime, globals, "lifecycle", HttpMethod.Post, "/api/v1/changes/{id}/lifecycle", ("--lifecycle-state", "lifecycleState"), ("--comment", "comment"));
         changes.AddCommand(lifecycle);
-        changes.AddCommand(GetByIdCommand(runtime, globals, "ai-review", "/api/v1/changes/{id}/ai-review"));
-        changes.AddCommand(BodyCommand(runtime, globals, "run-ai-review", HttpMethod.Post, "/api/v1/changes/{id}/ai-review", ("--prompt", "prompt"), ("--force", "force")));
-        changes.AddCommand(BodyCommand(runtime, globals, "ack-ai-review", HttpMethod.Post, "/api/v1/changes/{id}/ai-review/acknowledge", ("--comment", "comment")));
         return changes;
     }
 

@@ -107,7 +107,7 @@ docker compose -f docker/docker-compose.yml exec api \
 
 For PostgreSQL, set `Bootstrap__Unattended__Provider=PostgreSql` and
 `Bootstrap__Unattended__PostgreSqlConnectionString` instead. The same bounded
-preflight accepts only an empty target with `vector` and `pg_trgm` available.
+preflight accepts only an empty target with the required database connectivity and permissions.
 Completion writes the normal durable marker and descriptor. A restricted API
 host observes that descriptor, exits, and Compose restarts it into the normal
 runtime; it does not retain the unattended password.
@@ -120,11 +120,11 @@ SQLite uses its own EF Core migration assembly; setup and every normal API start
 
 ## PostgreSQL
 
-An existing PostgreSQL deployment continues to use `ConnectionStrings__HelpdeskDb`; select `Database__Provider=PostgreSql` explicitly for new deployment-managed PostgreSQL configuration. Preserve the database and shared data-protection keys before an upgrade. PostgreSQL uses the existing provider-specific migration chain and requires the extensions used by it, including `vector` and `pg_trgm`; do not point RatelDesk at an unrelated or non-empty database.
+An existing PostgreSQL deployment continues to use `ConnectionStrings__HelpdeskDb`; select `Database__Provider=PostgreSql` explicitly for new deployment-managed PostgreSQL configuration. Preserve the database and shared data-protection keys before an upgrade. PostgreSQL uses the existing provider-specific migration chain and does not require non-standard extensions; do not point RatelDesk at an unrelated or non-empty database.
 
 ### Bundled PostgreSQL
 
-For a fresh local or single-host deployment, combine the default stack with [docker/docker-compose.postgres.yml](../docker/docker-compose.postgres.yml). It runs the compatible `pgvector/pgvector:pg16` image, creates `vector` and `pg_trgm` only when its new PostgreSQL volume is initialized, and keeps database data in a separate named volume:
+For a fresh local or single-host deployment, combine the default stack with [docker/docker-compose.postgres.yml](../docker/docker-compose.postgres.yml). It runs the standard `postgres:16` image and keeps database data in a separate named volume:
 
 ```bash
 RATELDESK_POSTGRES_PASSWORD='replace-with-a-secret' \
@@ -160,9 +160,9 @@ unset RATELDESK_POSTGRES_CONNECTION_STRING RATELDESK_BOOTSTRAP_ADMIN_EMAIL RATEL
 docker compose -f docker/docker-compose.release.yml up -d
 ```
 
-For a new instance, the target must be empty. RatelDesk tests the connection with bounded timeouts before it creates schema. It identifies a historical RatelDesk schema separately from an unrelated non-empty database, but refuses setup for both so an existing installation cannot be modified by a first-run session. The setup principal must be able to apply the existing migrations but does not need superuser access. A database administrator must install the required `vector` and `pg_trgm` extensions in the target database before setup, and should enforce TLS, least-privilege credentials, and provider-managed backups. Deployment-managed `ConnectionStrings__HelpdeskDb` supports both fresh setup and established installations. Readiness is determined from installation evidence, not from the presence of a connection string.
+For a new instance, the target must be empty. RatelDesk tests the connection with bounded timeouts before it creates schema. It identifies a historical RatelDesk schema separately from an unrelated non-empty database, but refuses setup for both so an existing installation cannot be modified by a first-run session. The setup principal must be able to apply the existing migrations but does not need superuser access. Use TLS, least-privilege credentials, and provider-managed backups. Deployment-managed `ConnectionStrings__HelpdeskDb` supports both fresh setup and established installations. Readiness is determined from installation evidence, not from the presence of a connection string.
 
-Back up an external deployment as a complete recovery set: a consistent PostgreSQL backup (including required extensions and roles according to the database provider's procedure), the bootstrap state directory, the shared data-protection key ring, and attachments. Test restoring that set into an isolated target before relying on it. To upgrade, take and verify this backup, deploy one versioned image release, and let the API apply its existing migration chain. If the migration fails, stop the new image and restore the complete recovery set; never point the original initialized descriptor at a new empty database to recover it.
+Back up an external deployment as a complete recovery set: a consistent PostgreSQL backup and roles according to the database provider's procedure, the bootstrap state directory, the shared data-protection key ring, and attachments. Test restoring that set into an isolated target before relying on it. To upgrade, take and verify this backup, deploy one versioned image release, and let the API apply its existing migration chain. If the migration fails, stop the new image and restore the complete recovery set; never point the original initialized descriptor at a new empty database to recover it.
 
 ## Reverse proxy and Traefik
 

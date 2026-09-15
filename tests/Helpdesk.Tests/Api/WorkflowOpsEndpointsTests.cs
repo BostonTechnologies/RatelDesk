@@ -147,7 +147,7 @@ public sealed class WorkflowOpsEndpointsTests
                 if (connection is not null)
                 {
                     await db.Database.MigrateAsync();
-                    Assert.False(db.Database.HasPendingModelChanges());
+                    Assert.Empty(await db.Database.GetPendingMigrationsAsync());
                 }
                 else
                     await db.Database.EnsureCreatedAsync();

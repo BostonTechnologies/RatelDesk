@@ -122,7 +122,7 @@
                             <MudTextField T="string" @bind-Value="_username" Label="Username" Required="true" FullWidth="true" />
                             <MudTextField T="string" @bind-Value="_databasePassword" Label="Password" InputType="InputType.Password" Required="true" FullWidth="true" />
                             <MudCheckBox T="bool" @bind-Value="_useTls" Label="Require TLS" />
-                            <MudText Typo="Typo.caption">RatelDesk validates the connection and required vector and pg_trgm extensions before continuing.</MudText>
+                            <MudText Typo="Typo.caption">RatelDesk validates connectivity and database permissions before continuing.</MudText>
                         }
                     </MudStep>
                     <MudStep Title="Instance">

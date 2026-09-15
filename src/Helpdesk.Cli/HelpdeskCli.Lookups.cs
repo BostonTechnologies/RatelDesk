@@ -25,15 +25,6 @@ internal static partial class HelpdeskCli
         orgs.AddCommand(GetListCommand(runtime, globals, "tenants", "/api/v1/admin/tenants"));
         orgs.AddCommand(GetListCommand(runtime, globals, "tenant-lookup", "/api/v1/admin/tenants/lookup"));
         orgs.AddCommand(GetByStringIdCommand(runtime, globals, "change-participants", "/api/v1/organizations/{id}/change-participants", "id"));
-        orgs.AddCommand(GetByStringIdCommand(runtime, globals, "ai-kb-settings", "/api/v1/organizations/{id}/ai-kb-settings", "id"));
-        orgs.AddCommand(BodyCommand(runtime, globals, "update-ai-kb-settings", HttpMethod.Put, "/api/v1/organizations/{id}/ai-kb-settings",
-            ("--provider-id", "providerId"),
-            ("--model-id", "modelId"),
-            ("--enabled", "enabled"),
-            ("--auto-suggest-enabled", "autoSuggestEnabled"),
-            ("--auto-generate-enabled", "autoGenerateEnabled")));
-        orgs.AddCommand(GetByStringIdCommand(runtime, globals, "ai-kb-readiness", "/api/v1/organizations/{id}/ai-kb-settings/readiness", "id"));
-        orgs.AddCommand(GetByStringIdCommand(runtime, globals, "ai-kb-runtime-status", "/api/v1/organizations/{id}/ai-kb-settings/runtime-status", "id"));
         orgs.AddCommand(GetByStringIdCommand(runtime, globals, "branding", "/api/v1/tenants/{id}/branding", "id"));
         orgs.AddCommand(BodyCommand(runtime, globals, "update-branding", HttpMethod.Put, "/api/v1/tenants/{id}/branding",
             ("--display-name", "displayName"),

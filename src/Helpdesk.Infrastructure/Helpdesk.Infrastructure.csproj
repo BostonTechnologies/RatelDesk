@@ -22,14 +22,11 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.10.0" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.12" />
 	  <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.12" />
 	  <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
     <PackageReference Include="Microsoft.Kiota.Abstractions" Version="2.1.2" />
-    <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.10.0" />
     <PackageReference Include="Microsoft.Graph" Version="5.105.0" />
-    <PackageReference Include="pgvector.entityframeworkcore" Version="0.3.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />

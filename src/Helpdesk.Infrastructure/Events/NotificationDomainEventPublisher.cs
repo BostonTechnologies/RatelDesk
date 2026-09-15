@@ -65,8 +65,7 @@ public class NotificationDomainEventPublisher(
         if (domainEvent.EventType is "DomainEvent.Workflow.RequestFailedByCriticalTask"
             or "DomainEvent.RequestTask.Failed"
             or "DomainEvent.RequestTask.AutomationFailed"
-            or "DomainEvent.Orchestration.External orchestration.TestFailed"
-            or "DomainEvent.Change.AiReviewFailed")
+            or "DomainEvent.Orchestration.External orchestration.TestFailed")
         {
             return NotificationSeverity.Error;
         }
@@ -76,8 +75,7 @@ public class NotificationDomainEventPublisher(
             or "DomainEvent.RequestTask.RetryScheduled"
             or "DomainEvent.RequestTask.Blocked"
             or "DomainEvent.Workflow.RequestBlockedByTaskFailure"
-            or "DomainEvent.Orchestration.External orchestration.CallbackRejected"
-            or "DomainEvent.Change.AiReviewAcknowledged")
+            or "DomainEvent.Orchestration.External orchestration.CallbackRejected")
         {
             return NotificationSeverity.Warning;
         }

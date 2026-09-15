@@ -13,15 +13,4 @@ public class Change : Ticket
     public DateTime? ImplementationStartAt { get; set; }
     public DateTime? ImplementationEndAt { get; set; }
     public string? ChangeTemplateJson { get; set; }
-    public ChangeReviewStatus AiReviewStatus { get; set; } = ChangeReviewStatus.NotRequested;
-    public ChangeReviewGateState AiReviewGateState { get; set; } = ChangeReviewGateState.NotRequired;
-    public string? AiReviewOutputJson { get; set; }
-    public string? AiReviewCorrelationId { get; set; }
-    public string? AiReviewFailureReason { get; set; }
-    public string? AiReviewAcknowledgementNotes { get; set; }
-    public DateTimeOffset? AiReviewRequestedAt { get; set; }
-    public DateTimeOffset? AiReviewCompletedAt { get; set; }
-    public DateTimeOffset? AiReviewAcknowledgedAt { get; set; }
-    public string? AiReviewAcknowledgedByUserId { get; set; }
-    public string? AiReviewAcknowledgedByName { get; set; }
 }

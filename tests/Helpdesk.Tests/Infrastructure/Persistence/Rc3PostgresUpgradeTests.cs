@@ -9,7 +9,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Pgvector.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
 
 namespace Helpdesk.Tests.Infrastructure.Persistence;
@@ -19,10 +18,10 @@ public sealed class Rc3PostgresUpgradeTests
     [Fact]
     public async Task Populated_rc3_database_upgrades_repeatably_without_changing_tickets_or_oidc_identity()
     {
-        await using var postgres = new PostgreSqlBuilder().WithImage("pgvector/pgvector:pg16").Build();
+        await using var postgres = new PostgreSqlBuilder().WithImage("postgres:16").Build();
         await postgres.StartAsync();
         var options = new DbContextOptionsBuilder<HelpdeskDbContext>()
-            .UseNpgsql(postgres.GetConnectionString(), postgresOptions => postgresOptions.UseVector())
+            .UseNpgsql(postgres.GetConnectionString())
             // Match the production compatibility policy for historical PostgreSQL snapshots.
             .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
@@ -42,7 +41,14 @@ public sealed class Rc3PostgresUpgradeTests
         var request = new Request { Id = "upgrade-request", TrackingId = "REQ-UPGRADE", Title = "Existing request", OrganizationId = organization.Id, CustomerId = customer.Id };
         var change = new Change { Id = "upgrade-change", TrackingId = "CHG-UPGRADE", Title = "Existing change", OrganizationId = organization.Id, CustomerId = customer.Id };
         var task = new RequestTask { Id = "upgrade-task", TrackingId = "TASK-UPGRADE", RequestId = request.Id, OrganizationId = organization.Id, DueAt = DateTimeOffset.UtcNow.AddDays(1), Type = RequestTaskType.Manual };
-        db.AddRange(organization, user, customer, incident, request, change, task);
+        // This test intentionally seeds an rc.3 database. Its required
+        // native-AI intake column no longer exists in the current entity, so
+        // seed that historical row directly before attaching current data.
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "Organizations" ("Id", "Name", "EnableAiIntake", "State")
+            VALUES ({organization.Id}, {organization.Name}, {false}, {(int)organization.State});
+            """);
+        db.AddRange(user, customer, incident, request, change, task);
         db.WorkLogs.Add(new WorkLog { Id = "upgrade-worklog", TicketId = incident.Id, TechnicianId = user.Id, NotesText = "Preserved private note", IsInternalNote = true, Hours = 0.5 });
         db.TicketTimelineEvents.Add(new TicketTimelineEvent { TicketId = incident.Id, CreatedByUserId = user.Id, EventType = TimelineEventType.TechnicianReply, MessageText = "Preserved reply" });
         db.Attachments.Add(new Attachment { Id = Guid.NewGuid(), TicketId = incident.Id, FileName = "evidence.txt", FilePath = "legacy/evidence.txt", ContentType = "text/plain", SizeBytes = 42, UploadedById = user.Id });

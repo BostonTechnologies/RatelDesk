@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
-using Pgvector;
 
 #nullable disable
 
@@ -15,10 +14,6 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.Sql(@"CREATE EXTENSION IF NOT EXISTS ""uuid-ossp"";");
-            migrationBuilder.Sql(@"CREATE EXTENSION IF NOT EXISTS vector;");
-
-            migrationBuilder.AlterDatabase()
-                .Annotation("Npgsql:PostgresExtension:vector", ",,");
 
             migrationBuilder.CreateTable(
                 name: "ActivityLogs",
@@ -422,7 +417,7 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     KnowledgeBaseArticleId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Vector = table.Column<Vector>(type: "vector(1536)", nullable: false),
+                    Vector = table.Column<float[]>(type: "real[]", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "timestamp without time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP")
                 },
                 constraints: table =>

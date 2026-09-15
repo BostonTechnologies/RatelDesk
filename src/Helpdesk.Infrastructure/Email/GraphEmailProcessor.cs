@@ -2,7 +2,6 @@ using Azure.Identity;
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Incidents;
 using Helpdesk.Application.Messaging;
-using Helpdesk.Application.Services.AI;
 using Helpdesk.Application.Services.Tickets;
 using Helpdesk.Application.Services.Notifications;
 using Helpdesk.Application.Services.Tenants;
@@ -25,7 +24,6 @@ using System.Text.Encodings.Web;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
-using Pgvector;
 
 namespace Helpdesk.Application.Services.Email;
 
@@ -39,15 +37,12 @@ public class GraphEmailProcessor : IGraphEmailProcessor
     private readonly ITenantProvisioningService _tenantProvisioningService;
     private readonly ITicketNotificationService _ticketNotificationService;
     private readonly IRepository<BlockedEntity> _blockedRepo;
-    private readonly IRepository<OrganizationAiKbSettings> _aiKbRepo;
     private readonly IEmailService _emailService;
     private readonly IRepository<EmailTemplate> _templateRepo;
     private readonly IRepository<Incident> _incidentRepo;
     private readonly IRepository<Ticket> _ticketRepo;
     private readonly IRepository<TicketTimelineEvent> _timelineRepo;
     private readonly ITicketAttachmentService _attachmentService;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly IRepository<KnowledgeEmbedding> _embeddingRepo;
     private readonly IInboundInlineImageResolver _inlineImageResolver;
     private readonly IEmailTemplateRenderer _templateRenderer;
     private readonly IEmailLayoutResolver _layoutResolver;
@@ -62,15 +57,12 @@ public class GraphEmailProcessor : IGraphEmailProcessor
         ITenantProvisioningService tenantProvisioningService,
         ITicketNotificationService ticketNotificationService,
         IRepository<BlockedEntity> blockedRepo,
-        IRepository<OrganizationAiKbSettings> aiKbRepo,
         IEmailService emailService,
         IRepository<EmailTemplate> templateRepo,
         IRepository<Incident> incidentRepo,
         IRepository<Ticket> ticketRepo,
         IRepository<TicketTimelineEvent> timelineRepo,
         ITicketAttachmentService attachmentService,
-        IEmbeddingService embeddingService,
-        IRepository<KnowledgeEmbedding> embeddingRepo,
         IInboundInlineImageResolver inlineImageResolver,
         IEmailTemplateRenderer templateRenderer,
         IEmailLayoutResolver layoutResolver,
@@ -84,15 +76,12 @@ public class GraphEmailProcessor : IGraphEmailProcessor
         _tenantProvisioningService = tenantProvisioningService;
         _ticketNotificationService = ticketNotificationService;
         _blockedRepo = blockedRepo;
-        _aiKbRepo = aiKbRepo;
         _emailService = emailService;
         _templateRepo = templateRepo;
         _incidentRepo = incidentRepo;
         _ticketRepo = ticketRepo;
         _timelineRepo = timelineRepo;
         _attachmentService = attachmentService;
-        _embeddingService = embeddingService;
-        _embeddingRepo = embeddingRepo;
         _inlineImageResolver = inlineImageResolver;
         _templateRenderer = templateRenderer;
         _layoutResolver = layoutResolver;
@@ -350,8 +339,6 @@ public class GraphEmailProcessor : IGraphEmailProcessor
             {
                 _logger.LogWarning("Failed to send new ticket confirmation for incident {TrackingId}", incident.TrackingId);
             }
-
-            await TryCreateEmailEmbeddingsAsync(customer.OrganizationId, incident.Id, graphMessage.Body?.Content ?? string.Empty, token);
 
             _logger.LogInformation("Successfully created Incident {TrackingId}", incident.TrackingId);
             ticket = incident;
@@ -795,82 +782,6 @@ public class GraphEmailProcessor : IGraphEmailProcessor
                 : (!string.IsNullOrWhiteSpace(senderName) ? senderName : "Inbound email"),
             MessageText = "Inbound email received."
         });
-    }
-
-    private async Task TryCreateEmailEmbeddingsAsync(string orgId, string sourceId, string text, CancellationToken token)
-    {
-        try
-        {
-            var settings = (await _aiKbRepo.GetAllAsync())
-                .FirstOrDefault(s => s.OrganizationId == orgId);
-            if (settings is null || (!settings.EnableAiSearch && !settings.EnableAiAnswers))
-            {
-                return;
-            }
-
-            var chunks = TextChunker.Split(text).ToList();
-            if (chunks.Count == 0)
-            {
-                return;
-            }
-
-            var inputs = chunks.Select(c => c.Text).ToList();
-            var vectors = await _embeddingService.CreateEmbeddingsAsync(orgId, inputs, token);
-
-            if (vectors.Count != inputs.Count)
-            {
-                _logger.LogWarning(
-                    "Embedding count mismatch for source {SourceId}: inputs={Inputs}, vectors={Vectors}. Falling back to single vector.",
-                    sourceId, inputs.Count, vectors.Count);
-
-                var combined = string.Join("\n\n", inputs);
-                var single = await _embeddingService.CreateEmbeddingAsync(orgId, combined, token);
-
-                await _embeddingRepo.CreateAsync(new KnowledgeEmbedding
-                {
-                    OrganizationId = orgId,
-                    SourceType = "Email",
-                    SourceId = sourceId,
-                    DocumentTitle = "Email Message",
-                    ChunkIndex = 0,
-                    ChunkId = "0",
-                    Text = combined,
-                    MetadataJson = "{\"source\":\"email\"}",
-                    Vector = new Vector(single),
-                    CreatedAt = DateTime.UtcNow
-                });
-
-                return;
-            }
-
-            for (var i = 0; i < Math.Min(inputs.Count, vectors.Count); i++)
-            {
-                await _embeddingRepo.CreateAsync(new KnowledgeEmbedding
-                {
-                    OrganizationId = orgId,
-                    SourceType = "Email",
-                    SourceId = sourceId,
-                    DocumentTitle = "Email Message",
-                    ChunkIndex = i,
-                    ChunkId = chunks[i].ChunkId,
-                    Text = inputs[i],
-                    MetadataJson = "{\"source\":\"email\"}",
-                    Vector = new Vector(vectors[i]),
-                    CreatedAt = DateTime.UtcNow
-                });
-            }
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Email embedding generation failed for source {SourceId}. Inbound email processing will continue.",
-                sourceId);
-        }
     }
 
     private async Task<string?> GetOrCreateMailFolderIdAsync(GraphServiceClient graphClient, string mailbox, string folderName, CancellationToken token)

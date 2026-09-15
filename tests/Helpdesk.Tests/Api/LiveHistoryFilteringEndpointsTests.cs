@@ -13,7 +13,6 @@ using Helpdesk.API.Endpoints.WorkLogs;
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Messaging;
 using Helpdesk.Application.Services.Changes;
-using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Services.Notifications;
 using Helpdesk.Application.Services.SupportNotifications;
 using Helpdesk.Application.Sla;
@@ -1451,14 +1450,10 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
         var requestUpdate = await harness.Client.PutAsJsonAsync("/api/v1/requests/req-self-service-update", new UpdateRequestDto { State = TicketState.Resolved });
         var changeUpdate = await harness.Client.PutAsJsonAsync("/api/v1/changes/chg-self-service-update", new UpdateChangeDto { State = TicketState.Resolved, Priority = TicketPriority.Low });
         var changeDelete = await harness.Client.DeleteAsync("/api/v1/changes/chg-self-service-update");
-        var runReview = await harness.Client.PostAsJsonAsync("/api/v1/changes/chg-self-service-update/ai-review", new { });
-        var acknowledgeReview = await harness.Client.PostAsJsonAsync("/api/v1/changes/chg-self-service-update/ai-review/acknowledge", new { });
 
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, requestUpdate.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeUpdate.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, changeDelete.StatusCode);
-        Assert.True(runReview.StatusCode == System.Net.HttpStatusCode.Forbidden, await runReview.Content.ReadAsStringAsync());
-        Assert.True(acknowledgeReview.StatusCode == System.Net.HttpStatusCode.Forbidden, await acknowledgeReview.Content.ReadAsStringAsync());
         await harness.WithDbAsync(async db =>
         {
             Assert.Equal(TicketState.New, (await db.Requests.FindAsync("req-self-service-update"))!.State);
@@ -1467,7 +1462,7 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
     }
 
     [Fact]
-    public async Task RequestTaskAndAiAuditEndpoints_RespectRequestScope()
+    public async Task RequestTaskEndpoints_RespectRequestScope()
     {
         await using var harness = await LiveHistoryFilteringHarness.CreateAsync();
         await harness.SeedAsync(db =>
@@ -1486,13 +1481,11 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
 
         var ownTasks = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/tasks");
         var foreignTasks = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks/tasks");
-        var ownAiAudit = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks/ai-audit");
         var ownRequest = await harness.Client.GetAsync("/api/v1/requests/req-self-service-tasks");
         var foreignRequest = await harness.Client.GetAsync("/api/v1/requests/req-foreign-tasks");
 
         Assert.Equal(System.Net.HttpStatusCode.OK, ownTasks.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignTasks.StatusCode);
-        Assert.Equal(System.Net.HttpStatusCode.Forbidden, ownAiAudit.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.OK, ownRequest.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, foreignRequest.StatusCode);
     }
@@ -1677,7 +1670,6 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
             builder.Services.AddScoped<IRepository<RequestTask>, EfRepository<RequestTask>>();
             builder.Services.AddScoped<IRepository<User>, EfRepository<User>>();
             builder.Services.AddScoped<IRepository<Change>, EfRepository<Change>>();
-            builder.Services.AddScoped<IRepository<KnowledgeBaseArticle>, EfRepository<KnowledgeBaseArticle>>();
             builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
             if (accessProfile is not null)
             {
@@ -1697,7 +1689,6 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
                 builder.Services.AddSingleton(NSubstitute.Substitute.For<Helpdesk.Application.Workflow.IWorkflowEngine>());
             }
             builder.Services.AddSingleton<Helpdesk.Application.Services.Tickets.ITicketRefGeneratorService, Helpdesk.Application.Services.Tickets.TicketRefGeneratorService>();
-            builder.Services.AddSingleton<IChangeReviewService, TestChangeReviewService>();
             builder.Services.AddSingleton<ITicketNotificationService, NoopTicketNotificationService>();
             builder.Services.AddSingleton<ITicketSlaInitializer, NoopTicketSlaInitializer>();
             builder.Services.AddSingleton<ITicketSlaCompletionService, NoopTicketSlaCompletionService>();
@@ -1705,7 +1696,7 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
             builder.Services.AddSingleton<ITicketSlaRepository, NoopTicketSlaRepository>();
             builder.Services.AddSingleton<ISlaClockService, NoopSlaClockService>();
             builder.Services.AddSingleton<ISlaEscalationEvaluator, NoopSlaEscalationEvaluator>();
-            builder.Services.AddSingleton<IKnowledgeBuilderService, NoopKnowledgeBuilderService>();
+            builder.Services.AddSingleton<IChangeTemplateService, TestChangeTemplateService>();
             builder.Services.AddSingleton<IBackgroundJobQueue, NoopBackgroundJobQueue>();
             builder.Services.AddSingleton<ISupportNotificationService, NoopSupportNotificationService>();
             builder.Services.AddSingleton<ISupportAccessService, AllowAllSupportAccessService>();
@@ -1891,15 +1882,6 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
             Task.CompletedTask;
     }
 
-    private sealed class NoopKnowledgeBuilderService : IKnowledgeBuilderService
-    {
-        public Task<KnowledgeBaseArticle> BuildArticleAsync(string prompt, CancellationToken token) =>
-            Task.FromResult(new KnowledgeBaseArticle { Id = Guid.NewGuid(), Title = "Test article" });
-
-        public Task<KnowledgeBaseArticle?> GenerateDraftFromResolvedTicketAsync(string ticketId, CancellationToken token, bool regenerate = false) =>
-            Task.FromResult<KnowledgeBaseArticle?>(null);
-    }
-
     private sealed class NoopBackgroundJobQueue : IBackgroundJobQueue
     {
         public void Queue(Func<IServiceProvider, CancellationToken, Task> work)
@@ -1925,7 +1907,7 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
             Task.FromResult(true);
     }
 
-    private sealed class TestChangeReviewService : IChangeReviewService
+    private sealed class TestChangeTemplateService : IChangeTemplateService
     {
         public string NormalizeChangeType(string? changeType) =>
             changeType?.Trim().ToLowerInvariant() switch
@@ -1946,16 +1928,6 @@ public sealed partial class LiveHistoryFilteringEndpointsTests
             Errors = []
         };
 
-        public ChangeAiReviewDto BuildReviewDto(Change change) => new();
-
-        public bool RequiresReviewBeforeProgress(Change change) => false;
-
-        public void MarkReviewStale(Change change)
-        {
-        }
-
-        public Task<ChangeAiReviewDto> RunReviewAsync(Change change, CancellationToken token) =>
-            Task.FromResult(new ChangeAiReviewDto());
     }
 
     private sealed class NoopTicketNotificationService : ITicketNotificationService

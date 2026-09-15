@@ -1,7 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Helpdesk.API;
-using Helpdesk.Shared.DTOs.Organization;
 using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Dodo.Primitives;
@@ -46,7 +45,6 @@ public class OrganizationCustomerEndpointsTests : IClassFixture<WebApplicationFa
                 var userRepo = new InMemoryRepository<User>();
                 var roleRepo = new InMemoryRepository<Role>();
                 var orgRepo = new InMemoryRepository<Organization>();
-                var orgSettingsRepo = new InMemoryRepository<OrganizationAiKbSettings>();
                 var customerRepo = new InMemoryRepository<Customer>();
                 var emailTemplateRepo = new InMemoryRepository<EmailTemplate>();
 
@@ -65,7 +63,6 @@ public class OrganizationCustomerEndpointsTests : IClassFixture<WebApplicationFa
                 services.AddSingleton<IRepository<User>>(userRepo);
                 services.AddSingleton<IRepository<Role>>(roleRepo);
                 services.AddSingleton<IRepository<Organization>>(orgRepo);
-                services.AddSingleton<IRepository<OrganizationAiKbSettings>>(orgSettingsRepo);
                 services.AddSingleton<IRepository<Customer>>(customerRepo);
                 services.AddSingleton<IRepository<EmailTemplate>>(emailTemplateRepo);
 
@@ -132,53 +129,6 @@ public class OrganizationCustomerEndpointsTests : IClassFixture<WebApplicationFa
 
         var get = await client.GetFromJsonAsync<Customer>($"/api/v1/customers/{customer.Id}");
         Assert.Equal(EntityState.Enabled, get!.State);
-    }
-
-    [Fact]
-    public async Task Organization_AiKbSettings_PersistsSwitchesAndModelFields()
-    {
-        var client = await GetAuthenticatedClientAsync();
-
-        var orgResp = await client.PostAsJsonAsync("/api/v1/organizations", new Organization { Name = "AI Org", IsEnabled = true });
-        orgResp.EnsureSuccessStatusCode();
-        var org = await orgResp.Content.ReadFromJsonAsync<Organization>();
-
-        var update = new OrganizationAiKbSettingsDto
-        {
-            EnableAiSearch = true,
-            EnableAiAnswers = false,
-            SearchThreshold = 0.42,
-            AnswerThreshold = 0.73,
-            EmbeddingProviderId = Guid.NewGuid().ToString(),
-            EmbeddingModel = "text-embedding-3-small",
-            EmbeddingDimensions = 1536,
-            KnowledgeProviderId = Guid.NewGuid().ToString(),
-            KnowledgeModelName = "qwen3.5:9b",
-            SuggestionLimit = 4,
-            AllowedServicesCsv = "incident,request",
-            EnableProviderFallback = false,
-            MaxProviderAttempts = 1,
-            MinimumSuggestionFeedbackCount = 2,
-            MinimumSuggestionHelpfulRate = 0.5,
-            MinimumAutomationFeedbackCount = 1,
-            MinimumAutomationResolvedRate = 0.25
-        };
-
-        var updateResp = await client.PutAsJsonAsync($"/api/v1/organizations/{org!.Id}/ai-kb-settings", update);
-        updateResp.EnsureSuccessStatusCode();
-
-        var get = await client.GetFromJsonAsync<OrganizationAiKbSettingsDto>($"/api/v1/organizations/{org.Id}/ai-kb-settings");
-
-        Assert.NotNull(get);
-        Assert.True(get!.EnableAiSearch);
-        Assert.False(get.EnableAiAnswers);
-        Assert.Equal(update.EmbeddingProviderId, get.EmbeddingProviderId);
-        Assert.Equal(update.EmbeddingModel, get.EmbeddingModel);
-        Assert.Equal(update.EmbeddingDimensions, get.EmbeddingDimensions);
-        Assert.Equal(update.KnowledgeProviderId, get.KnowledgeProviderId);
-        Assert.Equal(update.KnowledgeModelName, get.KnowledgeModelName);
-        Assert.False(get.EnableProviderFallback);
-        Assert.Equal(update.MaxProviderAttempts, get.MaxProviderAttempts);
     }
 
     private Task<HttpClient> GetAuthenticatedClientAsync()

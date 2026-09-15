@@ -1,7 +1,6 @@
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Messaging;
 using Helpdesk.Application.Services.Changes;
-using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Services.Notifications;
 using Helpdesk.Application.Sla;
 using Helpdesk.Application.Tickets;
@@ -9,7 +8,6 @@ using Helpdesk.Application.Timeline;
 using Helpdesk.Application.WorkLogs;
 using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.DTOs;
-using Helpdesk.Shared.DTOs.Article;
 using Helpdesk.Shared.DTOs.Change;
 using Helpdesk.Shared.DTOs.Sla;
 using Helpdesk.Shared.DTOs.Worklog;
@@ -96,7 +94,7 @@ public static class ChangeEndpoints
             [FromServices] IDomainEventPublisher domainEvents,
             [FromServices] ICorrelationContext correlationContext,
             [FromServices] ILoggerFactory loggerFactory,
-            [FromServices] IChangeReviewService changeReviewService,
+            [FromServices] IChangeTemplateService changeTemplateService,
             [FromServices] ICurrentUserAccessService accessService,
             ClaimsPrincipal user,
             CancellationToken token) =>
@@ -140,22 +138,8 @@ public static class ChangeEndpoints
                 domainEvents,
                 correlationContext,
                 loggerFactory.CreateLogger("ChangeSla"));
-            var suggestionItemsJson = await db.TicketAiSuggestions
-                .AsNoTracking()
-                .Where(x => x.TicketId == entity.Id)
-                .Select(x => x.ItemsJson)
-                .FirstOrDefaultAsync();
-            var aiAuditCount = await db.AiOperationAuditRecords
-                .AsNoTracking()
-                .CountAsync(x => x.SubjectId == entity.Id);
-            var lastAiActivityAt = await db.AiOperationAuditRecords
-                .AsNoTracking()
-                .Where(x => x.SubjectId == entity.Id)
-                .Select(x => x.CreatedAt)
-                .ToListAsync();
-            var template = changeReviewService.DeserializeTemplate(entity.ChangeTemplateJson);
-            var templateValidation = changeReviewService.ValidateTemplate(entity.ChangeType, template);
-            var latestReview = changeReviewService.BuildReviewDto(entity);
+            var template = changeTemplateService.DeserializeTemplate(entity.ChangeTemplateJson);
+            var templateValidation = changeTemplateService.ValidateTemplate(entity.ChangeType, template);
             var participantLookup = await BuildParticipantLookupAsync(db, [entity], CancellationToken.None);
             var approvals = (await db.ChangeApprovals
                     .AsNoTracking()
@@ -201,14 +185,6 @@ public static class ChangeEndpoints
                 IsTemplateComplete = templateValidation.IsComplete,
                 TemplateValidationErrors = templateValidation.Errors,
                 CategoryIds = categoryIds,
-                AiSuggestionCount = ParseKnowledgeSuggestionCount(suggestionItemsJson),
-                AiAuditCount = aiAuditCount,
-                LastAiActivityAt = lastAiActivityAt.Count > 0 ? lastAiActivityAt.Max() : null,
-                AiReviewStatus = entity.AiReviewStatus,
-                AiReviewGateState = entity.AiReviewGateState,
-                LatestAiReviewSummary = latestReview.Summary,
-                LastAiReviewAt = entity.AiReviewCompletedAt,
-                RequiresAiReviewAcknowledgement = entity.AiReviewGateState == ChangeReviewGateState.Warning,
                 Sla = ToSlaDto(slaSnapshot)
             };
             return Results.Ok(dto);
@@ -220,7 +196,7 @@ public static class ChangeEndpoints
             [FromServices] IRepository<Change> repo,
             [FromServices] ITicketSlaInitializer ticketSlaInitializer,
             [FromServices] Helpdesk.Application.Services.Tickets.ITicketRefGeneratorService refs,
-            [FromServices] IChangeReviewService changeReviewService,
+            [FromServices] IChangeTemplateService changeTemplateService,
             [FromServices] ITicketNotificationService notificationService,
             [FromServices] ITimelineEventBus timelineEventBus,
             [FromServices] IDomainEventPublisher domainEvents,
@@ -230,7 +206,7 @@ public static class ChangeEndpoints
             ClaimsPrincipal user,
             CancellationToken token) =>
         {
-            var normalizedChangeType = changeReviewService.NormalizeChangeType(dto.ChangeType);
+            var normalizedChangeType = changeTemplateService.NormalizeChangeType(dto.ChangeType);
             if (string.IsNullOrWhiteSpace(normalizedChangeType))
             {
                 return Results.BadRequest("ChangeType must be Standard, Normal, or Emergency.");
@@ -274,7 +250,7 @@ public static class ChangeEndpoints
                 return participantValidation;
             }
 
-            var templateValidation = changeReviewService.ValidateTemplate(normalizedChangeType, dto.ChangeTemplate);
+            var templateValidation = changeTemplateService.ValidateTemplate(normalizedChangeType, dto.ChangeTemplate);
             var lifecycleState = ResolveInitialLifecycleState(templateValidation.IsComplete, dto.ApproverUserIds, access.CanApproveChange(organization.Id));
 
             var categoryIds = NormalizeCategoryIds(dto.CategoryIds);
@@ -305,9 +281,7 @@ public static class ChangeEndpoints
                 LifecycleState = lifecycleState,
                 ImplementationStartAt = dto.ImplementationStartAt,
                 ImplementationEndAt = dto.ImplementationEndAt,
-                ChangeTemplateJson = changeReviewService.SerializeTemplate(dto.ChangeTemplate),
-                AiReviewStatus = ChangeReviewStatus.NotRequested,
-                AiReviewGateState = ChangeReviewGateState.NotRequired
+                ChangeTemplateJson = changeTemplateService.SerializeTemplate(dto.ChangeTemplate)
             };
             var participantLookup = await BuildParticipantLookupAsync(db, [entity], token);
             AddChangeListeners(entity, participantLookup);
@@ -398,17 +372,10 @@ public static class ChangeEndpoints
                 CcRecipients = created.CcRecipients.ToList(),
                 ImplementationStartAt = created.ImplementationStartAt,
                 ImplementationEndAt = created.ImplementationEndAt,
-                ChangeTemplate = changeReviewService.DeserializeTemplate(created.ChangeTemplateJson),
+                ChangeTemplate = changeTemplateService.DeserializeTemplate(created.ChangeTemplateJson),
                 IsTemplateComplete = templateValidation.IsComplete,
                 TemplateValidationErrors = templateValidation.Errors,
                 CategoryIds = categoryIds,
-                AiSuggestionCount = 0,
-                AiAuditCount = 0,
-                AiReviewStatus = created.AiReviewStatus,
-                AiReviewGateState = created.AiReviewGateState,
-                LatestAiReviewSummary = null,
-                LastAiReviewAt = created.AiReviewCompletedAt,
-                RequiresAiReviewAcknowledgement = false
             };
             return Results.Created($"/api/v1/changes/{created.Id}", responseDto);
         });
@@ -420,8 +387,6 @@ public static class ChangeEndpoints
             [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Change> repo,
-            [FromServices] IRepository<KnowledgeBaseArticle> kbRepo,
-            [FromServices] IKnowledgeBuilderService kbService,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] ITicketSlaService ticketSlaService,
             [FromServices] ITicketSlaRepository ticketSlaRepository,
@@ -430,7 +395,7 @@ public static class ChangeEndpoints
             [FromServices] IDomainEventPublisher domainEvents,
             [FromServices] ICorrelationContext correlationContext,
             [FromServices] ILoggerFactory loggerFactory,
-            [FromServices] IChangeReviewService changeReviewService,
+            [FromServices] IChangeTemplateService changeTemplateService,
             [FromServices] ITicketNotificationService notificationService,
             [FromServices] ITimelineEventBus timelineEventBus,
             CancellationToken token) =>
@@ -460,7 +425,7 @@ public static class ChangeEndpoints
             }
 
             if (previousLifecycleState != ChangeLifecycleState.Draft &&
-                await HasLockedChangeFieldUpdatesAsync(db, existing, dto, changeReviewService, token))
+                await HasLockedChangeFieldUpdatesAsync(db, existing, dto, changeTemplateService, token))
             {
                 return Results.BadRequest("Change details are locked unless the change is moved back to Draft.");
             }
@@ -538,7 +503,7 @@ public static class ChangeEndpoints
 
             if (!string.IsNullOrWhiteSpace(dto.ChangeType))
             {
-                var normalizedChangeType = changeReviewService.NormalizeChangeType(dto.ChangeType);
+                var normalizedChangeType = changeTemplateService.NormalizeChangeType(dto.ChangeType);
                 if (string.IsNullOrWhiteSpace(normalizedChangeType))
                 {
                     return Results.BadRequest("ChangeType must be Standard, Normal, or Emergency.");
@@ -549,7 +514,7 @@ public static class ChangeEndpoints
 
             if (dto.ChangeTemplate is not null)
             {
-                existing.ChangeTemplateJson = changeReviewService.SerializeTemplate(dto.ChangeTemplate);
+                existing.ChangeTemplateJson = changeTemplateService.SerializeTemplate(dto.ChangeTemplate);
             }
 
             if (dto.ImplementationStartAt.HasValue)
@@ -573,16 +538,6 @@ public static class ChangeEndpoints
 
             var templateChanged = !string.Equals(previousTemplateJson, existing.ChangeTemplateJson, StringComparison.Ordinal)
                 || !string.Equals(previousChangeType, existing.ChangeType, StringComparison.Ordinal);
-            if (templateChanged)
-            {
-                changeReviewService.MarkReviewStale(existing);
-            }
-
-            if (dto.AcknowledgeAiReviewWarnings && existing.AiReviewGateState == ChangeReviewGateState.Warning)
-            {
-                existing.AiReviewGateState = ChangeReviewGateState.Acknowledged;
-                existing.AiReviewAcknowledgedAt = DateTimeOffset.UtcNow;
-            }
 
             if (dto.LifecycleState.HasValue)
             {
@@ -601,8 +556,8 @@ public static class ChangeEndpoints
 
             ApplyTicketStateForLifecycle(existing, previousState);
 
-            var currentTemplate = changeReviewService.DeserializeTemplate(existing.ChangeTemplateJson);
-            var currentTemplateValidation = changeReviewService.ValidateTemplate(existing.ChangeType, currentTemplate);
+            var currentTemplate = changeTemplateService.DeserializeTemplate(existing.ChangeTemplateJson);
+            var currentTemplateValidation = changeTemplateService.ValidateTemplate(existing.ChangeType, currentTemplate);
             var movedBackToDraft = previousLifecycleState != ChangeLifecycleState.Draft &&
                 EffectiveLifecycleState(existing) == ChangeLifecycleState.Draft;
             var submittedFromDraft = previousLifecycleState == ChangeLifecycleState.Draft &&
@@ -779,29 +734,6 @@ public static class ChangeEndpoints
                 correlationContext,
                 loggerFactory.CreateLogger("ChangeSla"));
 
-            if (previousState != TicketState.Resolved && updated!.State == TicketState.Resolved)
-            {
-                var hasDraft = await kbRepo.Query().AnyAsync(a => a.LinkedTicketId == id, token);
-                if (!hasDraft)
-                {
-                    await kbService.GenerateDraftFromResolvedTicketAsync(id, token);
-                }
-            }
-
-            var suggestionItemsJson = await db.TicketAiSuggestions
-                .AsNoTracking()
-                .Where(x => x.TicketId == updated.Id)
-                .Select(x => x.ItemsJson)
-                .FirstOrDefaultAsync(token);
-            var aiAuditCount = await db.AiOperationAuditRecords
-                .AsNoTracking()
-                .CountAsync(x => x.SubjectId == updated.Id, token);
-            var lastAiActivityAt = await db.AiOperationAuditRecords
-                .AsNoTracking()
-                .Where(x => x.SubjectId == updated.Id)
-                .Select(x => x.CreatedAt)
-                .ToListAsync(token);
-            var latestReview = changeReviewService.BuildReviewDto(updated);
             var updatedParticipantLookup = await BuildParticipantLookupAsync(db, [updated], token);
             var updatedApprovals = (await db.ChangeApprovals
                     .AsNoTracking()
@@ -870,192 +802,9 @@ public static class ChangeEndpoints
                     .Where(x => x.ChangeId == updated.Id)
                     .Select(x => x.TicketCategoryId)
                     .ToListAsync(token),
-                AiSuggestionCount = ParseKnowledgeSuggestionCount(suggestionItemsJson),
-                AiAuditCount = aiAuditCount,
-                LastAiActivityAt = lastAiActivityAt.Count > 0 ? lastAiActivityAt.Max() : null,
-                AiReviewStatus = updated.AiReviewStatus,
-                AiReviewGateState = updated.AiReviewGateState,
-                LatestAiReviewSummary = latestReview.Summary,
-                LastAiReviewAt = updated.AiReviewCompletedAt,
-                RequiresAiReviewAcknowledgement = updated.AiReviewGateState == ChangeReviewGateState.Warning,
                 Sla = ToSlaDto(slaSnapshot)
             };
             return Results.Ok(resultDto);
-        })
-        .RequireAuthorization("ChangeManager");
-
-        group.MapGet("/{id}/ai-review", async (
-            [FromRoute] string id,
-            [FromServices] IRepository<Change> repo,
-            [FromServices] IChangeReviewService changeReviewService,
-            [FromServices] ICurrentUserAccessService accessService,
-            ClaimsPrincipal user,
-            CancellationToken token) =>
-        {
-            var change = await repo.GetAsync(id);
-            if (change is null)
-            {
-                return Results.NotFound();
-            }
-
-            var access = await accessService.ResolveAsync(user, token);
-            return access.CanViewChange(change.OrganizationId, change.CustomerId, change.RequesterEmail)
-                ? Results.Ok(changeReviewService.BuildReviewDto(change))
-                : Results.Forbid();
-        });
-
-        group.MapPost("/{id}/ai-review", async (
-            [FromRoute] string id,
-            [FromBody] RunChangeAiReviewRequestDto? dto,
-            [FromServices] IRepository<Change> repo,
-            [FromServices] IChangeReviewService changeReviewService,
-            [FromServices] IRequestSender sender,
-            [FromServices] IDomainEventPublisher domainEvents,
-            [FromServices] ICorrelationContext correlationContext,
-            [FromServices] ICurrentUserAccessService accessService,
-            ClaimsPrincipal user,
-            CancellationToken token) =>
-        {
-            var change = await repo.GetAsync(id);
-            if (change is null)
-            {
-                return Results.NotFound();
-            }
-
-            var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanManageChange(change.OrganizationId))
-            {
-                return Results.Forbid();
-            }
-
-            ChangeAiReviewDto review;
-            try
-            {
-                review = await changeReviewService.RunReviewAsync(change, token);
-            }
-            catch (InvalidOperationException ex)
-            {
-                await domainEvents.PublishAsync(
-                    new ChangeAiReviewFailedDomainEvent(
-                        change.Id,
-                        change.TrackingId,
-                        change.OrganizationId,
-                        ex.Message,
-                        DateTimeOffset.UtcNow,
-                        GetCorrelationId(correlationContext)),
-                    token);
-                return Results.BadRequest(ex.Message);
-            }
-            catch (Exception ex)
-            {
-                await domainEvents.PublishAsync(
-                    new ChangeAiReviewFailedDomainEvent(
-                        change.Id,
-                        change.TrackingId,
-                        change.OrganizationId,
-                        ex.Message,
-                        DateTimeOffset.UtcNow,
-                        GetCorrelationId(correlationContext)),
-                    token);
-                throw;
-            }
-
-            var techId = user.FindFirstValue(ClaimTypes.NameIdentifier);
-            var techName = user.Identity?.Name;
-            var reviewVerb = dto?.Force == true ? "re-ran" : "ran";
-            await sender.Send(
-                new CreateWorkLogCommand(
-                    change.Id,
-                    0,
-                    $"Operator {reviewVerb} AI peer review for change {change.TrackingId}. Summary: {review.Summary}",
-                    techId,
-                    techName,
-                    NotifyCustomer: false),
-                token);
-            await domainEvents.PublishAsync(
-                new ChangeAiReviewCompletedDomainEvent(
-                    change.Id,
-                    change.TrackingId,
-                    change.OrganizationId,
-                    review.GateState,
-                    review.RequiresAcknowledgement,
-                    review.Summary,
-                    review.CompletedAt ?? DateTimeOffset.UtcNow,
-                    GetCorrelationId(correlationContext)),
-                token);
-            return Results.Ok(review);
-        });
-
-        group.MapPost("/{id}/ai-review/acknowledge", async (
-            [FromRoute] string id,
-            [FromBody] AcknowledgeChangeAiReviewDto? dto,
-            [FromServices] IRepository<Change> repo,
-            [FromServices] IRequestSender sender,
-            [FromServices] IDomainEventPublisher domainEvents,
-            [FromServices] ICorrelationContext correlationContext,
-            [FromServices] ICurrentUserAccessService accessService,
-            ClaimsPrincipal user,
-            CancellationToken token) =>
-        {
-            var change = await repo.GetAsync(id);
-            if (change is null)
-            {
-                return Results.NotFound();
-            }
-
-            var access = await accessService.ResolveAsync(user, token);
-            if (!access.CanManageChange(change.OrganizationId))
-            {
-                return Results.Forbid();
-            }
-
-            if (change.AiReviewStatus != ChangeReviewStatus.Complete)
-            {
-                return Results.BadRequest("AI peer review must complete before it can be acknowledged.");
-            }
-
-            if (change.AiReviewGateState != ChangeReviewGateState.Warning)
-            {
-                return Results.BadRequest("There are no outstanding AI review warnings to acknowledge.");
-            }
-
-            change.AiReviewGateState = ChangeReviewGateState.Acknowledged;
-            change.AiReviewAcknowledgedAt = DateTimeOffset.UtcNow;
-            change.AiReviewAcknowledgedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
-            change.AiReviewAcknowledgedByName = user.Identity?.Name;
-            change.AiReviewAcknowledgementNotes = string.IsNullOrWhiteSpace(dto?.Notes) ? null : dto!.Notes.Trim();
-            await repo.UpdateAsync(change);
-
-            await sender.Send(
-                new CreateWorkLogCommand(
-                    change.Id,
-                    0,
-                    string.IsNullOrWhiteSpace(change.AiReviewAcknowledgementNotes)
-                        ? "Operator acknowledged AI peer review warnings and allowed the change to proceed."
-                        : $"Operator acknowledged AI peer review warnings. Notes: {change.AiReviewAcknowledgementNotes}",
-                    change.AiReviewAcknowledgedByUserId,
-                    change.AiReviewAcknowledgedByName,
-                    NotifyCustomer: false),
-                token);
-            await domainEvents.PublishAsync(
-                new ChangeAiReviewAcknowledgedDomainEvent(
-                    change.Id,
-                    change.TrackingId,
-                    change.OrganizationId,
-                    change.AiReviewAcknowledgedByUserId,
-                    change.AiReviewAcknowledgedByName,
-                    change.AiReviewAcknowledgementNotes,
-                    change.AiReviewAcknowledgedAt ?? DateTimeOffset.UtcNow,
-                    GetCorrelationId(correlationContext)),
-                token);
-
-            return Results.Ok(new
-            {
-                change.AiReviewGateState,
-                change.AiReviewAcknowledgedAt,
-                change.AiReviewAcknowledgedByName,
-                change.AiReviewAcknowledgementNotes
-            });
         })
         .RequireAuthorization("ChangeManager");
 
@@ -1118,7 +867,7 @@ public static class ChangeEndpoints
             ClaimsPrincipal user,
             [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
-            [FromServices] IChangeReviewService changeReviewService,
+            [FromServices] IChangeTemplateService changeTemplateService,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] ITicketNotificationService notificationService,
             [FromServices] ITimelineEventBus timelineEventBus,
@@ -1156,8 +905,8 @@ public static class ChangeEndpoints
                 return Results.Ok(ToQuickLifecycleDto(change, previousLifecycleState, null, null));
             }
 
-            var currentTemplate = changeReviewService.DeserializeTemplate(change.ChangeTemplateJson);
-            var currentTemplateValidation = changeReviewService.ValidateTemplate(change.ChangeType, currentTemplate);
+            var currentTemplate = changeTemplateService.DeserializeTemplate(change.ChangeTemplateJson);
+            var currentTemplateValidation = changeTemplateService.ValidateTemplate(change.ChangeType, currentTemplate);
             var nextLifecycleState = requestedLifecycleState;
             if (previousLifecycleState == ChangeLifecycleState.Draft &&
                 requestedLifecycleState == ChangeLifecycleState.Submitted)
@@ -1745,7 +1494,6 @@ public static class ChangeEndpoints
         [FromQuery] ChangeLifecycleState? lifecycleState = null,
         [FromQuery] bool activeOnly = false,
         [FromQuery] bool historicOnly = false,
-        [FromQuery] bool aiInvolved = false,
         [FromQuery] bool includeTotal = true,
         [FromQuery] bool summaryOnly = false,
         [FromQuery] string? q = null)
@@ -1815,13 +1563,6 @@ public static class ChangeEndpoints
                 x.Change.LifecycleState != ChangeLifecycleState.ImplementedBackedOut);
         }
 
-        if (aiInvolved)
-        {
-            query = query.Where(x =>
-                db.TicketAiSuggestions.Any(s => s.TicketId == x.Change.Id) ||
-                db.AiOperationAuditRecords.Any(a => a.SubjectId == x.Change.Id));
-        }
-
         if (!string.IsNullOrWhiteSpace(q))
         {
             var like = $"%{q.Trim()}%";
@@ -1871,11 +1612,7 @@ public static class ChangeEndpoints
                 x.Change.CcRecipients,
                 x.Change.ImplementationStartAt,
                 x.Change.ImplementationEndAt,
-                x.Change.ChangeTemplateJson,
-                x.Change.AiReviewStatus,
-                x.Change.AiReviewGateState,
-                x.Change.AiReviewOutputJson,
-                x.Change.AiReviewCompletedAt
+                x.Change.ChangeTemplateJson
             });
 
         var rawItems = page.HasValue
@@ -1928,12 +1665,7 @@ public static class ChangeEndpoints
                 CcRecipients = x.CcRecipients.ToList(),
                 ImplementationStartAt = x.ImplementationStartAt,
                 ImplementationEndAt = x.ImplementationEndAt,
-                IsTemplateComplete = !string.IsNullOrWhiteSpace(x.ChangeTemplateJson),
-                AiReviewStatus = x.AiReviewStatus,
-                AiReviewGateState = x.AiReviewGateState,
-                LatestAiReviewSummary = ParseLatestReviewSummary(x.AiReviewOutputJson),
-                LastAiReviewAt = x.AiReviewCompletedAt,
-                RequiresAiReviewAcknowledgement = x.AiReviewGateState == ChangeReviewGateState.Warning
+                IsTemplateComplete = !string.IsNullOrWhiteSpace(x.ChangeTemplateJson)
             }).ToList();
 
             return Results.Ok(new PagedResponse<ChangeDto>
@@ -1951,26 +1683,6 @@ public static class ChangeEndpoints
             .ToDictionaryAsync(
                 g => g.Key,
                 g => g.Select(link => link.TicketCategoryId).ToList());
-        var suggestionRows = await db.TicketAiSuggestions
-            .AsNoTracking()
-            .Where(x => changeIds.Contains(x.TicketId))
-            .Select(x => new { x.TicketId, x.ItemsJson })
-            .ToListAsync();
-        var suggestionCountLookup = suggestionRows.ToDictionary(
-            x => x.TicketId,
-            x => ParseKnowledgeSuggestionCount(x.ItemsJson),
-            StringComparer.OrdinalIgnoreCase);
-        var aiAuditCountLookup = await db.AiOperationAuditRecords
-            .AsNoTracking()
-            .Where(x => x.SubjectId != null && changeIds.Contains(x.SubjectId))
-            .GroupBy(x => x.SubjectId!)
-            .ToDictionaryAsync(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
-        var aiActivityLookup = await db.AiOperationAuditRecords
-            .AsNoTracking()
-            .Where(x => x.SubjectId != null && changeIds.Contains(x.SubjectId))
-            .GroupBy(x => x.SubjectId!)
-            .ToDictionaryAsync(g => g.Key, g => g.Max(x => x.CreatedAt), StringComparer.OrdinalIgnoreCase);
-
         var items = rawItems.Select(i => new ChangeDto
         {
             OrganizationId = i.OrganizationId,
@@ -2003,15 +1715,7 @@ public static class ChangeEndpoints
             ImplementationStartAt = i.ImplementationStartAt,
             ImplementationEndAt = i.ImplementationEndAt,
             IsTemplateComplete = !string.IsNullOrWhiteSpace(i.ChangeTemplateJson),
-            CategoryIds = categoryLookup.TryGetValue(i.Id, out var ids) ? ids : new List<Guid>(),
-            AiSuggestionCount = suggestionCountLookup.TryGetValue(i.Id, out var suggestionCount) ? suggestionCount : 0,
-            AiAuditCount = aiAuditCountLookup.TryGetValue(i.Id, out var aiAuditCount) ? aiAuditCount : 0,
-            LastAiActivityAt = aiActivityLookup.TryGetValue(i.Id, out var lastAiActivityAt) ? lastAiActivityAt : null,
-            AiReviewStatus = i.AiReviewStatus,
-            AiReviewGateState = i.AiReviewGateState,
-            LatestAiReviewSummary = ParseLatestReviewSummary(i.AiReviewOutputJson),
-            LastAiReviewAt = i.AiReviewCompletedAt,
-            RequiresAiReviewAcknowledgement = i.AiReviewGateState == ChangeReviewGateState.Warning
+            CategoryIds = categoryLookup.TryGetValue(i.Id, out var ids) ? ids : new List<Guid>()
         }).ToList();
 
         var response = new PagedResponse<ChangeDto>
@@ -2141,7 +1845,7 @@ public static class ChangeEndpoints
         HelpdeskDbContext db,
         Change existing,
         UpdateChangeDto dto,
-        IChangeReviewService changeReviewService,
+        IChangeTemplateService changeTemplateService,
         CancellationToken token)
     {
         if (dto.State != existing.State ||
@@ -2161,7 +1865,7 @@ public static class ChangeEndpoints
 
         if (!string.IsNullOrWhiteSpace(dto.ChangeType))
         {
-            var normalizedChangeType = changeReviewService.NormalizeChangeType(dto.ChangeType);
+            var normalizedChangeType = changeTemplateService.NormalizeChangeType(dto.ChangeType);
             if (!string.Equals(normalizedChangeType, existing.ChangeType, StringComparison.Ordinal))
             {
                 return true;
@@ -2170,7 +1874,7 @@ public static class ChangeEndpoints
 
         if (dto.ChangeTemplate is not null &&
             !string.Equals(
-                changeReviewService.SerializeTemplate(dto.ChangeTemplate),
+                changeTemplateService.SerializeTemplate(dto.ChangeTemplate),
                 existing.ChangeTemplateJson,
                 StringComparison.Ordinal))
         {
@@ -2785,40 +2489,6 @@ public static class ChangeEndpoints
         else if (previousState == TicketState.Resolved && currentState != TicketState.Resolved)
         {
             ticket.ClosedAt = null;
-        }
-    }
-
-    private static int ParseKnowledgeSuggestionCount(string? itemsJson)
-    {
-        if (string.IsNullOrWhiteSpace(itemsJson))
-        {
-            return 0;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<List<KnowledgeSuggestion>>(itemsJson)?.Count ?? 0;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
-    private static string? ParseLatestReviewSummary(string? reviewJson)
-    {
-        if (string.IsNullOrWhiteSpace(reviewJson))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<ChangeAiReviewDto>(reviewJson)?.Summary;
-        }
-        catch
-        {
-            return null;
         }
     }
 

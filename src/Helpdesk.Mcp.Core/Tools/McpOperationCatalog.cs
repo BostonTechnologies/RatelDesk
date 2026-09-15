@@ -52,7 +52,6 @@ public static class McpOperationCatalog
 
         Ticket("helpdesk_requests", "requests", "requestId", "RequestRequest", "get", "GET", false),
         Ticket("helpdesk_requests", "requests", "requestId", "RequestRequest", "tasks", "GET", false),
-        Ticket("helpdesk_requests", "requests", "requestId", "RequestRequest", "ai_audit", "GET", false),
         Ticket("helpdesk_requests", "requests", "requestId", "RequestRequest", "timeline", "GET", false),
         TicketCount("helpdesk_requests", "requests", "requestId", "timeline_count"),
         TicketCount("helpdesk_requests", "requests", "requestId", "attachments_count"),
@@ -66,7 +65,6 @@ public static class McpOperationCatalog
         Ticket("helpdesk_changes", "changes", "changeId", "ChangeRequest", "get", "GET", false),
         Ticket("helpdesk_changes", "changes", "changeId", "ChangeRequest", "timeline", "GET", false),
         Ticket("helpdesk_changes", "changes", "changeId", "ChangeRequest", "worklogs", "GET", false),
-        Ticket("helpdesk_changes", "changes", "changeId", "ChangeRequest", "ai_review", "GET", false),
         TicketCount("helpdesk_changes", "changes", "changeId", "timeline_count"),
         TicketCount("helpdesk_changes", "changes", "changeId", "attachments_count"),
         TicketCount("helpdesk_changes", "changes", "changeId", "listeners_count"),
@@ -76,8 +74,6 @@ public static class McpOperationCatalog
         Ticket("helpdesk_changes", "changes", "changeId", "TicketStateRequest", "state", "POST", true),
         Ticket("helpdesk_changes", "changes", "changeId", "TicketWorklogRequest", "add_worklog", "POST", true),
         Ticket("helpdesk_changes", "changes", "changeId", "ChangeLifecycleRequest", "lifecycle", "POST", true),
-        Ticket("helpdesk_changes", "changes", "changeId", "ChangeAiReviewRequest", "run_ai_review", "POST", true),
-        Ticket("helpdesk_changes", "changes", "changeId", "ChangeRequest", "ack_ai_review", "POST", true),
         Operation("helpdesk_ai_assistant", "report", "AiAssistantWorklogRequest", "POST", "/api/v1/ai-assistant/investigations/{invocationId}/worklog", false),
 
         Read("helpdesk_request_forms", "get", "RequestFormRequest", "/api/v1/request-forms/{requestFormId}", "Get one request form."),
@@ -120,12 +116,8 @@ public static class McpOperationCatalog
         "peek" => $"/api/v1/{ticketType}/{{{idName}}}/peek",
         "timeline" => $"/api/v1/{ticketType}/{{{idName}}}/timeline",
         "tasks" => $"/api/v1/{ticketType}/{{{idName}}}/tasks",
-        "ai_audit" => $"/api/v1/{ticketType}/{{{idName}}}/ai-audit",
         "worklogs" => $"/api/v1/{ticketType}/{{{idName}}}/worklogs",
-        "ai_review" => $"/api/v1/{ticketType}/{{{idName}}}/ai-review",
         "lifecycle" => $"/api/v1/{ticketType}/{{{idName}}}/lifecycle",
-        "run_ai_review" => $"/api/v1/{ticketType}/{{{idName}}}/ai-review",
-        "ack_ai_review" => $"/api/v1/{ticketType}/{{{idName}}}/ai-review/acknowledge",
         _ => $"/api/v1/{ticketType}/{{{idName}}}"
     };
 
@@ -143,8 +135,6 @@ public static class McpOperationCatalog
         yield return Operation("helpdesk_organizations", "tenants", "None", "GET", "/api/v1/admin/tenants", false);
         yield return Operation("helpdesk_organizations", "tenant_lookup", "None", "GET", "/api/v1/admin/tenants/lookup", false);
         yield return Operation("helpdesk_organizations", "change_participants", "OrganizationRequest", "GET", "/api/v1/organizations/{organizationId}/change-participants", false);
-        foreach (var operation in new[] { "ai_kb_settings", "ai_kb_readiness", "ai_kb_runtime_status" })
-            yield return Operation("helpdesk_organizations", operation, "OrganizationRequest", "GET", $"/api/v1/organizations/{{organizationId}}/{operation.Replace('_', '-')}", false);
 
         foreach (var resource in new[] { ("helpdesk_customers", "/api/v1/customers", "customer"), ("helpdesk_users", "/api/v1/users", "user"), ("helpdesk_roles", "/api/v1/admin/role-definitions", "role") })
         {
@@ -156,15 +146,7 @@ public static class McpOperationCatalog
         yield return Operation("helpdesk_users", "by_email", "UserEmailRequest", "GET", "/api/v1/users/by-email/{email}", false);
         foreach (var operation in new[] { "users", "customers", "organizations" }) yield return Operation("helpdesk_search", operation, "SearchRequest", "GET", $"/api/v1/global-search/{operation}", false);
 
-        foreach (var operation in new[] { "ai_audit", "ai_feedback", "suggest_knowledge", "requester_reply_draft", "automation_approvals" }) yield return Operation("helpdesk_tickets", operation, "TicketRequest", "GET", $"/api/v1/tickets/{{ticketId}}/{operation.Replace('_', '-')}", false);
-        foreach (var (operation, path) in new[]
-                 {
-                     ("add_ai_feedback", "/api/v1/tickets/{ticketId}/ai-feedback"),
-                     ("generate_knowledge", "/api/v1/tickets/{ticketId}/generate-knowledge"),
-                     ("approve_send_reply", "/api/v1/tickets/{ticketId}/requester-reply-draft/approve-send"),
-                     ("add_automation_approval", "/api/v1/tickets/{ticketId}/automation-approvals"),
-                     ("mark_as_seen", "/api/v1/tickets/{ticketId}/mark-as-seen")
-                 }) yield return Operation("helpdesk_tickets", operation, "TicketMutationRequest", "POST", path, true);
+        yield return Operation("helpdesk_tickets", "mark_as_seen", "TicketMutationRequest", "POST", "/api/v1/tickets/{ticketId}/mark-as-seen", true);
 
         yield return Operation("helpdesk_services", "list", "ListRequest", "GET", "/api/v1/services/", false);
         yield return Operation("helpdesk_services", "get", "ServiceRequest", "GET", "/api/v1/services/{serviceId}", false);
@@ -235,7 +217,6 @@ public static class McpOperationCatalog
         yield return ("create_request_form", "POST", "/api/v1/request-forms");
         yield return ("create_service_request_form", "POST", "/api/v1/services/{serviceId}/forms/");
         yield return ("provision_user", "POST", "/api/v1/users/provision");
-        yield return ("update_organization_ai_kb_settings", "PUT", "/api/v1/organizations/{organizationId}/ai-kb-settings");
         yield return ("update_organization_branding", "PUT", "/api/v1/tenants/{organizationId}/branding");
         yield return ("update_request_form", "PUT", "/api/v1/request-forms/{requestFormId}");
         yield return ("delete_request_form", "DELETE", "/api/v1/request-forms/{requestFormId}");

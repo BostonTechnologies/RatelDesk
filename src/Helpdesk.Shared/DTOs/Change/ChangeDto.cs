@@ -39,13 +39,5 @@ public class ChangeDto
     public bool IsTemplateComplete { get; set; }
     public List<string> TemplateValidationErrors { get; set; } = new();
     public List<Guid> CategoryIds { get; set; } = new();
-    public int AiSuggestionCount { get; set; }
-    public int AiAuditCount { get; set; }
-    public DateTimeOffset? LastAiActivityAt { get; set; }
-    public ChangeReviewStatus AiReviewStatus { get; set; }
-    public ChangeReviewGateState AiReviewGateState { get; set; }
-    public string? LatestAiReviewSummary { get; set; }
-    public DateTimeOffset? LastAiReviewAt { get; set; }
-    public bool RequiresAiReviewAcknowledgement { get; set; }
     public TicketSlaDto? Sla { get; set; }
 }

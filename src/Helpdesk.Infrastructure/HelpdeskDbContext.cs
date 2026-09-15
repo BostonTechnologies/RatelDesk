@@ -4,9 +4,9 @@ using Helpdesk.Shared.Services;
 using Helpdesk.Infrastructure.Persistence.Entities;
 using Helpdesk.Infrastructure.Persistence.Connectivity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Npgsql.EntityFrameworkCore.PostgreSQL;
-using Pgvector.EntityFrameworkCore;
 
 namespace Helpdesk.Infrastructure.Persistence;
 
@@ -40,13 +40,6 @@ public class HelpdeskDbContext(
     public DbSet<TicketTimelineEvent> TicketTimelineEvents => Set<TicketTimelineEvent>();
     public DbSet<TicketRelation> TicketRelations => Set<TicketRelation>();
     public DbSet<TicketEvent> TicketEvents => Set<TicketEvent>();
-    public DbSet<KnowledgeBaseCategory> KnowledgeBaseCategories => Set<KnowledgeBaseCategory>();
-    public DbSet<KnowledgeBaseArticle> KnowledgeBaseArticles => Set<KnowledgeBaseArticle>();
-    public DbSet<KnowledgeEmbedding> KnowledgeEmbeddings => Set<KnowledgeEmbedding>();
-    public DbSet<TicketKnowledgeSuggestion> TicketKnowledgeSuggestions => Set<TicketKnowledgeSuggestion>();
-    public DbSet<TicketAiSuggestions> TicketAiSuggestions => Set<TicketAiSuggestions>();
-    public DbSet<TicketAiFeedback> TicketAiFeedback => Set<TicketAiFeedback>();
-    public DbSet<AiOperationAuditRecord> AiOperationAuditRecords => Set<AiOperationAuditRecord>();
     public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
     public DbSet<SlaEscalationRule> SlaEscalationRules => Set<SlaEscalationRule>();
     public DbSet<TicketSlaState> TicketSlaStates => Set<TicketSlaState>();
@@ -72,9 +65,6 @@ public class HelpdeskDbContext(
     public DbSet<InstanceInitialization> InstanceInitializations => Set<InstanceInitialization>();
     public DbSet<Service> Services => Set<Service>();
     public DbSet<RequestForm> RequestForms => Set<RequestForm>();
-    public DbSet<AiProvider> AiProviders => Set<AiProvider>();
-    public DbSet<AiModel> AiModels => Set<AiModel>();
-    public DbSet<OrganizationAiKbSettings> OrganizationAiKbSettings => Set<OrganizationAiKbSettings>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<NotificationReadEntity> NotificationReads => Set<NotificationReadEntity>();
     public DbSet<SupportGroup> SupportGroups => Set<SupportGroup>();
@@ -95,6 +85,17 @@ public class HelpdeskDbContext(
     public DbSet<AiInvestigationInvocation> AiInvestigationInvocations => Set<AiInvestigationInvocation>();
     public DbSet<AiInvestigationWorklogEntry> AiInvestigationWorklogEntries => Set<AiInvestigationWorklogEntry>();
     public DbSet<AiAssistantWebhookAuditRecord> AiAssistantWebhookAuditRecords => Set<AiAssistantWebhookAuditRecord>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        // The rc.7 cleanup is an explicit terminal migration, while the
+        // historical snapshots must retain their retired native-AI mappings
+        // so existing installations can be upgraded. EF Core consequently
+        // reports a pending model change for either provider before applying
+        // that migration. Always apply the migration chain instead.
+        optionsBuilder.ConfigureWarnings(warnings =>
+            warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -129,11 +130,6 @@ public class HelpdeskDbContext(
             entity.HasKey(x => new { x.ConversationId, x.CallId });
             entity.HasOne<Helpdesk.Shared.AiAssistant.Chat.AiAssistantChatConversation>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Restrict);
         });
-        if (isPostgreSql)
-        {
-            modelBuilder.HasPostgresExtension("vector");
-        }
-
         modelBuilder.Entity<Ticket>().HasQueryFilter(ticket =>
             _tenantContext.IsHelpdeskAdmin ||
             string.IsNullOrWhiteSpace(_tenantContext.TenantId) ||
@@ -285,27 +281,8 @@ public class HelpdeskDbContext(
         modelBuilder.Entity<Request>(entity =>
         {
             entity.HasIndex(x => new { x.OrganizationId, x.SourceTicketId });
-            entity.HasIndex(x => new { x.OrganizationId, x.SourceKnowledgeArticleId });
             entity.Property(x => x.SourceTicketId).HasMaxLength(64);
             entity.Property(x => x.SourceAutomationBindingId).HasMaxLength(64);
-        });
-
-        modelBuilder.Entity<AiOperationAuditRecord>(entity =>
-        {
-            if (isSqlite)
-            {
-                entity.Property<long>("CreatedAtSortTicks")
-                    .HasComputedColumnSql("CAST((julianday(\"CreatedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
-                entity.HasIndex("CreatedAtSortTicks");
-            }
-            entity.Property(x => x.OperationName).HasMaxLength(128);
-            entity.Property(x => x.OrganizationId).HasMaxLength(128);
-            entity.Property(x => x.ProviderName).HasMaxLength(128);
-            entity.Property(x => x.ModelId).HasMaxLength(256);
-            entity.Property(x => x.CorrelationId).HasMaxLength(128);
-            entity.Property(x => x.SubjectId).HasMaxLength(64);
-            entity.HasIndex(x => new { x.SubjectId, x.CreatedAt });
-            entity.HasIndex(x => new { x.OrganizationId, x.CreatedAt });
         });
 
         modelBuilder.Entity<M2MConnectivitySettings>(entity =>
@@ -343,16 +320,6 @@ public class HelpdeskDbContext(
                     .HasComputedColumnSql("CAST((julianday(\"UpdatedAtUtc\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
                 entity.HasIndex("SyncState", "UpdatedAtUtcSortTicks");
             }
-        });
-
-        modelBuilder.Entity<KnowledgeBaseArticle>(entity =>
-        {
-            entity.Property(x => x.AutomationBindingId).HasMaxLength(64);
-            entity.Property(x => x.AutomationRequestFormId).HasMaxLength(64);
-            entity.Property(x => x.AutomationTaskTemplateName).HasMaxLength(256);
-            entity.Property(x => x.AutomationOrchestrationRequestDefinitionId).HasMaxLength(256);
-            entity.Property(x => x.AutomationOrchestrationJobDefinitionId).HasMaxLength(256);
-            entity.HasIndex(x => new { x.OrganizationId, x.AutomationBindingId });
         });
 
         modelBuilder.Entity<DatasetDefinition>(entity =>
@@ -768,151 +735,17 @@ public class HelpdeskDbContext(
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<AiProvider>(entity =>
-        {
-            entity.ToTable("AiProviders");
-            entity.HasKey(p => p.Id);
-            entity.Property(p => p.ProviderType).HasConversion<string>();
-            entity.Property(p => p.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.Property(p => p.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.Property(p => p.ExtraHeadersJson).HasColumnType("TEXT");
-            entity.HasMany(p => p.Models)
-                .WithOne(m => m.Provider)
-                .HasForeignKey(m => m.AiProviderId);
-        });
-
-        modelBuilder.Entity<AiModel>(entity =>
-        {
-            entity.ToTable("AiModels");
-            entity.HasKey(m => m.Id);
-            entity.Property(m => m.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.Property(m => m.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.Property(m => m.ExtraHeadersJson).HasColumnType("TEXT");
-        });
-
-        modelBuilder.Entity<KnowledgeBaseArticle>(entity =>
-        {
-            entity.ToTable("KnowledgeBaseArticles");
-            entity.HasKey(a => a.Id);
-            entity.HasIndex(a => a.OrganizationId);
-            entity.Property(a => a.OrganizationId).IsRequired();
-            entity.Property(a => a.Service).IsRequired();
-            entity.Property(a => a.State)
-                .HasConversion<string>()
-                .HasDefaultValue(KnowledgeBaseArticleState.Draft);
-            if (isPostgreSql)
-            {
-                entity.Property(a => a.Tags).HasColumnType("jsonb");
-            }
-            else
-            {
-                entity.Property(a => a.Tags)
-                    .HasConversion(EfJsonConverters.StringListToJson);
-            }
-            entity.Property(a => a.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.Property(a => a.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.HasMany(a => a.Embeddings)
-                .WithOne(e => e.Article)
-                .HasForeignKey(e => e.KnowledgeBaseArticleId);
-        });
-
-        modelBuilder.Entity<KnowledgeEmbedding>(entity =>
-        {
-            entity.ToTable("KnowledgeEmbeddings");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.OrganizationId).IsRequired();
-            entity.Property(e => e.SourceType).IsRequired();
-            entity.Property(e => e.SourceId).IsRequired();
-            entity.Property(e => e.DocumentTitle).IsRequired();
-            entity.Property(e => e.ChunkIndex).HasDefaultValue(0);
-            entity.Property(e => e.ChunkId).IsRequired();
-            entity.Property(e => e.Text).IsRequired();
-            entity.Property(e => e.MetadataJson).IsRequired().HasColumnType("TEXT");
-            entity.Property(e => e.LastScore).HasDefaultValue(0);
-            if (isPostgreSql)
-            {
-                entity.Property(e => e.Vector).HasVectorType(768);
-            }
-            else
-            {
-                entity.Property(e => e.Vector)
-                    .HasConversion(EfJsonConverters.VectorToJson)
-                    .HasColumnType("TEXT");
-            }
-            entity.HasIndex(e => new { e.OrganizationId, e.SourceType })
-                .HasDatabaseName("ix_embedding_org_source");
-            entity.HasIndex(e => new { e.OrganizationId, e.SourceType, e.SourceId, e.ChunkIndex })
-                .HasDatabaseName("ix_embedding_org_document_chunk");
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-        });
-
-        modelBuilder.Entity<TicketKnowledgeSuggestion>(entity =>
-        {
-            entity.ToTable("TicketKnowledgeSuggestions");
-            entity.HasKey(s => s.Id);
-            entity.Property(s => s.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.HasOne(s => s.Article)
-                .WithMany()
-                .HasForeignKey(s => s.KnowledgeBaseArticleId);
-        });
-
-        modelBuilder.Entity<TicketAiSuggestions>(b =>
-        {
-            b.HasKey(x => x.TicketId);
-            b.Property(x => x.ItemsJson).IsRequired();
-            b.HasOne<Ticket>()
-             .WithOne()
-             .HasForeignKey<TicketAiSuggestions>(x => x.TicketId)
-             .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<TicketAiFeedback>(entity =>
-        {
-            if (isSqlite)
-            {
-                entity.Property<long>("CreatedAtSortTicks")
-                    .HasComputedColumnSql("CAST((julianday(\"CreatedAt\") - 2440587.5) * 864000000000 + 621355968000000000 AS INTEGER)");
-                entity.HasIndex("CreatedAtSortTicks");
-            }
-            entity.ToTable("TicketAiFeedback");
-            entity.HasKey(x => x.Id);
-            entity.Property(x => x.FeedbackType).HasMaxLength(64);
-            entity.Property(x => x.FeedbackValue).HasMaxLength(64);
-            entity.Property(x => x.ArticleId).HasMaxLength(64);
-            entity.Property(x => x.RequestId).HasMaxLength(64);
-            entity.Property(x => x.CreatedByUserId).HasMaxLength(128);
-            entity.Property(x => x.CreatedByName).HasMaxLength(256);
-            entity.HasIndex(x => new { x.TicketId, x.CreatedAt });
-            entity.HasIndex(x => new { x.TicketId, x.ArticleId, x.FeedbackType, x.FeedbackValue });
-            entity.HasIndex(x => new { x.TicketId, x.RequestId, x.FeedbackType, x.FeedbackValue });
-            entity.HasOne<Ticket>()
-                .WithMany()
-                .HasForeignKey(x => x.TicketId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
         modelBuilder.Entity<Change>(entity =>
         {
             entity.Property(x => x.ChangeType).HasMaxLength(32);
             if (isPostgreSql)
             {
                 entity.Property(x => x.ChangeTemplateJson).HasColumnType("jsonb");
-                entity.Property(x => x.AiReviewOutputJson).HasColumnType("jsonb");
             }
             else
             {
                 entity.Property(x => x.ChangeTemplateJson).HasColumnType("TEXT");
-                entity.Property(x => x.AiReviewOutputJson).HasColumnType("TEXT");
             }
-            entity.Property(x => x.AiReviewCorrelationId).HasMaxLength(128);
-            entity.Property(x => x.AiReviewFailureReason).HasMaxLength(1024);
-            entity.Property(x => x.AiReviewAcknowledgementNotes).HasMaxLength(1024);
-            entity.Property(x => x.AiReviewAcknowledgedByUserId).HasMaxLength(128);
-            entity.Property(x => x.AiReviewAcknowledgedByName).HasMaxLength(256);
-            entity.Property(x => x.AiReviewStatus)
-                .HasConversion<int>();
-            entity.Property(x => x.AiReviewGateState)
-                .HasConversion<int>();
         });
 
         modelBuilder.Entity<TicketCategory>(entity =>
@@ -970,8 +803,6 @@ public class HelpdeskDbContext(
                 .HasForeignKey(x => x.TicketCategoryId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
-
-        modelBuilder.Entity<OrganizationAiKbSettings>().ToTable("OrganizationAiKbSettings");
 
         modelBuilder.ApplyConfiguration(new ServiceConfiguration(_tenantContext, _httpContextAccessor));
         modelBuilder.ApplyConfiguration(new RequestFormConfiguration(_tenantContext, isPostgreSql));

@@ -16,5 +16,4 @@ public class UpdateChangeDto
     public List<Guid>? CategoryIds { get; set; }
     public string? ChangeType { get; set; }
     public ChangeTemplateDto? ChangeTemplate { get; set; }
-    public bool AcknowledgeAiReviewWarnings { get; set; }
 }

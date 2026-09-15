@@ -20,7 +20,7 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<HelpdeskDb
             ?? throw new InvalidOperationException(
                 "A design-time Helpdesk database connection string is required. Set HELPDESK_DESIGNTIME_DB, ConnectionStrings__HelpdeskDb, or ConnectionStrings:HelpdeskDb.");
 
-        optionsBuilder.UseNpgsql(connectionString, npg => npg.UseVector());
+        optionsBuilder.UseNpgsql(connectionString);
 
         var tenant = new DummyTenantContext();
         return new HelpdeskDbContext(optionsBuilder.Options, tenant, new Microsoft.AspNetCore.Http.HttpContextAccessor());

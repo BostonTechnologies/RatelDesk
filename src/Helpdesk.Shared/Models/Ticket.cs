@@ -34,7 +34,6 @@ public abstract class Ticket
     // This is the new user-facing ID like 'INC-ABC-123'
     public string TrackingId { get; set; } = string.Empty;
 
-    public string? AiUnderstanding { get; set; }
 
     // Counter for user/technician replies
     public int Replies { get; set; } = 0;

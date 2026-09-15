@@ -16,7 +16,6 @@ using Helpdesk.API.Endpoints.Dashboard;
 using Helpdesk.API.Endpoints.Email;
 using Helpdesk.API.Endpoints.Errors;
 using Helpdesk.API.Endpoints.Incidents;
-using Helpdesk.API.Endpoints.KB;
 using Helpdesk.API.Endpoints.Notifications;
 using Helpdesk.API.Endpoints.Organization;
 using Helpdesk.API.Endpoints.Orchestration;
@@ -36,7 +35,6 @@ using Helpdesk.API.Endpoints.Ticketing;
 using Helpdesk.API.Endpoints.Timeline;
 using Helpdesk.API.Endpoints.Users;
 using Helpdesk.API.Endpoints.WorkLogs;
-using Helpdesk.API.Endpoints.AI;
 using Helpdesk.API.Endpoints.AiAssistant;
 using Helpdesk.API.Hubs;
 using Helpdesk.API.Services;
@@ -49,8 +47,6 @@ using Helpdesk.API.Bootstrap;
 using Helpdesk.Application.Incidents;
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Notifications;
-using Helpdesk.Application.Services.AI;
-using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Sla;
 using Helpdesk.Application.WorkLogs;
 using Helpdesk.Infrastructure;
@@ -428,11 +424,9 @@ if (!skipDatabaseStartup)
 
 // Background jobs
 builder.Services.AddSingleton<IBackgroundJobQueue, BackgroundJobQueue>();
-builder.Services.AddSingleton<IAiSuggestionQueue, AiSuggestionQueue>();
 if (!skipDatabaseStartup)
 {
     builder.Services.AddHostedService<BackgroundJobRunner>();
-    builder.Services.AddHostedService<AiSuggestionWorker>();
     builder.Services.AddHostedService<EmailIngestionWorker>();
 }
 builder.Services.AddScoped<ISelfServiceAudienceService, SelfServiceAudienceService>();
@@ -1234,8 +1228,6 @@ app.MapSlaReportSubscriptionEndpoints();
 app.MapAttachmentEndpoints();
 app.MapErrorLoggingEndpoints();
 app.MapWorkLogEndpoints();
-app.MapAiProviderEndpoints();
-app.MapOrganizationAiKbSettingsEndpoints();
 app.MapOrganizationChangeParticipantEndpoints();
 app.MapAdminTenantEndpoints();
 app.MapTenantBrandingEndpoints();
@@ -1276,30 +1268,10 @@ app.MapGet("/health/db", async ([FromServices] HelpdeskDbContext db, Cancellatio
     .WithDescription("Returns 200 when the database is reachable.")
     .WithTags("Health");
 
-app.MapGet("/health/vector", async ([FromServices] HelpdeskDbContext db, CancellationToken token) =>
-    {
-        await using var conn = db.Database.GetDbConnection();
-        await conn.OpenAsync(token);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText =
-            "SELECT 1 FROM pg_indexes WHERE indexname = 'ix_embedding_org_hnsw'";
-        var result = await cmd.ExecuteScalarAsync(token);
-        return result is not null
-            ? Results.Ok()
-            : Results.Problem("Vector index missing", statusCode: 503);
-    })
-    .WithName("GetVectorHealth")
-    .WithSummary("Vector index health check")
-    .WithDescription("Checks for the ix_embedding_org_hnsw index.")
-    .WithTags("Health");
-
-app.MapKbEndpoints();
 app.MapGlobalSearchLookupEndpoints();
 app.MapRoleDefinitionEndpoints();
 MapCrudEndpoints<Organization>(app, "/api/v1/organizations");
 MapCrudEndpoints<Customer>(app, "/api/v1/customers");
-MapCrudEndpoints<KnowledgeBaseCategory>(app, "/api/v1/knowledgebase/categories");
-MapCrudEndpoints<KnowledgeBaseArticle>(app, "/api/v1/knowledgebase/articles");
 MapCrudEndpoints<Asset>(app, "/api/v1/assets");
 MapCrudEndpoints<AutomationRule>(app, "/api/v1/automation/rules");
 
@@ -1359,7 +1331,7 @@ if (app.Environment.IsDevelopment())
 {
     app.MapGet("/_diag/dp", (IDataProtectionProvider p) =>
     {
-        var prot = p.CreateProtector("AIProviderKeys");
+        var prot = p.CreateProtector("DevelopmentDiagnostics");
         var s = prot.Protect("ok");
         var u = prot.Unprotect(s);
         return Results.Ok(new { protectedLength = s.Length, unprotected = u });
@@ -1487,30 +1459,6 @@ static void MapCrudEndpoints<T>(WebApplication app, string route) where T : clas
 
         var created = await repo.CreateAsync(entity);
 
-        if (typeof(T) == typeof(Organization) && idProperty.GetValue(created) is string orgId)
-        {
-            var settingsRepo = services.GetRequiredService<SharedServices.IRepository<OrganizationAiKbSettings>>();
-            var defaults = new OrganizationAiKbSettings
-            {
-                OrganizationId = orgId,
-                EnableAiSearch = false,
-                EnableAiAnswers = false,
-                SearchThreshold = 0.5,
-                AnswerThreshold = 0.5,
-                EmbeddingModel = "embeddinggemma",
-                EmbeddingDimensions = 768,
-                AllowedServicesCsv = string.Empty,
-                EnableProviderFallback = true,
-                MaxProviderAttempts = 2,
-                MinimumSuggestionFeedbackCount = 5,
-                MinimumSuggestionHelpfulRate = 0.6,
-                MinimumAutomationFeedbackCount = 3,
-                MinimumAutomationResolvedRate = 0.5
-            };
-            await settingsRepo.CreateAsync(defaults);
-            return Results.Created($"{route}/{orgId}", created);
-        }
-
         if (idProperty.GetValue(created) is string idValue)
         {
             return Results.Created($"{route}/{idValue}", created);
@@ -1544,7 +1492,6 @@ static async Task SeedAdminUserAsync(WebApplication app)
     var users = scope.ServiceProvider.GetRequiredService<SharedServices.IRepository<User>>();
     var roles = scope.ServiceProvider.GetRequiredService<SharedServices.IRepository<Role>>();
     var orgs = scope.ServiceProvider.GetRequiredService<SharedServices.IRepository<Organization>>();
-    var aiSettings = scope.ServiceProvider.GetRequiredService<SharedServices.IRepository<OrganizationAiKbSettings>>();
 
     // --- START OF FIX ---
     // Check for and create the 'HelpdeskAdmin' role to match the policy and the user.
@@ -1561,23 +1508,6 @@ static async Task SeedAdminUserAsync(WebApplication app)
     {
         devOrg = new Organization { Id = Uuid.CreateVersion7().ToString(), Name = "DevOrg", State = Helpdesk.Shared.Models.EntityState.Enabled };
         await orgs.CreateAsync(devOrg);
-        await aiSettings.CreateAsync(new OrganizationAiKbSettings
-        {
-            OrganizationId = devOrg.Id,
-            EnableAiSearch = false,
-            EnableAiAnswers = false,
-            SearchThreshold = 0.5,
-            AnswerThreshold = 0.5,
-            EmbeddingModel = "embeddinggemma",
-            EmbeddingDimensions = 768,
-            AllowedServicesCsv = string.Empty,
-            EnableProviderFallback = true,
-            MaxProviderAttempts = 2,
-            MinimumSuggestionFeedbackCount = 5,
-            MinimumSuggestionHelpfulRate = 0.6,
-            MinimumAutomationFeedbackCount = 3,
-            MinimumAutomationResolvedRate = 0.5
-        });
     }
 
     var allUsers = await users.GetAllAsync();

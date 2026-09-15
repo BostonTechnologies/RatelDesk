@@ -26,8 +26,6 @@ public class RequestDto
     public string? PayloadJson { get; set; }
     public string? SourceTicketId { get; set; }
     public string? SourceTicketTrackingId { get; set; }
-    public string? SourceKnowledgeArticleId { get; set; }
-    public string? SourceKnowledgeArticleTitle { get; set; }
     public string? SourceAutomationBindingId { get; set; }
     public string? WorkflowStatus { get; set; }
     public string? WorkflowBlockReason { get; set; }

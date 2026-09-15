@@ -1,6 +1,5 @@
 @using System.ComponentModel.DataAnnotations
 @using Helpdesk.Shared.DTOs.Orchestration
-@using Helpdesk.Shared.DTOs.Organization
 @using Helpdesk.Shared.Models
 @inject IHttpClientFactory HttpClientFactory
 
@@ -47,18 +46,6 @@
                         Leave empty if this organization is not yet linked to External orchestration.
                     </MudText>
                 </MudTabPanel>
-                <MudTabPanel Text="AI / KB Settings">
-                    <MudSwitch T="bool" @bind-Value="aiSettings.EnableAiSearch" Label="Enable AI" />
-                    <MudSwitch T="bool" @bind-Value="aiSettings.EnableAiAnswers" Label="Enable KB" />
-                    <MudText Typo="Typo.body2">Suggestion Limit</MudText>
-                    <MudSlider @bind-Value="aiSettings.SuggestionLimit" Min="1" Max="10" Step="1" />
-                    <MudSelect @bind-Value="aiSettings.EmbeddingModel" Label="Embedding Model">
-                        <MudSelectItem Value="@("text-embedding-ada-002")">text-embedding-ada-002</MudSelectItem>
-                        <MudSelectItem Value="@("embeddinggemma")">embeddinggemma</MudSelectItem>
-                    </MudSelect>
-                    <MudNumericField @bind-Value="aiSettings.EmbeddingDimensions" Label="Dimensions" />
-                    <MudTextField @bind-Value="aiSettings.AllowedServicesCsv" Label="Allowed Services (CSV)" />
-                </MudTabPanel>
             </MudTabs>
 
         </MudForm>
@@ -75,7 +62,6 @@
 
     private MudForm form = default!;
     private CreateOrganizationModel model = new();
-    private OrganizationAiKbSettingsDto aiSettings = CreateDefaultAiSettings();
     private List<OrchestrationCatalogTenantDto> orchestrationTenants = new();
     private bool orchestrationTenantsLoading;
     private string? orchestrationTenantsError;
@@ -102,11 +88,6 @@
             });
             if (response.IsSuccessStatusCode)
             {
-                var created = await response.Content.ReadFromJsonAsync<Helpdesk.Shared.DTOs.Organization.OrganizationDto>();
-                if (created != null)
-                {
-                    await HelpdeskApi.PutAsJsonAsync($"api/v1/organizations/{created.Id}/ai-kb-settings", aiSettings);
-                }
                 Dialog.Close(DialogResult.Ok(true));
             }
         }
@@ -154,19 +135,4 @@
         }
     }
 
-    private static OrganizationAiKbSettingsDto CreateDefaultAiSettings()
-    {
-        return new OrganizationAiKbSettingsDto
-        {
-            EmbeddingModel = "embeddinggemma",
-            EmbeddingDimensions = 768,
-            SuggestionLimit = 3,
-            EnableProviderFallback = true,
-            MaxProviderAttempts = 2,
-            MinimumSuggestionFeedbackCount = 5,
-            MinimumSuggestionHelpfulRate = 0.6,
-            MinimumAutomationFeedbackCount = 3,
-            MinimumAutomationResolvedRate = 0.5
-        };
-    }
 }

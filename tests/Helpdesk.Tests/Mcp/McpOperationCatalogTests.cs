@@ -86,10 +86,6 @@ public sealed class McpOperationCatalogTests
     }
 
     [Theory]
-    [InlineData("add_ai_feedback", "/api/v1/tickets/{ticketId}/ai-feedback")]
-    [InlineData("generate_knowledge", "/api/v1/tickets/{ticketId}/generate-knowledge")]
-    [InlineData("approve_send_reply", "/api/v1/tickets/{ticketId}/requester-reply-draft/approve-send")]
-    [InlineData("add_automation_approval", "/api/v1/tickets/{ticketId}/automation-approvals")]
     [InlineData("mark_as_seen", "/api/v1/tickets/{ticketId}/mark-as-seen")]
     public void Ticket_helper_mutations_have_the_executable_paths(string operation, string path)
     {

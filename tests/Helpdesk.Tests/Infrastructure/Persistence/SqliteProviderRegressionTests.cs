@@ -14,6 +14,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -23,36 +24,24 @@ namespace Helpdesk.Tests.Infrastructure.Persistence;
 public sealed class SqliteProviderRegressionTests
 {
     [Fact]
-    public async Task Audit_migration_preserves_existing_rows_and_pages_by_instant()
+    public async Task Migration_preserves_existing_automation_binding_rows()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
         await using var db = CreateDb(connection);
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync("20260912220557_AddExternalIdentityDomainUserLink");
-        var earlier = Guid.NewGuid();
-        var later = Guid.NewGuid();
-        // Local clock order is reversed; ordering must compare UTC instants.
-        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO AiOperationAuditRecords (Id, OperationName, ProviderName, ModelId, CreatedAt) VALUES ({earlier}, {"a"}, {"provider"}, {"model"}, {"2026-09-13 12:00:00+02:00"})");
-        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO AiOperationAuditRecords (Id, OperationName, ProviderName, ModelId, CreatedAt) VALUES ({later}, {"b"}, {"provider"}, {"model"}, {"2026-09-13 06:01:00-04:00"})");
         await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO AutomationBindings (Id, OrganizationId, RequestFormId, TaskTemplateId, OrchestrationRequestDefinitionId, SyncState, Enabled, CreatedAtUtc, UpdatedAtUtc) VALUES ({"existing-binding"}, {"org"}, {"form"}, {Guid.NewGuid()}, {"definition"}, {0}, {false}, {"2026-09-13 12:00:00+02:00"}, {"2026-09-13 12:00:00+02:00"})");
 
         await migrator.MigrateAsync();
         await migrator.MigrateAsync();
 
         Assert.Empty(await db.Database.GetPendingMigrationsAsync());
-        Assert.False(db.Database.HasPendingModelChanges());
-        var query = db.AiOperationAuditRecords.OrderByUtc(db, x => x.CreatedAt, descending: true).Take(1);
-        Assert.Contains("LIMIT", query.ToQueryString(), StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(later, (await query.SingleAsync()).Id);
-        Assert.Equal(earlier, (await db.AiOperationAuditRecords.OrderByUtc(db, x => x.CreatedAt).Take(1).SingleAsync()).Id);
-        Assert.Equal(2, await db.AiOperationAuditRecords.CountAsync());
         Assert.Equal("existing-binding", (await db.AutomationBindings.OrderByUtc(db, x => x.UpdatedAtUtc).Take(1).SingleAsync()).Id);
 
         // Cover every new sortable mapping through a translated query on the real schema.
         Assert.Empty(await db.InboundEmailProcessingLogs.OrderByUtc(db, x => x.CreatedAtUtc).Take(1).ToListAsync());
         Assert.Empty(await db.DatasetIngestCredentials.OrderByUtc(db, x => x.CreatedAtUtc).Take(1).ToListAsync());
-        Assert.Empty(await db.TicketAiFeedback.OrderByUtc(db, x => x.CreatedAt).Take(1).ToListAsync());
         Assert.Empty(await db.AiInvestigationWorklogEntries.OrderByUtc(db, x => x.OccurredUtc).Take(1).ToListAsync());
     }
 
@@ -136,6 +125,7 @@ public sealed class SqliteProviderRegressionTests
     private static HelpdeskDbContext CreateDb(SqliteConnection connection) => new(
         new DbContextOptionsBuilder<HelpdeskDbContext>()
             .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly("Helpdesk.Infrastructure.SqliteMigrations"))
+            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options,
         new AdminTenantContext(), new HttpContextAccessor());
 

@@ -18,7 +18,7 @@ public class DataProtectionSecretProtector : ISecretProtector
         ILogger<DataProtectionSecretProtector> logger)
     {
         // IMPORTANT: purpose must stay stable for protect/unprotect
-        _protector = provider.CreateProtector("AIProviderKeys");
+        _protector = provider.CreateProtector("ExternalServiceCredentials");
         _toleratePlaintextInDev = env.IsDevelopment();
         _logger = logger;
     }

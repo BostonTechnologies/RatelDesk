@@ -1,16 +1,12 @@
 using Helpdesk.Shared.DTOs.Change;
-using Helpdesk.Shared.Models;
 
 namespace Helpdesk.Application.Services.Changes;
 
-public interface IChangeReviewService
+/// <summary>Validates and serializes the deterministic ITIL change template.</summary>
+public interface IChangeTemplateService
 {
     string NormalizeChangeType(string? changeType);
     ChangeTemplateDto? DeserializeTemplate(string? templateJson);
     string SerializeTemplate(ChangeTemplateDto? template);
     ChangeTemplateValidationDto ValidateTemplate(string? changeType, ChangeTemplateDto? template);
-    ChangeAiReviewDto BuildReviewDto(Change change);
-    bool RequiresReviewBeforeProgress(Change change);
-    void MarkReviewStale(Change change);
-    Task<ChangeAiReviewDto> RunReviewAsync(Change change, CancellationToken token);
 }

@@ -92,15 +92,6 @@ internal static partial class HelpdeskCli
     private static Command BuildTicketsCommand(CliRuntime runtime, GlobalOptions globals)
     {
         var tickets = new Command("tickets", "Shared ticket helper operations.");
-        tickets.AddCommand(GetByIdCommand(runtime, globals, "ai-audit", "/api/v1/tickets/{id}/ai-audit"));
-        tickets.AddCommand(GetByIdCommand(runtime, globals, "ai-feedback", "/api/v1/tickets/{id}/ai-feedback"));
-        tickets.AddCommand(BodyCommand(runtime, globals, "add-ai-feedback", HttpMethod.Post, "/api/v1/tickets/{id}/ai-feedback", ("--rating", "rating"), ("--comment", "comment")));
-        tickets.AddCommand(GetByIdCommand(runtime, globals, "suggest-knowledge", "/api/v1/tickets/{id}/suggest-knowledge"));
-        tickets.AddCommand(BodyCommand(runtime, globals, "generate-knowledge", HttpMethod.Post, "/api/v1/tickets/{id}/generate-knowledge", ("--title", "title"), ("--content", "content")));
-        tickets.AddCommand(GetByIdCommand(runtime, globals, "requester-reply-draft", "/api/v1/tickets/{id}/requester-reply-draft"));
-        tickets.AddCommand(BodyCommand(runtime, globals, "approve-send-reply", HttpMethod.Post, "/api/v1/tickets/{id}/requester-reply-draft/approve-send", ("--body", "body"), ("--subject", "subject")));
-        tickets.AddCommand(GetByIdCommand(runtime, globals, "automation-approvals", "/api/v1/tickets/{id}/automation-approvals"));
-        tickets.AddCommand(BodyCommand(runtime, globals, "add-automation-approval", HttpMethod.Post, "/api/v1/tickets/{id}/automation-approvals", ("--article-id", "articleId"), ("--approved", "approved"), ("--comment", "comment")));
         tickets.AddCommand(BodyCommand(runtime, globals, "mark-as-seen", HttpMethod.Post, "/api/v1/tickets/{id}/mark-as-seen"));
         tickets.AddCommand(GetListCommand(runtime, globals, "timeline-count", "/api/v1/tickets/timeline/count"));
         tickets.AddCommand(GetListCommand(runtime, globals, "attachments-count", "/api/v1/tickets/attachments/count"));

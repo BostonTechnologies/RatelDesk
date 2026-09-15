@@ -7,7 +7,6 @@ namespace Helpdesk.Application.Services.Tenants;
 public class TenantProvisioningService(
     IRepository<Organization> organizationRepository,
     IRepository<Customer> customerRepository,
-    IRepository<OrganizationAiKbSettings> aiKbSettingsRepository,
     IDomainEventPublisher? domainEvents = null,
     ICorrelationContext? correlationContext = null)
     : ITenantProvisioningService
@@ -27,7 +26,6 @@ public class TenantProvisioningService(
                 await organizationRepository.UpdateAsync(existingOrganization);
             }
 
-            await EnsureAiKbSettingsAsync(existingOrganization.Id);
             return existingOrganization;
         }
 
@@ -40,7 +38,6 @@ public class TenantProvisioningService(
                 State = EntityState.Enabled
             });
 
-            await EnsureAiKbSettingsAsync(createdOrganization.Id);
             await _domainEvents.PublishAsync(
                 new TenantCreatedEvent(
                     normalizedDomain,
@@ -55,7 +52,6 @@ public class TenantProvisioningService(
             var raceWinner = await FindOrganizationAsync(normalizedDomain);
             if (raceWinner is not null)
             {
-                await EnsureAiKbSettingsAsync(raceWinner.Id);
                 return raceWinner;
             }
 
@@ -140,40 +136,6 @@ public class TenantProvisioningService(
     {
         var customers = await customerRepository.GetAllAsync();
         return customers.FirstOrDefault(c => c.Email.Equals(normalizedEmail, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private async Task EnsureAiKbSettingsAsync(string organizationId)
-    {
-        var existingSettings = (await aiKbSettingsRepository.GetAllAsync())
-            .FirstOrDefault(x => x.OrganizationId == organizationId);
-        if (existingSettings is not null)
-        {
-            return;
-        }
-
-        try
-        {
-            await aiKbSettingsRepository.CreateAsync(new OrganizationAiKbSettings
-            {
-                OrganizationId = organizationId,
-                EnableAiSearch = false,
-                EnableAiAnswers = false,
-                SearchThreshold = 0.5,
-                AnswerThreshold = 0.5,
-                EmbeddingModel = "embeddinggemma",
-                EmbeddingDimensions = 768,
-                AllowedServicesCsv = string.Empty
-            });
-        }
-        catch
-        {
-            var raceWinner = (await aiKbSettingsRepository.GetAllAsync())
-                .FirstOrDefault(x => x.OrganizationId == organizationId);
-            if (raceWinner is null)
-            {
-                throw;
-            }
-        }
     }
 
     private static string NormalizeDomain(string domain)
