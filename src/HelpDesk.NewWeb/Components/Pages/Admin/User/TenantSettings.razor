@@ -12,12 +12,15 @@
     <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
         <MudText Typo="Typo.h4" HtmlTag="h1">Tenant settings</MudText>
         @if (error is not null) { <MudAlert Severity="Severity.Error" Class="my-3">@error</MudAlert> }
-        <MudSelect T="string" Label="Tenant" Value="organizationId" ValueChanged="SelectAsync" Disabled="busy" Class="my-3">
-            @foreach (var organization in organizations)
-            {
-                <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
-            }
-        </MudSelect>
+        @if (string.IsNullOrWhiteSpace(OrganizationId))
+        {
+            <MudSelect T="string" Label="Tenant" Value="organizationId" ValueChanged="SelectAsync" Disabled="busy" Class="my-3">
+                @foreach (var organization in organizations)
+                {
+                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                }
+            </MudSelect>
+        }
         @if (settings is not null)
         {
             <MudTextField @bind-Value="settings.Name" Label="Tenant name" Required="true" MaxLength="200" Disabled="busy" />
@@ -29,7 +32,7 @@
 
 @code {
     [Parameter] public bool IsCanonical { get; set; }
-    [Parameter] public string? OrganizationId { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "organizationId")] public string? OrganizationId { get; set; }
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<TenantOrganization> organizations = new();
     private TenantSettingsModel? settings;
@@ -40,9 +43,16 @@
         var profile = CurrentUserAccessProfile.FromClaims((await AuthenticationState.GetAuthenticationStateAsync()).User);
         organizations = (await Api.GetFromJsonAsync<List<TenantOrganization>>("api/v1/tenant-admin/organizations?permission=Tenant.Settings.Manage") ?? new())
             .Where(organization => profile.HasPermission(HelpdeskPermissions.TenantSettingsManage, organization.Id)).ToList();
-        if (organizations.Count > 0 && !IsCanonical) NavigationManager.NavigateTo("/admin/organizations", replace: true);
-        else if (organizations.Count > 0) await SelectAsync(organizations.FirstOrDefault(organization =>
-            string.Equals(organization.Id, OrganizationId, StringComparison.OrdinalIgnoreCase))?.Id ?? organizations[0].Id);
+        var selected = !string.IsNullOrWhiteSpace(OrganizationId)
+            ? organizations.FirstOrDefault(organization => string.Equals(organization.Id, OrganizationId, StringComparison.OrdinalIgnoreCase))?.Id
+            : organizations.FirstOrDefault()?.Id;
+        if (!string.IsNullOrWhiteSpace(OrganizationId) && string.IsNullOrWhiteSpace(selected))
+        {
+            error = "The requested organization is unavailable or you do not have permission to edit its settings.";
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(selected) && !IsCanonical) NavigationManager.NavigateTo($"/admin/organizations?section=settings&organizationId={Uri.EscapeDataString(selected)}", replace: true);
+        else if (!string.IsNullOrWhiteSpace(selected)) await SelectAsync(selected);
     }
     private async Task SelectAsync(string? value)
     {

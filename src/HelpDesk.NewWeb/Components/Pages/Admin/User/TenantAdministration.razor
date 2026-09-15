@@ -22,12 +22,15 @@
         }
         else
         {
-            <MudSelect T="string" Label="Tenant" Value="selectedOrganizationId" ValueChanged="SelectOrganization" Class="mb-4">
-                @foreach (var organization in organizations)
-                {
-                    <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
-                }
-            </MudSelect>
+            @if (string.IsNullOrWhiteSpace(OrganizationId))
+            {
+                <MudSelect T="string" Label="Tenant" Value="selectedOrganizationId" ValueChanged="SelectOrganization" Class="mb-4">
+                    @foreach (var organization in organizations)
+                    {
+                        <MudSelectItem T="string" Value="@organization.Id">@organization.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            }
 
             <MudText Typo="Typo.h6" HtmlTag="h2">Invite a local account</MudText>
             <MudText Typo="Typo.body2" Class="mb-2">The account is created only in the selected tenant with self-service access. Share its one-time activation token through an approved secure channel.</MudText>
@@ -99,7 +102,7 @@
 
 @code {
     [Parameter] public bool IsCanonical { get; set; }
-    [Parameter] public string? OrganizationId { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "organizationId")] public string? OrganizationId { get; set; }
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<TenantOrganization> organizations = new();
     private List<TenantMember> members = new();
@@ -124,12 +127,17 @@
         }
 
         organizations = await response.Content.ReadFromJsonAsync<List<TenantOrganization>>() ?? new();
-        selectedOrganizationId = organizations.FirstOrDefault(organization =>
-            string.Equals(organization.Id, OrganizationId, StringComparison.OrdinalIgnoreCase))?.Id
-            ?? organizations.FirstOrDefault()?.Id;
+        selectedOrganizationId = !string.IsNullOrWhiteSpace(OrganizationId)
+            ? organizations.FirstOrDefault(organization => string.Equals(organization.Id, OrganizationId, StringComparison.OrdinalIgnoreCase))?.Id
+            : organizations.FirstOrDefault()?.Id;
+        if (!string.IsNullOrWhiteSpace(OrganizationId) && string.IsNullOrWhiteSpace(selectedOrganizationId))
+        {
+            error = "The requested organization is unavailable or you do not have permission to manage its members.";
+            return;
+        }
         if (!string.IsNullOrWhiteSpace(selectedOrganizationId) && !IsCanonical)
         {
-            NavigationManager.NavigateTo("/admin/organizations", replace: true);
+            NavigationManager.NavigateTo($"/admin/organizations?section=members&organizationId={Uri.EscapeDataString(selectedOrganizationId)}", replace: true);
         }
         else if (!string.IsNullOrWhiteSpace(selectedOrganizationId))
         {

@@ -54,7 +54,7 @@
 </MudPaper>
 </Authorized>
 <NotAuthorized Context="delegatedAdministrator">
-    <MudTabs ActivePanelIndex="@(string.Equals(Section, "settings", StringComparison.OrdinalIgnoreCase) ? 0 : 1)">
+    <MudTabs ActivePanelIndex="@DelegatedTabIndex">
         <MudTabPanel Text="General &amp; settings"><TenantSettings IsCanonical="true" OrganizationId="@OrganizationId" /></MudTabPanel>
         <MudTabPanel Text="Members &amp; access"><TenantAdministration IsCanonical="true" OrganizationId="@OrganizationId" /></MudTabPanel>
     </MudTabs>
@@ -72,6 +72,10 @@
     private List<OrchestrationCatalogTenantDto> orchestrationTenants = new();
     private string searchText = string.Empty;
     private bool isInstanceAdministrator;
+    private bool canAssignTenantRoles;
+    private int DelegatedTabIndex => string.Equals(Section, "settings", StringComparison.OrdinalIgnoreCase)
+        ? 0
+        : string.Equals(Section, "members", StringComparison.OrdinalIgnoreCase) || canAssignTenantRoles ? 1 : 0;
 
     private IEnumerable<OrganizationDto> FilteredOrganizations => organizations
         .Where(org => string.IsNullOrWhiteSpace(searchText)
@@ -82,7 +86,9 @@
 
     protected override async Task OnInitializedAsync()
     {
-        isInstanceAdministrator = (await AuthenticationState.GetAuthenticationStateAsync()).User.IsInRole("HelpdeskAdmin");
+        var user = (await AuthenticationState.GetAuthenticationStateAsync()).User;
+        isInstanceAdministrator = user.IsInRole("HelpdeskAdmin");
+        canAssignTenantRoles = user.IsInRole("Tenant.Roles.Assign") || isInstanceAdministrator;
         if (!isInstanceAdministrator) return;
         searchText = QuerySearch ?? string.Empty;
         await LoadOrganizations();
