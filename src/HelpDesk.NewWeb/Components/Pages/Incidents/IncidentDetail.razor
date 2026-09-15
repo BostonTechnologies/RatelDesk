@@ -8,7 +8,6 @@
 @inject NavigationManager NavigationManager
 @inject IDialogService DialogService
 
-@using Helpdesk.Shared.DTOs.Article
 @using Helpdesk.Shared.DTOs.Category
 @using Helpdesk.Shared.DTOs.Incident
 @using Helpdesk.Shared.DTOs.Organization
@@ -16,8 +15,6 @@
 @using Helpdesk.Shared.DTOs.User
 @using Helpdesk.Shared.Enums
 @using Helpdesk.Shared.Models
-
-@implements IDisposable
 
 <PageTitle>Incident: @(incident?.Subject ?? "...")</PageTitle>
 
@@ -46,38 +43,6 @@ else
                 CategoryIds="@selectedCategoryIds"
                 AllCategories="@categories"
                 CategoryRemoved="OnCategoryRemoved" ReadOnly="@(!CanManage)">
-                <MetadataContent>
-                    @if (aiRuntimeStatus is not null)
-                    {
-                        <MudTooltip Placement="Placement.Bottom">
-                            <ChildContent>
-                                <MudChip T="string"
-                                         Size="Size.Small"
-                                         Color="@GetRuntimeColor(aiRuntimeStatus.Status)"
-                                         Variant="Variant.Outlined">
-                                    AI Runtime: @aiRuntimeStatus.Status
-                                </MudChip>
-                            </ChildContent>
-                            <TooltipContent>
-                                <MudStack Spacing="0">
-                                    <MudText Typo="Typo.caption">
-                                        Fallback: @(aiRuntimeStatus.FallbackEnabled ? $"enabled ({aiRuntimeStatus.FallbackProviderCount} alternate providers)" : "disabled")
-                                    </MudText>
-                                    @foreach (var provider in aiRuntimeStatus.Providers)
-                                    {
-                                        <MudText Typo="Typo.caption">
-                                            @provider.Channel: @provider.Status via @provider.ProviderName / @provider.ModelId
-                                        </MudText>
-                                    }
-                                    @foreach (var reason in aiRuntimeStatus.Reasons.Take(2))
-                                    {
-                                        <MudText Typo="Typo.caption">@reason</MudText>
-                                    }
-                                </MudStack>
-                            </TooltipContent>
-                        </MudTooltip>
-                    }
-                </MetadataContent>
             </HelpDesk.NewWeb.Components.Shared.TicketHeader>
 
             <TicketActivityTabs
@@ -87,8 +52,6 @@ else
                 OrganizationId="@incident.OrganizationId"
                 PublicMode="false" CanContribute="@CanContribute" CanManage="@CanManage"
                 OnWorklogAdded="HandleWorklogAdded"
-                ShowAiStatusSummary="false"
-                InitialAiCount="@incident.AiSuggestionCount"
                 Class="flex-grow-1" />
         </MudItem>
 
@@ -138,33 +101,6 @@ else
                             <MudItem xs="12">
                                 <MudTextField T="string" Label="Updated" Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" ReadOnly="true" Value="@incident.UpdatedAt?.ToString("g")" />
                             </MudItem>
-                            @if (incident.AiSuggestionCount > 0 || incident.AiAutomationRunCount > 0 || incident.LastAiActivityAt.HasValue)
-                            {
-                                <MudItem xs="12">
-                                    <MudDivider Class="my-2" />
-                                    <MudText Typo="Typo.subtitle2" Class="mb-1">AI Summary</MudText>
-                                    <MudStack Spacing="1">
-                                        @if (incident.AiSuggestionCount > 0)
-                                        {
-                                            <MudText Typo="Typo.caption" Class="d-block">
-                                                Suggestions available: @incident.AiSuggestionCount
-                                            </MudText>
-                                        }
-                                        @if (incident.AiAutomationRunCount > 0)
-                                        {
-                                            <MudText Typo="Typo.caption" Class="d-block">
-                                                AI-started automation runs: @incident.AiAutomationRunCount
-                                            </MudText>
-                                        }
-                                        @if (incident.LastAiActivityAt.HasValue)
-                                        {
-                                            <MudText Typo="Typo.caption" Class="d-block">
-                                                Last AI activity: @incident.LastAiActivityAt.Value.ToLocalTime().ToString("g")
-                                            </MudText>
-                                        }
-                                    </MudStack>
-                                </MudItem>
-                            }
                             <MudItem xs="12">
                                 <MudSelect T="string" Label="Assignee" Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" Value="@GetAssigneeSelectValue(incident.AssignedToId)" ValueChanged="OnAssigneeChanged" Disabled="@(!CanManage)">
                                     <MudSelectItem Value="@UnassignedAssigneeValue">Unassigned</MudSelectItem>
@@ -244,16 +180,9 @@ else
     private IncidentDto? originalIncident;
     private List<TicketCategoryDto> categories = new();
     private HashSet<Guid> selectedCategoryIds = new();
-    private List<KnowledgeSuggestion> suggestions = new();
     private bool loading = true;
     private bool isUpdating;
     private bool hasChanges;
-    private string? articleId;
-    private bool kbWorking;
-    private bool suggestionsDisabled;
-    private OrganizationAiReadinessDto? aiReadiness;
-    private OrganizationAiRuntimeStatusDto? aiRuntimeStatus;
-    private CancellationTokenSource? pollCts;
     private int activityTabsKey;
     private const string UnassignedAssigneeValue = "__unassigned__";
     private List<UserDto> teamMembers = new();
@@ -294,7 +223,6 @@ else
             {
                 incident = CloneIncident(originalIncident);
                 selectedCategoryIds = incident.CategoryIds.ToHashSet();
-                _ = LoadAiMetadataAsync(incident.OrganizationId);
             }
 
             if (CanManage && incident?.OrganizationId is not null)
@@ -333,9 +261,6 @@ else
             CcRecipients = source.CcRecipients.ToList(),
             AssignedToId = source.AssignedToId,
             CategoryIds = source.CategoryIds.ToList(),
-            AiSuggestionCount = source.AiSuggestionCount,
-            AiAutomationRunCount = source.AiAutomationRunCount,
-            LastAiActivityAt = source.LastAiActivityAt,
             Sla = source.Sla is null ? null : new TicketSlaDto
             {
                 StartedAt = source.Sla.StartedAt,
@@ -353,105 +278,6 @@ else
                 ResolutionPercentUsed = source.Sla.ResolutionPercentUsed
             }
         };
-    }
-
-    private async Task LoadAiReadinessAsync(string? organizationId)
-    {
-        if (string.IsNullOrWhiteSpace(organizationId))
-        {
-            aiReadiness = null;
-            return;
-        }
-
-        try
-        {
-            aiReadiness = await HelpdeskApi.GetFromJsonAsync<OrganizationAiReadinessDto>($"api/v1/organizations/{organizationId}/ai-kb-settings/readiness");
-        }
-        catch
-        {
-            aiReadiness = null;
-        }
-    }
-
-    private async Task LoadAiRuntimeStatusAsync(string? organizationId)
-    {
-        if (string.IsNullOrWhiteSpace(organizationId))
-        {
-            aiRuntimeStatus = null;
-            return;
-        }
-
-        try
-        {
-            aiRuntimeStatus = await HelpdeskApi.GetFromJsonAsync<OrganizationAiRuntimeStatusDto>($"api/v1/organizations/{organizationId}/ai-kb-settings/runtime-status?timeoutMs=1500");
-        }
-        catch
-        {
-            aiRuntimeStatus = null;
-        }
-    }
-
-    private async Task LoadAiMetadataAsync(string? organizationId)
-    {
-        await LoadAiReadinessAsync(organizationId);
-        await LoadAiRuntimeStatusAsync(organizationId);
-        await InvokeAsync(StateHasChanged);
-    }
-
-    private static Color GetRuntimeColor(string? status) =>
-        string.Equals(status, "Ready", StringComparison.OrdinalIgnoreCase)
-            ? Color.Success
-            : string.Equals(status, "Degraded", StringComparison.OrdinalIgnoreCase)
-                ? Color.Warning
-                : Color.Error;
-
-    private async Task EnqueueSuggestionsAndPoll()
-    {
-        try
-        {
-            kbWorking = true;
-
-            var postResp = await HelpdeskApi.PostAsJsonAsync($"api/v1/tickets/{Id}/suggest-knowledge", new { });
-            if (postResp.StatusCode == System.Net.HttpStatusCode.NoContent)
-            {
-                suggestionsDisabled = true;
-                return;
-            }
-
-            pollCts?.Cancel();
-            pollCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-            while (!pollCts.IsCancellationRequested)
-            {
-                var resp = await HelpdeskApi.GetAsync($"api/v1/tickets/{Id}/suggest-knowledge", pollCts.Token);
-
-                if (resp.StatusCode == System.Net.HttpStatusCode.NoContent)
-                {
-                    await Task.Delay(600, pollCts.Token);
-                    continue;
-                }
-
-                if (resp.IsSuccessStatusCode)
-                {
-                    suggestions = await resp.Content.ReadFromJsonAsync<List<KnowledgeSuggestion>>() ?? new();
-                    break;
-                }
-
-                break;
-            }
-        }
-        catch { }
-        finally
-        {
-            kbWorking = false;
-            StateHasChanged();
-        }
-    }
-
-    public void Dispose()
-    {
-        pollCts?.Cancel();
-        pollCts?.Dispose();
     }
 
     private void OnStateChanged(TicketState newState)
@@ -635,60 +461,6 @@ else
         catch (Exception ex)
         {
             Snackbar.Add($"Error refreshing incident: {ex.Message}", Severity.Error);
-        }
-    }
-
-    private Task GenerateKnowledge() => GenerateOrRegenerate(false);
-    private Task RegenerateKnowledge() => GenerateOrRegenerate(true);
-
-    private async Task GenerateOrRegenerate(bool regenerate)
-    {
-        try
-        {
-            kbWorking = true;
-            var url = $"api/v1/tickets/{Id}/generate-knowledge" + (regenerate ? "?regenerate=true" : string.Empty);
-            var response = await HelpdeskApi.PostAsJsonAsync(url, new { });
-            if (response.IsSuccessStatusCode)
-            {
-                var article = await response.Content.ReadFromJsonAsync<ArticleDto>();
-                if (article is not null)
-                {
-                    articleId = article.Id;
-                    Snackbar.Add(regenerate ? "Article regenerated." : "Draft article generated.", Severity.Success);
-                    NavigationManager.NavigateTo($"/kb/{article.Id}");
-                }
-            }
-            else
-            {
-                Snackbar.Add("Knowledge generation failed.", Severity.Error);
-            }
-        }
-        finally
-        {
-            kbWorking = false;
-        }
-    }
-
-    private async Task ApproveKnowledge()
-    {
-        if (articleId is null) return;
-        try
-        {
-            kbWorking = true;
-            var dto = new UpdateKbStateDto { State = KnowledgeBaseArticleState.Published };
-            var response = await HelpdeskApi.PutAsJsonAsync($"api/v1/kb/{articleId}/state", dto);
-            if (response.IsSuccessStatusCode)
-            {
-                Snackbar.Add("Article approved.", Severity.Success);
-            }
-            else
-            {
-                Snackbar.Add("Approval failed.", Severity.Error);
-            }
-        }
-        finally
-        {
-            kbWorking = false;
         }
     }
 

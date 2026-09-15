@@ -1,7 +1,6 @@
 using Helpdesk.Application.Events;
 using Helpdesk.Application.Messaging;
 using AppTicketServices = Helpdesk.Application.Services.Tickets;
-using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Services.Notifications;
 using Helpdesk.Application.RequestTasks;
 using Helpdesk.Application.Sla;
@@ -94,13 +93,6 @@ public static class RequestEndpoints
                     .Select(x => x.TrackingId)
                     .FirstOrDefaultAsync();
 
-            var sourceKnowledgeArticleTitle = entity.SourceKnowledgeArticleId.HasValue
-                ? await db.KnowledgeBaseArticles
-                    .AsNoTracking()
-                    .Where(x => x.Id == entity.SourceKnowledgeArticleId.Value)
-                    .Select(x => x.Title)
-                    .FirstOrDefaultAsync()
-                : null;
             var dto = new RequestDto
             {
                 OrganizationId = entity.OrganizationId,
@@ -123,8 +115,6 @@ public static class RequestEndpoints
                 PayloadJson = entity.PayloadJson,
                 SourceTicketId = entity.SourceTicketId,
                 SourceTicketTrackingId = sourceTicketTrackingId,
-                SourceKnowledgeArticleId = entity.SourceKnowledgeArticleId?.ToString(),
-                SourceKnowledgeArticleTitle = sourceKnowledgeArticleTitle,
                 SourceAutomationBindingId = entity.SourceAutomationBindingId,
                 WorkflowStatus = entity.WorkflowStatus,
                 WorkflowBlockReason = entity.WorkflowBlockReason,
@@ -201,47 +191,6 @@ public static class RequestEndpoints
                     AutomationBlockReason = bindingState?.BlockReason
                 };
             }).ToList());
-        });
-
-        group.MapGet("/{id}/ai-audit", async (
-            [FromRoute] string id,
-            HttpContext context,
-            [FromServices] ICurrentUserAccessService accessService,
-            [FromServices] HelpdeskDbContext db,
-            [FromServices] IRepository<Request> repo,
-            CancellationToken token) =>
-        {
-            var authorization = await AuthorizeRequestAsync(id, context.User, accessService, db, requireManager: true, token);
-            if (authorization.Failure is not null)
-            {
-                return authorization.Failure;
-            }
-
-            var request = await repo.GetAsync(id);
-            if (request is null)
-            {
-                return Results.Problem("Request not found", statusCode: 404);
-            }
-
-            var items = await db.AiOperationAuditRecords
-                .AsNoTracking()
-                .Where(x => x.SubjectId == id)
-                .OrderByUtc(db, x => x.CreatedAt, descending: true)
-                .Select(x => new TicketAiAuditEntryDto
-                {
-                    Id = x.Id,
-                    OperationName = x.OperationName,
-                    OrganizationId = x.OrganizationId,
-                    ProviderName = x.ProviderName,
-                    ModelId = x.ModelId,
-                    CorrelationId = x.CorrelationId,
-                    SubjectId = x.SubjectId,
-                    Notes = x.Notes,
-                    CreatedAt = x.CreatedAt
-                })
-                .ToListAsync(token);
-
-            return Results.Ok(items);
         });
 
         group.MapPost("/", async (
@@ -388,7 +337,6 @@ public static class RequestEndpoints
                 RequestFormId = created.RequestFormId,
                 PayloadJson = created.PayloadJson,
                 SourceTicketId = created.SourceTicketId,
-                SourceKnowledgeArticleId = created.SourceKnowledgeArticleId?.ToString(),
                 SourceAutomationBindingId = created.SourceAutomationBindingId,
                 WorkflowStatus = created.WorkflowStatus,
                 WorkflowBlockReason = created.WorkflowBlockReason,
@@ -404,8 +352,6 @@ public static class RequestEndpoints
             [FromServices] ICurrentUserAccessService accessService,
             [FromServices] HelpdeskDbContext db,
             [FromServices] IRepository<Request> repo,
-            [FromServices] IRepository<KnowledgeBaseArticle> kbRepo,
-            [FromServices] IKnowledgeBuilderService kbService,
             [FromServices] ITicketSlaCompletionService ticketSlaCompletionService,
             [FromServices] ITicketSlaService ticketSlaService,
             [FromServices] ITicketSlaRepository ticketSlaRepository,
@@ -482,12 +428,6 @@ public static class RequestEndpoints
 
             if (previousState != TicketState.Resolved && updated!.State == TicketState.Resolved)
             {
-                var hasDraft = await kbRepo.Query().AnyAsync(a => a.LinkedTicketId == id, token);
-                if (!hasDraft)
-                {
-                    await kbService.GenerateDraftFromResolvedTicketAsync(id, token);
-                }
-
                 if (string.IsNullOrWhiteSpace(updated.RequestFormId))
                 {
                     await SendResolvedNotificationAsync(updated, ticketNotificationService, token);
@@ -517,7 +457,6 @@ public static class RequestEndpoints
                 RequestFormId = updated.RequestFormId,
                 PayloadJson = updated.PayloadJson,
                 SourceTicketId = updated.SourceTicketId,
-                SourceKnowledgeArticleId = updated.SourceKnowledgeArticleId?.ToString(),
                 SourceAutomationBindingId = updated.SourceAutomationBindingId,
                 WorkflowStatus = updated.WorkflowStatus,
                 WorkflowBlockReason = updated.WorkflowBlockReason,
@@ -887,9 +826,7 @@ public static class RequestEndpoints
         {
             query = query.Where(x =>
                 x.Request.SourceTicketId != null ||
-                x.Request.SourceKnowledgeArticleId != null ||
-                x.Request.SourceAutomationBindingId != null ||
-                db.AiOperationAuditRecords.Any(a => a.SubjectId == x.Request.Id));
+                x.Request.SourceAutomationBindingId != null);
         }
 
         if (!string.IsNullOrWhiteSpace(q))
@@ -937,7 +874,6 @@ public static class RequestEndpoints
                 x.Request.RequestFormId,
                 x.Request.PayloadJson,
                 x.Request.SourceTicketId,
-                x.Request.SourceKnowledgeArticleId,
                 x.Request.SourceAutomationBindingId,
                 x.Request.WorkflowStatus,
                 x.Request.WorkflowBlockReason,
@@ -976,7 +912,6 @@ public static class RequestEndpoints
                 RequestFormId = i.RequestFormId,
                 PayloadJson = i.PayloadJson,
                 SourceTicketId = i.SourceTicketId,
-                SourceKnowledgeArticleId = i.SourceKnowledgeArticleId.HasValue ? i.SourceKnowledgeArticleId.Value.ToString() : null,
                 SourceAutomationBindingId = i.SourceAutomationBindingId,
                 WorkflowStatus = i.WorkflowStatus,
                 WorkflowBlockReason = i.WorkflowBlockReason,
@@ -1035,7 +970,6 @@ public static class RequestEndpoints
             SourceTicketTrackingId = !string.IsNullOrWhiteSpace(i.SourceTicketId) && sourceTicketLookup.TryGetValue(i.SourceTicketId, out var trackingId)
                 ? trackingId
                 : null,
-            SourceKnowledgeArticleId = i.SourceKnowledgeArticleId.HasValue ? i.SourceKnowledgeArticleId.Value.ToString() : null,
             SourceAutomationBindingId = i.SourceAutomationBindingId,
             WorkflowStatus = i.WorkflowStatus,
             WorkflowBlockReason = i.WorkflowBlockReason,

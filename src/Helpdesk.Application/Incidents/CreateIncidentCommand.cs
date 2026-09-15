@@ -42,22 +42,13 @@ public record CreateIncidentCommand(
 /// <summary>
 /// Handles the creation of a new incident based on the provided command.
 /// </summary>
-/// <remarks>This handler processes the <see cref="CreateIncidentCommand"/> to create a new incident,  including
-/// setting its properties, generating a tracking ID, and optionally performing AI-based  understanding and knowledge
-/// suggestion generation if the associated organization has AI intake enabled.</remarks>
+/// <remarks>This handler creates a deterministic service-desk incident, assigns its tracking ID,
+/// initializes its SLA state, and publishes the normal ticket events.</remarks>
 /// <param name="incidents">The repository used to persist incidents.</param>
 /// <param name="refGenerator">The service used to generate unique tracking references for incidents.</param>
-/// <param name="orgRepo">The repository used to retrieve organization details.</param>
-/// <param name="understanding">The AI service used to analyze and understand the incident.</param>
-/// <param name="suggestions">The service used to generate knowledge suggestions for the incident.</param>
-/// <param name="suggestionRepo">The repository used to persist knowledge suggestions.</param>
 public class CreateIncidentCommandHandler(
     IRepository<Incident> incidents,
     AppServices.Tickets.ITicketRefGeneratorService refGenerator,
-    IRepository<Organization> orgRepo,
-    AppServices.AI.ITicketUnderstandingService understanding,
-    AppServices.KB.IKnowledgeSuggestionService suggestions,
-    IRepository<TicketKnowledgeSuggestion> suggestionRepo,
     ISupportNotificationService supportNotificationService,
     ITicketSlaInitializer? ticketSlaInitializer = null,
     IDomainEventPublisher? domainEvents = null,
@@ -129,23 +120,6 @@ public class CreateIncidentCommandHandler(
             catch
             {
                 // Ticket creation must not fail if support notification routing fails.
-            }
-        }
-
-        var org = incident.OrganizationId is not null
-            ? await orgRepo.GetAsync(incident.OrganizationId)
-            : null;
-
-        if (org?.EnableAiIntake == true)
-        {
-            incident.AiUnderstanding = await understanding.UnderstandAsync(incident, cancellationToken);
-            await incidents.UpdateAsync(incident);
-
-            var suggs = await suggestions.SuggestAsync(incident, cancellationToken);
-            foreach (var s in suggs)
-            {
-                s.TicketId = incident.Id;
-                await suggestionRepo.CreateAsync(s);
             }
         }
 

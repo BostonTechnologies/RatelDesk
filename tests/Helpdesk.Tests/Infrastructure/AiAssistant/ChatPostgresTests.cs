@@ -13,14 +13,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Npgsql;
-using Pgvector.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
 
 namespace Helpdesk.Tests.Infrastructure.AiAssistant;
 
 public sealed class ChatPostgresFixture : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer container = new PostgreSqlBuilder().WithImage("pgvector/pgvector:pg16").Build();
+    private readonly PostgreSqlContainer container = new PostgreSqlBuilder().WithImage("postgres:16").Build();
     public async Task InitializeAsync()
     {
         await container.StartAsync();
@@ -36,7 +35,7 @@ public sealed class ChatPostgresFixture : IAsyncLifetime
         tenant.TenantId.Returns(organization);
         return Context(tenant);
     }
-    public HelpdeskDbContext Context(ITenantContext tenant) => new(new DbContextOptionsBuilder<HelpdeskDbContext>().UseNpgsql(container.GetConnectionString(), x => x.UseVector()).Options, tenant, new HttpContextAccessor());
+    public HelpdeskDbContext Context(ITenantContext tenant) => new(new DbContextOptionsBuilder<HelpdeskDbContext>().UseNpgsql(container.GetConnectionString()).Options, tenant, new HttpContextAccessor());
     public AiAssistantChatStore Store(HelpdeskDbContext db, string organization = "org", TimeProvider? timeProvider = null)
     {
         var correlation = Substitute.For<ICorrelationContext>(); correlation.GetCorrelationId().Returns("test-chat");

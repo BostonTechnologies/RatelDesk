@@ -55,14 +55,6 @@
              <AuthorizeView Roles="HelpdeskAdmin,DataManagement.Admin" Context="dataManagementAuth">
                 <MudNavLink Href="/admin/resources/data-management" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.DataObject">Data Management</MudNavLink>
              </AuthorizeView>
-             <AuthorizeView Roles="HelpdeskAdmin" Context="resourceAdmin">
-                <MudNavGroup Title="Knowledge" Icon="@Icons.Material.Filled.Article" Expanded="false">
-                    <MudNavLink Href="kb" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Article">Knowledge</MudNavLink>
-                    <MudNavLink Href="/admin/knowledgebase/articles" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.EditNote">Articles</MudNavLink>
-                    <MudNavLink Href="/admin/kb/categories" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Category">Categories</MudNavLink>
-                    <MudNavLink Href="/kb/health" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.MonitorHeart">Health</MudNavLink>
-                </MudNavGroup>
-             </AuthorizeView>
         </MudNavGroup>
         </AuthorizeView>
     </AuthorizeView>

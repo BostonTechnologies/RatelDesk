@@ -19,11 +19,6 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                 oldClrType: typeof(double),
                 oldType: "double precision");
 
-            migrationBuilder.Sql(@"
-                CREATE INDEX IF NOT EXISTS ix_embedding_org_hnsw
-                ON ""KnowledgeEmbeddings""
-                USING hnsw (""Vector"" vector_l2_ops);  -- or vector_cosine_ops / vector_ip_ops
-            ");
         }
 
         /// <inheritdoc />
@@ -37,8 +32,6 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                 oldClrType: typeof(double),
                 oldType: "double precision",
                 oldDefaultValue: 0.0);
-
-            migrationBuilder.Sql(@"DROP INDEX IF EXISTS ix_embedding_org_hnsw;");
         }
     }
 }

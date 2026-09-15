@@ -64,29 +64,6 @@
             <MudStack Spacing="0">
                 <IncidentSubjectWithPeek IncidentId="@incident.Id"
                                          Subject="@incident.Subject" />
-                @if (incident.AiSuggestionCount > 0 || incident.AiAutomationRunCount > 0 || incident.LastAiActivityAt.HasValue)
-                {
-                    <MudStack Row="true" Spacing="1" Class="mt-1">
-                        @if (incident.AiSuggestionCount > 0)
-                        {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
-                                @($"{incident.AiSuggestionCount} AI suggestion{(incident.AiSuggestionCount == 1 ? string.Empty : "s")}")
-                            </MudChip>
-                        }
-                        @if (incident.AiAutomationRunCount > 0)
-                        {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Outlined">
-                                @($"{incident.AiAutomationRunCount} AI automation run{(incident.AiAutomationRunCount == 1 ? string.Empty : "s")}")
-                            </MudChip>
-                        }
-                        @if (incident.LastAiActivityAt.HasValue)
-                        {
-                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                @($"AI active {incident.LastAiActivityAt.Value.ToLocalTime():g}")
-                            </MudChip>
-                        }
-                    </MudStack>
-                }
             </MudStack>
         </SubjectTemplate>
         <AssigneeTemplate Context="incident">

@@ -47,7 +47,7 @@ Use an exact SemVer tag in production, or preferably replace tags with the publi
 
 ## Bundled PostgreSQL
 
-For a fresh installation with PostgreSQL and the required `vector` and `pg_trgm` extensions, add the bundled sidecar overlay. Choose a unique password outside source control:
+For a fresh installation with PostgreSQL, add the bundled sidecar overlay. Choose a unique password outside source control:
 
 ```bash
 RATELDESK_POSTGRES_PASSWORD='replace-with-a-secret' \
@@ -58,7 +58,7 @@ At `/setup`, select PostgreSQL and enter host `postgres`, port `5432`, database 
 
 ## External PostgreSQL
 
-For an externally managed PostgreSQL database, start the normal source or release stack and enter its connection details at `/setup`; the API must be able to reach the database network. The target must be empty for a new setup and have the required `vector` and `pg_trgm` extensions installed by the database operator.
+For an externally managed PostgreSQL database, start the normal source or release stack and enter its connection details at `/setup`; the API must be able to reach the database network. The target must be empty for a new setup.
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build

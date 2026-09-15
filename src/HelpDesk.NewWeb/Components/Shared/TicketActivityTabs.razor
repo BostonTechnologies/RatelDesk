@@ -1,4 +1,3 @@
-@using Helpdesk.Shared.DTOs.Article
 @using Helpdesk.Shared.DTOs.Attachment
 @using Helpdesk.Shared.DTOs.Worklog
 @using Helpdesk.Shared.Enums
@@ -71,7 +70,6 @@
     {
     <MudTabPanel Text="AI Assistant"
                  Icon="@Icons.Material.Filled.AutoAwesome"
-                 BadgeData="@AiBadge"
                  BadgeColor="Color.Secondary">
         @if (IsPanelActive(4))
         {
@@ -107,33 +105,21 @@
     [Parameter] public bool CanManage { get; set; }
     [Parameter] public EventCallback OnWorklogAdded { get; set; }
     [Parameter] public string Class { get; set; } = string.Empty;
-    [Parameter] public bool ShowAiStatusSummary { get; set; } = true;
     [Parameter] public string MessagesTabText { get; set; } = "Messages";
     [Parameter] public RenderFragment? MessagesContent { get; set; }
-    [Parameter] public int InitialAiCount { get; set; }
 
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private int TimelineCount;
     private int AttachmentCount;
-    private int AiCount;
     private int ListenersCount;
     private int RelationsCount;
     private int activePanelIndex;
 
     private string TimelineBadge => TimelineCount.ToString();
     private string AttachmentBadge => AttachmentCount.ToString();
-    private string AiBadge => AiCount.ToString();
     private string ListenersBadge => ListenersCount.ToString();
     private string RelationsBadge => RelationsCount.ToString();
     private bool IsIncidentType => string.Equals(TicketType, "incidents", StringComparison.OrdinalIgnoreCase);
-
-    protected override void OnParametersSet()
-    {
-        if (AiCount == 0 && InitialAiCount > 0)
-        {
-            AiCount = InitialAiCount;
-        }
-    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -227,12 +213,6 @@
     private void OnAttachmentsLoaded(List<AttachmentDto> attachments)
     {
         AttachmentCount = attachments.Count;
-        StateHasChanged();
-    }
-
-    private void OnSuggestionsLoaded(List<KnowledgeSuggestion> suggestions)
-    {
-        AiCount = suggestions.Count;
         StateHasChanged();
     }
 

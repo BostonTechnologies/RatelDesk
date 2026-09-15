@@ -119,7 +119,6 @@ public static class GlobalSearchLookupEndpoints
                     Name = x.Name,
                     DnsName = x.DnsName,
                     ContactInfo = x.ContactInfo,
-                    EnableAiIntake = x.EnableAiIntake,
                     ItSupportOrganizationId = x.ItSupportOrganizationId,
                     OrchestrationTenantId = x.OrchestrationTenantId,
                     OrchestrationTenantName = x.OrchestrationTenantName,

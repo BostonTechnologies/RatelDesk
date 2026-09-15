@@ -32,23 +32,13 @@ public sealed class PostgreSqlSetupPreflightService
             await connection.OpenAsync(cancellationToken);
             await using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT
-                    EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector'),
-                    EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'),
-                    COUNT(*)
+                SELECT COUNT(*)
                 FROM information_schema.tables
                 WHERE table_schema = 'public';
                 """;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             await reader.ReadAsync(cancellationToken);
-            var hasVector = reader.GetBoolean(0);
-            var hasTrigram = reader.GetBoolean(1);
-            var publicTableCount = reader.GetInt64(2);
-
-            if (!hasVector || !hasTrigram)
-            {
-                return PostgreSqlPreflightResult.MissingExtensions;
-            }
+            var publicTableCount = reader.GetInt64(0);
 
             if (publicTableCount == 0)
             {
@@ -72,8 +62,6 @@ public sealed class PostgreSqlSetupPreflightService
             if (!hasMigrationHistory)
             {
                 return Classify(
-                    hasVector,
-                    hasTrigram,
                     publicTableCount,
                     hasMigrationHistory,
                     hasOrganizationsTable,
@@ -89,8 +77,6 @@ public sealed class PostgreSqlSetupPreflightService
                 """;
             var hasInitialRatelDeskMigration = (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
             return Classify(
-                hasVector,
-                hasTrigram,
                 publicTableCount,
                 hasMigrationHistory,
                 hasOrganizationsTable,
@@ -104,19 +90,12 @@ public sealed class PostgreSqlSetupPreflightService
     }
 
     public static PostgreSqlPreflightResult Classify(
-        bool hasVector,
-        bool hasTrigram,
         long publicTableCount,
         bool hasMigrationHistory,
         bool hasOrganizationsTable,
         bool hasUsersTable,
         bool hasInitialRatelDeskMigration)
     {
-        if (!hasVector || !hasTrigram)
-        {
-            return PostgreSqlPreflightResult.MissingExtensions;
-        }
-
         if (publicTableCount == 0)
         {
             return PostgreSqlPreflightResult.EmptyTarget;
@@ -141,7 +120,6 @@ public enum PostgreSqlTargetKind
 public sealed record PostgreSqlPreflightResult(bool Succeeded, string? Error, PostgreSqlTargetKind? Target)
 {
     public static PostgreSqlPreflightResult InvalidConnection { get; } = new(false, "A valid PostgreSQL connection string is required.", null);
-    public static PostgreSqlPreflightResult MissingExtensions { get; } = new(false, "The target PostgreSQL database must have the vector and pg_trgm extensions installed.", null);
     public static PostgreSqlPreflightResult EmptyTarget { get; } = new(true, null, PostgreSqlTargetKind.Empty);
     public static PostgreSqlPreflightResult EstablishedRatelDesk { get; } = new(false, "The selected PostgreSQL database is an established RatelDesk installation. Configure it at deployment instead of running first-time setup.", PostgreSqlTargetKind.EstablishedRatelDesk);
     public static PostgreSqlPreflightResult UnrelatedTarget { get; } = new(false, "The selected PostgreSQL database is non-empty and is not recognized as a RatelDesk database.", PostgreSqlTargetKind.UnrelatedOrUnrecognized);

@@ -150,15 +150,8 @@ public sealed class BootstrapStartupTests : IDisposable
     [Fact]
     public async Task Fresh_environment_postgresql_requires_setup_and_restarts_with_exact_committed_identity()
     {
-        await using var postgres = new PostgreSqlBuilder().WithImage("pgvector/pgvector:pg16").Build();
+        await using var postgres = new PostgreSqlBuilder().WithImage("postgres:16").Build();
         await postgres.StartAsync();
-        await using (var connection = new NpgsqlConnection(postgres.GetConnectionString()))
-        {
-            await connection.OpenAsync();
-            await using var command = connection.CreateCommand();
-            command.CommandText = "CREATE EXTENSION vector; CREATE EXTENSION pg_trgm;";
-            await command.ExecuteNonQueryAsync();
-        }
         var (service, store, options) = Create();
         var config = Config(("ConnectionStrings:HelpdeskDb", postgres.GetConnectionString()));
         var configured = await service.ResolveAsync(config);

@@ -38,9 +38,6 @@ public class IncidentDto
     public TicketState State { get; set; } = TicketState.New;
     public TicketPriority Priority { get; set; } = TicketPriority.Low;
     public List<Guid> CategoryIds { get; set; } = new();
-    public int AiSuggestionCount { get; set; }
-    public int AiAutomationRunCount { get; set; }
-    public DateTimeOffset? LastAiActivityAt { get; set; }
 
     // Assigned technician/team member
     public string? AssignedToId { get; set; }

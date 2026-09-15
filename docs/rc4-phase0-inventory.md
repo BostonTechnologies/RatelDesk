@@ -7,7 +7,7 @@ owned by `Directory.Build.props`.
 | Surface | Existing state | rc.4 direction |
 | --- | --- | --- |
 | API startup | Requires `HelpdeskDb` and PostgreSQL Hangfire before serving. | Split bootstrap from the selected application runtime and gate workers until ready. |
-| Database | Npgsql/pgvector is the runtime default; SQLite package is present but query and migration assumptions remain. | Explicit provider selection, provider migrations, SQLite query compatibility, and declared semantic-search capability. |
+| Database | Historical rc.4 inventory: provider migration assumptions required review. | Explicit provider selection, provider migrations, and SQLite query compatibility. |
 | Authentication | API validates external JWTs; Web uses OIDC/cookie forwarding; legacy BCrypt/JWT login is Development-only. | API-owned ASP.NET Core Identity local accounts, with OIDC retained as an opt-in scheme. |
 | Identity links | Customer links could fall back to email and provisioning accepted body-controlled identity fields. | Use only validated issuer/subject or provider ID and explicit links. |
 | Roles | Free-text user role plus claim bundles; generic role CRUD. | Protected built-ins, custom roles, permissions, and scoped assignments. |

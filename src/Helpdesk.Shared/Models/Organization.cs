@@ -7,7 +7,6 @@ public class Organization
     public string Id { get; set; } = Uuid.CreateVersion7().ToString();
     public string Name { get; set; } = string.Empty;
     public string? DnsName { get; set; }
-    public bool EnableAiIntake { get; set; }
     public string? ContactInfo { get; set; }
     public string? AssignedSlaId { get; set; }
     public string? ItSupportOrganizationId { get; set; }

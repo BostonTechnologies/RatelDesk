@@ -10,7 +10,6 @@ public class Request : Ticket
     [Column("Category")]
     public string? LegacyCategory { get; set; }
     public string? SourceTicketId { get; set; }
-    public Guid? SourceKnowledgeArticleId { get; set; }
     public string? SourceAutomationBindingId { get; set; }
     public string? RequestFormId { get; set; }
     public string? PayloadJson { get; set; }

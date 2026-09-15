@@ -10,7 +10,6 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
-using Pgvector.EntityFrameworkCore;
 using System.Text;
 using Testcontainers.PostgreSql;
 using Helpdesk.Shared.Models;
@@ -63,12 +62,10 @@ public sealed class BootstrapStateStoreTests
     }
 
     [Theory]
-    [InlineData(true, true, 0, false, false, false, false, PostgreSqlTargetKind.Empty, true)]
-    [InlineData(true, true, 4, true, true, true, true, PostgreSqlTargetKind.EstablishedRatelDesk, false)]
-    [InlineData(true, true, 1, false, false, false, false, PostgreSqlTargetKind.UnrelatedOrUnrecognized, false)]
+    [InlineData(0, false, false, false, false, PostgreSqlTargetKind.Empty, true)]
+    [InlineData(4, true, true, true, true, PostgreSqlTargetKind.EstablishedRatelDesk, false)]
+    [InlineData(1, false, false, false, false, PostgreSqlTargetKind.UnrelatedOrUnrecognized, false)]
     public void PostgreSql_preflight_classifies_empty_established_and_unrelated_targets(
-        bool hasVector,
-        bool hasTrigram,
         long publicTableCount,
         bool hasMigrationHistory,
         bool hasOrganizationsTable,
@@ -78,8 +75,6 @@ public sealed class BootstrapStateStoreTests
         bool expectedSuccess)
     {
         var result = PostgreSqlSetupPreflightService.Classify(
-            hasVector,
-            hasTrigram,
             publicTableCount,
             hasMigrationHistory,
             hasOrganizationsTable,
@@ -206,7 +201,7 @@ public sealed class BootstrapStateStoreTests
     public async Task Local_admin_recovery_reenables_an_instance_administrator_in_postgresql()
     {
         await using var postgres = new PostgreSqlBuilder()
-            .WithImage("pgvector/pgvector:pg16")
+            .WithImage("postgres:16")
             .Build();
         await postgres.StartAsync();
 
@@ -558,21 +553,13 @@ public sealed class BootstrapStateStoreTests
     public async Task Unattended_initialization_uses_the_same_postgresql_bootstrap_pipeline()
     {
         await using var postgres = new PostgreSqlBuilder()
-            .WithImage("pgvector/pgvector:pg16")
+            .WithImage("postgres:16")
             .Build();
         await postgres.StartAsync();
 
         var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-unattended-{Guid.NewGuid():N}");
         try
         {
-            await using (var connection = new Npgsql.NpgsqlConnection(postgres.GetConnectionString()))
-            {
-                await connection.OpenAsync();
-                await using var extensions = connection.CreateCommand();
-                extensions.CommandText = "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;";
-                await extensions.ExecuteNonQueryAsync();
-            }
-
             var options = new BootstrapOptions
             {
                 StateDirectory = directory,
@@ -613,7 +600,7 @@ public sealed class BootstrapStateStoreTests
             Assert.True(await identity.Users.AnyAsync(user => user.Email == "admin@example.test" && user.IsInstanceAdministrator));
 
             var applicationOptions = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
-                .UseNpgsql(postgres.GetConnectionString(), npgsql => npgsql.UseVector())
+                .UseNpgsql(postgres.GetConnectionString())
                 .Options;
             await using var application = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
                 applicationOptions,
@@ -637,21 +624,13 @@ public sealed class BootstrapStateStoreTests
     public async Task Concurrent_postgresql_initialization_creates_one_instance_and_one_administrator()
     {
         await using var postgres = new PostgreSqlBuilder()
-            .WithImage("pgvector/pgvector:pg16")
+            .WithImage("postgres:16")
             .Build();
         await postgres.StartAsync();
 
         var directory = Path.Combine(Path.GetTempPath(), $"rateldesk-concurrent-bootstrap-{Guid.NewGuid():N}");
         try
         {
-            await using (var connection = new Npgsql.NpgsqlConnection(postgres.GetConnectionString()))
-            {
-                await connection.OpenAsync();
-                await using var extensions = connection.CreateCommand();
-                extensions.CommandText = "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;";
-                await extensions.ExecuteNonQueryAsync();
-            }
-
             var options = new BootstrapOptions
             {
                 StateDirectory = directory,
@@ -713,7 +692,7 @@ public sealed class BootstrapStateStoreTests
             Assert.Single(await identity.Users.Where(user => user.IsInstanceAdministrator).ToListAsync());
 
             var applicationOptions = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
-                .UseNpgsql(postgres.GetConnectionString(), npgsql => npgsql.UseVector())
+                .UseNpgsql(postgres.GetConnectionString())
                 .Options;
             await using var application = new Helpdesk.Infrastructure.Persistence.HelpdeskDbContext(
                 applicationOptions,
@@ -780,12 +759,12 @@ public sealed class BootstrapStateStoreTests
     public async Task PostgreSql_migrations_adopt_established_legacy_data_but_leave_a_fresh_database_uninitialized()
     {
         await using var postgres = new PostgreSqlBuilder()
-            .WithImage("pgvector/pgvector:pg16")
+            .WithImage("postgres:16")
             .Build();
         await postgres.StartAsync();
 
         var options = new DbContextOptionsBuilder<Helpdesk.Infrastructure.Persistence.HelpdeskDbContext>()
-            .UseNpgsql(postgres.GetConnectionString(), npgsql => npgsql.UseVector())
+            .UseNpgsql(postgres.GetConnectionString())
             .Options;
         var adoption = new LegacyInstallationAdoptionService();
 

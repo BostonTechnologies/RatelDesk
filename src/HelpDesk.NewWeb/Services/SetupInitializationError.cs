@@ -43,7 +43,7 @@ public static class SetupInitializationError
             {
                 "setup_not_ready" => "The saved setup state changed. Check setup status, then unlock the wizard again if initialization is still incomplete.",
                 "setup_database_in_use" => "The selected database already contains installation data. Check the API setup status and confirm that this is the intended database.",
-                "setup_storage_preflight_failed" => "PostgreSQL did not pass setup checks. Verify connectivity, database permissions, and the vector and pg_trgm extensions.",
+                "setup_storage_preflight_failed" => "PostgreSQL did not pass setup checks. Verify connectivity and database permissions.",
                 _ => fallback
             }) + reference;
         }

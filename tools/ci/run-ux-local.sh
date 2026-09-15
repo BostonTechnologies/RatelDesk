@@ -162,8 +162,6 @@ compose_started=true
 RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" up --detach postgres
 wait_for_database
 
-RATELDESK_POSTGRES_PORT="$database_port" docker compose -p "$compose_project" -f "$compose_file" exec -T postgres \
-  psql -U rateldesk -d rateldesk -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;'
 Bootstrap__StateDirectory="$setup_state_dir/e2e-state" \
 DataProtection__KeyRingPath="$setup_state_dir/e2e-keys" \
 Bootstrap__Unattended__Provider=PostgreSql \

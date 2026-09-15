@@ -71,16 +71,6 @@ namespace Helpdesk.Infrastructure.Persistence.Migrations
                 table: "KnowledgeBaseArticles",
                 column: "OrganizationId");
 
-            // Ensure pgvector is available (safe if already installed)
-            migrationBuilder.Sql(@"CREATE EXTENSION IF NOT EXISTS vector;");
-
-            // ✅ Create HNSW index with the correct operator class.
-            // Use vector_l2_ops unless you explicitly use cosine or inner-product.
-            migrationBuilder.Sql(@"
-CREATE INDEX IF NOT EXISTS ix_embedding_org_hnsw
-ON ""KnowledgeEmbeddings""
-USING hnsw (""Vector"" vector_l2_ops);
-");
 
             // btree helper for filters
             migrationBuilder.Sql(@"
@@ -91,7 +81,6 @@ ON ""KnowledgeEmbeddings"" (""OrganizationId"", ""SourceType"");
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql(@"DROP INDEX IF EXISTS ix_embedding_org_hnsw;");
             migrationBuilder.Sql(@"DROP INDEX IF EXISTS ix_embedding_org_source;");
 
             migrationBuilder.DropIndex(
@@ -110,4 +99,3 @@ ON ""KnowledgeEmbeddings"" (""OrganizationId"", ""SourceType"");
         }
     }
 }
-

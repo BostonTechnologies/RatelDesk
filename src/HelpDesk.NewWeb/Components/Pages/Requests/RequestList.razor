@@ -63,11 +63,11 @@
         <SubjectTemplate Context="request">
             <MudStack Spacing="0">
                 <MudText Typo="Typo.body2">@request.Title</MudText>
-                @if (!string.IsNullOrWhiteSpace(request.SourceTicketId) || !string.IsNullOrWhiteSpace(request.SourceKnowledgeArticleId))
+                @if (!string.IsNullOrWhiteSpace(request.SourceTicketId))
                 {
                     <MudStack Row="true" Spacing="1" Class="mt-1">
                         <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
-                            AI Origin
+                            Ticket origin
                         </MudChip>
                         @if (!string.IsNullOrWhiteSpace(request.SourceTicketTrackingId))
                         {

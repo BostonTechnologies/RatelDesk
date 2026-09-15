@@ -41,9 +41,6 @@ public class GraphEmailProcessorTests
         IRepository<TicketTimelineEvent>? timelineRepo = null,
         ITenantProvisioningService? tenantProvisioningService = null,
         ITicketNotificationService? ticketNotificationService = null,
-        IRepository<OrganizationAiKbSettings>? aiKbRepo = null,
-        IEmbeddingService? embeddingService = null,
-        IRepository<KnowledgeEmbedding>? embeddingRepo = null,
         IInlineImageStorageService? inlineImageStorage = null)
     {
         if (timelineRepo is null)
@@ -67,15 +64,12 @@ public class GraphEmailProcessorTests
             tenantProvisioningService ?? Substitute.For<ITenantProvisioningService>(),
             ticketNotificationService ?? Substitute.For<ITicketNotificationService>(),
             Substitute.For<IRepository<BlockedEntity>>(),
-            aiKbRepo ?? Substitute.For<IRepository<OrganizationAiKbSettings>>(),
             emailService,
             templateRepo,
             incidentRepo,
             ticketRepo,
             timelineRepo,
             attachmentService,
-            embeddingService ?? Substitute.For<IEmbeddingService>(),
-            embeddingRepo ?? Substitute.For<IRepository<KnowledgeEmbedding>>(),
             new InboundInlineImageResolver(inlineImageStorage ?? Substitute.For<IInlineImageStorageService>(), NullLogger<InboundInlineImageResolver>.Instance),
             Substitute.For<IEmailTemplateRenderer>(),
             Substitute.For<IEmailLayoutResolver>(),
@@ -394,63 +388,6 @@ public class GraphEmailProcessorTests
     }
 
     [Fact]
-    public async Task ProcessIncidentAsync_CreatesEmbeddings_WhenAiEnabled()
-    {
-        var mediator = Substitute.For<IRequestSender>();
-        var incidentRepo = Substitute.For<IRepository<Incident>>();
-        incidentRepo.GetAllAsync().Returns(Task.FromResult<IEnumerable<Incident>>(Array.Empty<Incident>()));
-        var created = new Incident { Id = "1", TrackingId = "INC-NEW-1" };
-        mediator.Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>()).Returns(created);
-        var tempRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var env = Substitute.For<IHostEnvironment>();
-        env.ContentRootPath.Returns(tempRoot);
-        var options = new DbContextOptionsBuilder<HelpdeskDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-        var tenant = Substitute.For<ITenantContext>();
-        var db = new HelpdeskDbContext(options, tenant, new HttpContextAccessor());
-        var attachmentService = new TicketAttachmentService(db, new Helpdesk.Infrastructure.Storage.TicketAttachmentFileStore(env, Microsoft.Extensions.Options.Options.Create(new Helpdesk.Infrastructure.Storage.StorageOptions { RootPath = Path.Combine(tempRoot, "storage") })));
-        var emailService = Substitute.For<IEmailService>();
-        emailService.SendEmailAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
-        var templateRepo = Substitute.For<IRepository<EmailTemplate>>();
-        templateRepo.GetAllAsync().Returns(Task.FromResult<IEnumerable<EmailTemplate>>(new[]
-        {
-            new EmailTemplate { Name = "NewTicketConfirmation", Subject = "s", HtmlContent = "b" }
-        }));
-        var embeddingService = Substitute.For<IEmbeddingService>();
-        embeddingService.CreateEmbeddingsAsync("org1", Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<float[]>>(new[] { new float[] { 0.1f } }));
-        var embeddingRepo = Substitute.For<IRepository<KnowledgeEmbedding>>();
-        var aiRepo = Substitute.For<IRepository<OrganizationAiKbSettings>>();
-        aiRepo.GetAllAsync().Returns(Task.FromResult<IEnumerable<OrganizationAiKbSettings>>(new[]
-        {
-            new OrganizationAiKbSettings { OrganizationId = "org1", EnableAiSearch = true }
-        }));
-
-        var processor = CreateProcessor(
-            mediator,
-            incidentRepo,
-            attachmentService,
-            emailService,
-            templateRepo,
-            timelineRepo: null,
-            tenantProvisioningService: null,
-            ticketNotificationService: null,
-            aiKbRepo: aiRepo,
-            embeddingService: embeddingService,
-            embeddingRepo: embeddingRepo);
-
-        var message = new Message { Subject = "Help", Body = new ItemBody { Content = "body" } };
-        var customer = new Customer { Id = "cust1", OrganizationId = "org1", Email = "a@b.com", Name = "Cust" };
-        var attachments = new List<GraphAttachment>();
-
-        await processor.ProcessIncidentAsync(message, attachments, customer, CancellationToken.None);
-
-        await embeddingService.Received(1).CreateEmbeddingsAsync("org1", Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>());
-        await embeddingRepo.Received(1).CreateAsync(Arg.Is<KnowledgeEmbedding>(e => e.SourceType == "Email" && e.SourceId == created.Id));
-    }
-
-    [Fact]
     public async Task ProcessIncidentAsync_ReturnsExistingIncident_WhenInboundMessageAlreadyRecorded()
     {
         var existing = new Incident { Id = "2", TrackingId = "INC-EXIST-123" };
@@ -493,57 +430,6 @@ public class GraphEmailProcessorTests
         Assert.Equal(existing, result);
         await mediator.DidNotReceive().Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>());
         await timelineRepo.DidNotReceive().CreateAsync(Arg.Any<TicketTimelineEvent>());
-    }
-
-    [Fact]
-    public async Task ProcessIncidentAsync_DoesNotThrow_WhenEmailEmbeddingGenerationFails()
-    {
-        var mediator = Substitute.For<IRequestSender>();
-        var incidentRepo = Substitute.For<IRepository<Incident>>();
-        incidentRepo.GetAllAsync().Returns(Task.FromResult<IEnumerable<Incident>>(Array.Empty<Incident>()));
-        var created = new Incident { Id = "1", TrackingId = "INC-NEW-1" };
-        mediator.Send(Arg.Any<CreateIncidentCommand>(), Arg.Any<CancellationToken>()).Returns(created);
-        var attachmentService = Substitute.For<ITicketAttachmentService>();
-        var emailService = Substitute.For<IEmailService>();
-        var templateRepo = Substitute.For<IRepository<EmailTemplate>>();
-        templateRepo.GetAllAsync().Returns(Task.FromResult<IEnumerable<EmailTemplate>>(new[]
-        {
-            new EmailTemplate { Name = "NewTicketConfirmation", Subject = "s", HtmlContent = "b" }
-        }));
-
-        var embeddingService = Substitute.For<IEmbeddingService>();
-        embeddingService.CreateEmbeddingsAsync("org1", Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
-            .Returns<Task<IReadOnlyList<float[]>>>(_ => throw new InvalidOperationException("embedding unavailable"));
-        var aiRepo = Substitute.For<IRepository<OrganizationAiKbSettings>>();
-        aiRepo.GetAllAsync().Returns(Task.FromResult<IEnumerable<OrganizationAiKbSettings>>(new[]
-        {
-            new OrganizationAiKbSettings { OrganizationId = "org1", EnableAiSearch = true }
-        }));
-        var timelineRepo = Substitute.For<IRepository<TicketTimelineEvent>>();
-        timelineRepo.GetAllAsync().Returns(Task.FromResult<IEnumerable<TicketTimelineEvent>>(Array.Empty<TicketTimelineEvent>()));
-        timelineRepo.CreateAsync(Arg.Any<TicketTimelineEvent>()).Returns(call => call.Arg<TicketTimelineEvent>());
-
-        var processor = CreateProcessor(
-            mediator,
-            incidentRepo,
-            attachmentService,
-            emailService,
-            templateRepo,
-            timelineRepo: timelineRepo,
-            aiKbRepo: aiRepo,
-            embeddingService: embeddingService);
-
-        var result = await processor.ProcessIncidentAsync(
-            new Message { Subject = "Help", Body = new ItemBody { Content = "body" } },
-            Enumerable.Empty<GraphAttachment>(),
-            new Customer { Id = "cust1", OrganizationId = "org1", Email = "a@b.com", Name = "Cust" },
-            CancellationToken.None,
-            "<msg-embedding-failure@example.test>");
-
-        Assert.Equal(created, result);
-        await timelineRepo.Received(1).CreateAsync(Arg.Is<TicketTimelineEvent>(e =>
-            e.TicketId == created.Id &&
-            e.CreatedByUserId == "<msg-embedding-failure@example.test>"));
     }
 
     [Fact]

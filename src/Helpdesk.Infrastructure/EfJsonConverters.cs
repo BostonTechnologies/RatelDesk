@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Pgvector;
 
 namespace Helpdesk.Infrastructure.Persistence;
 
@@ -35,10 +34,6 @@ public static class EfJsonConverters
         new(
             v => v.RootElement.GetRawText(),
             v => ParseJsonDocument(v));
-
-    public static ValueConverter<Vector, string> VectorToJson { get; } =
-        new(v => JsonSerializer.Serialize(v.ToArray(), (JsonSerializerOptions?)null),
-            v => new Vector(JsonSerializer.Deserialize<float[]>(v, (JsonSerializerOptions?)null) ?? Array.Empty<float>()));
 
     private static JsonDocument ParseJsonDocument(string? value)
     {

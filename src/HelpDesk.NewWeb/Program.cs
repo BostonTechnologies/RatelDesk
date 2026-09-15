@@ -105,7 +105,6 @@ builder.Services.AddScoped<IErrorLoggingService, ErrorLoggingService>();
 builder.Services.AddScoped<IRequestService, RequestService>();
 builder.Services.AddScoped<IRequestFormService, RequestFormService>();
 builder.Services.AddScoped<IResourceDatasetService, ResourceDatasetService>();
-builder.Services.AddScoped<IAiAdminClient, AiAdminClient>();
 builder.Services.AddScoped<IInboundEmailRuleAdminClient, InboundEmailRuleAdminClient>();
 builder.Services.AddScoped<ISupportNotificationAdminClient, SupportNotificationAdminClient>();
 builder.Services.AddScoped<ISystemNotificationApiClient, SystemNotificationApiClient>();

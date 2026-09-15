@@ -5,7 +5,6 @@ using Helpdesk.Application.Incidents;
 using Helpdesk.Application.Messaging;
 using Helpdesk.Application.Observability;
 using Helpdesk.Application.Sla;
-using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Services.Notifications;
 using Helpdesk.Application.Services.SupportNotifications;
 using Helpdesk.Application.WorkLogs;
@@ -29,7 +28,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Net;
 using System.Security.Claims;
-using System.Text.Json;
 
 namespace Helpdesk.API.Endpoints.Incidents;
 
@@ -53,7 +51,6 @@ public static class IncidentEndpoints
             [FromQuery] TicketState? state = null,
             [FromQuery] bool activeOnly = false,
             [FromQuery] bool historicOnly = false,
-            [FromQuery] bool aiInvolved = false,
             [FromQuery] bool includeTotal = true,
             [FromQuery] bool summaryOnly = false,
             string? organizationId = null,
@@ -127,14 +124,6 @@ public static class IncidentEndpoints
             else
             {
                 query = query.Where(x => x.Incident.State != TicketState.Resolved);
-            }
-
-            if (aiInvolved)
-            {
-                query = query.Where(x =>
-                    db.TicketAiSuggestions.Any(s => s.TicketId == x.Incident.Id) ||
-                    db.Requests.Any(r => r.SourceTicketId == x.Incident.Id) ||
-                    db.AiOperationAuditRecords.Any(a => a.SubjectId == x.Incident.Id));
             }
 
             if (!string.IsNullOrWhiteSpace(q))
@@ -221,26 +210,6 @@ public static class IncidentEndpoints
                 .ToDictionaryAsync(
                     g => g.Key,
                     g => g.Select(link => link.TicketCategoryId).ToList());
-            var suggestionRows = await db.TicketAiSuggestions
-                .AsNoTracking()
-                .Where(x => incidentIds.Contains(x.TicketId))
-                .Select(x => new { x.TicketId, x.ItemsJson })
-                .ToListAsync();
-            var suggestionCountLookup = suggestionRows.ToDictionary(
-                x => x.TicketId,
-                x => ParseKnowledgeSuggestionCount(x.ItemsJson),
-                StringComparer.OrdinalIgnoreCase);
-            var automationRunCountLookup = await db.Requests
-                .AsNoTracking()
-                .Where(x => x.SourceTicketId != null && incidentIds.Contains(x.SourceTicketId))
-                .GroupBy(x => x.SourceTicketId!)
-                .ToDictionaryAsync(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
-            var aiActivityLookup = await db.AiOperationAuditRecords
-                .AsNoTracking()
-                .Where(x => x.SubjectId != null && incidentIds.Contains(x.SubjectId))
-                .GroupBy(x => x.SubjectId!)
-                .ToDictionaryAsync(g => g.Key, g => g.Max(x => x.CreatedAt), StringComparer.OrdinalIgnoreCase);
-
             var items = rawItems.Select(x => new IncidentDto
             {
                 OrganizationId = x.OrganizationId,
@@ -257,10 +226,7 @@ public static class IncidentEndpoints
                 RequesterEmail = x.RequesterEmail,
                 LastReplierName = x.LastReplierName,
                 AssignedToId = x.AssignedToId,
-                CategoryIds = categoryLookup.TryGetValue(x.Id, out var ids) ? ids : new List<Guid>(),
-                AiSuggestionCount = suggestionCountLookup.TryGetValue(x.Id, out var suggestionCount) ? suggestionCount : 0,
-                AiAutomationRunCount = automationRunCountLookup.TryGetValue(x.Id, out var automationRunCount) ? automationRunCount : 0,
-                LastAiActivityAt = aiActivityLookup.TryGetValue(x.Id, out var lastAiActivityAt) ? lastAiActivityAt : null
+                CategoryIds = categoryLookup.TryGetValue(x.Id, out var ids) ? ids : new List<Guid>()
             }).ToList();
 
             return Results.Ok(new PagedResponse<IncidentDto>
@@ -324,22 +290,6 @@ public static class IncidentEndpoints
                 domainEvents,
                 correlationContext,
                 loggerFactory.CreateLogger("IncidentSla"));
-            var suggestionItemsJson = await db.TicketAiSuggestions
-                .AsNoTracking()
-                .Where(x => x.TicketId == incident.Id)
-                .Select(x => x.ItemsJson)
-                .FirstOrDefaultAsync();
-            var automationRunCount = await db.Requests
-                .AsNoTracking()
-                .CountAsync(x => x.SourceTicketId == incident.Id);
-            var aiActivityDates = await db.AiOperationAuditRecords
-                .AsNoTracking()
-                .Where(x => x.SubjectId == incident.Id)
-                .Select(x => x.CreatedAt)
-                .ToListAsync();
-            var lastAiActivityAt = aiActivityDates.Count == 0
-                ? null
-                : (DateTimeOffset?)aiActivityDates.Max();
             var incidentDto = new IncidentDto
             {
                 OrganizationId = incident.OrganizationId,
@@ -358,9 +308,6 @@ public static class IncidentEndpoints
                 CcRecipients = incident.CcRecipients,
                 AssignedToId = incident.AssignedToId,
                 CategoryIds = categoryIds,
-                AiSuggestionCount = ParseKnowledgeSuggestionCount(suggestionItemsJson),
-                AiAutomationRunCount = automationRunCount,
-                LastAiActivityAt = lastAiActivityAt,
                 Sla = ToSlaDto(slaSnapshot)
             };
             return Results.Ok(incidentDto);
@@ -470,9 +417,7 @@ public static class IncidentEndpoints
                 RequesterEmail = created.RequesterEmail,
                 CcRecipients = created.CcRecipients,
                 AssignedToId = created.AssignedToId,
-                CategoryIds = categoryIds,
-                AiSuggestionCount = 0,
-                AiAutomationRunCount = 0
+                CategoryIds = categoryIds
             };
             return Results.Created($"/api/v1/incidents/{created.Id}", createdDto);
         });
@@ -598,41 +543,6 @@ public static class IncidentEndpoints
 
             if (previousState != TicketState.Resolved && updatedIncident!.State == TicketState.Resolved)
             {
-                var ticketId = updatedIncident.Id;
-                var trackingId = updatedIncident.TrackingId;
-                var organizationId = updatedIncident.OrganizationId;
-                var postProcessCorrelationId = GetCorrelationId(correlationContext);
-                jobs.Queue(async (sp, ct) =>
-                {
-                    var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("IncidentPostProcess");
-                    try
-                    {
-                        var kb = sp.GetRequiredService<IKnowledgeBuilderService>();
-                        await kb.GenerateDraftFromResolvedTicketAsync(ticketId, ct);
-                        HelpdeskTelemetry.RecordAiPostProcessOutcome("completed", "success");
-                        logger.LogInformation("KB draft/embeddings generated for ticket {TicketId}", ticketId);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (IsExpectedAiProviderOutage(ex))
-                        {
-                            HelpdeskTelemetry.RecordAiPostProcessOutcome("skipped", "ai_provider_unavailable");
-                            logger.LogWarning(
-                                ex,
-                                "Optional incident post-processing skipped because AI providers are unavailable. TicketId={TicketId} TrackingId={TrackingId} OrganizationId={OrganizationId} CorrelationId={CorrelationId} Reason={Reason}",
-                                ticketId,
-                                trackingId,
-                                organizationId,
-                                postProcessCorrelationId,
-                                SummarizeException(ex));
-                            return;
-                        }
-
-                        HelpdeskTelemetry.RecordAiPostProcessOutcome("failed", "unexpected_error");
-                        logger.LogError(ex, "Post-processing failed for ticket {TicketId}", ticketId);
-                    }
-                });
-
                 await SendResolvedNotificationAsync(updatedIncident, ticketNotificationService, token);
             }
 
@@ -643,22 +553,6 @@ public static class IncidentEndpoints
                 supportNotificationService,
                 token);
 
-            var updatedSuggestionItemsJson = await db.TicketAiSuggestions
-                .AsNoTracking()
-                .Where(x => x.TicketId == updatedIncident.Id)
-                .Select(x => x.ItemsJson)
-                .FirstOrDefaultAsync(token);
-            var updatedAutomationRunCount = await db.Requests
-                .AsNoTracking()
-                .CountAsync(x => x.SourceTicketId == updatedIncident.Id, token);
-            var updatedAiActivityDates = await db.AiOperationAuditRecords
-                .AsNoTracking()
-                .Where(x => x.SubjectId == updatedIncident.Id)
-                .Select(x => x.CreatedAt)
-                .ToListAsync(token);
-            var updatedLastAiActivityAt = updatedAiActivityDates.Count == 0
-                ? null
-                : (DateTimeOffset?)updatedAiActivityDates.Max();
             var updatedCustomer = !string.IsNullOrWhiteSpace(updatedIncident.CustomerId)
                 ? await db.Customers
                     .AsNoTracking()
@@ -693,9 +587,6 @@ public static class IncidentEndpoints
                     .Where(x => x.IncidentId == updatedIncident.Id)
                     .Select(x => x.TicketCategoryId)
                     .ToListAsync(token),
-                AiSuggestionCount = ParseKnowledgeSuggestionCount(updatedSuggestionItemsJson),
-                AiAutomationRunCount = updatedAutomationRunCount,
-                LastAiActivityAt = updatedLastAiActivityAt,
                 Sla = ToSlaDto(slaSnapshot)
             };
 
@@ -1789,52 +1680,9 @@ public static class IncidentEndpoints
         };
     }
 
-    private static int ParseKnowledgeSuggestionCount(string? itemsJson)
-    {
-        if (string.IsNullOrWhiteSpace(itemsJson))
-        {
-            return 0;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<List<KnowledgeSuggestion>>(itemsJson)?.Count ?? 0;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
     private static string GetCorrelationId(ICorrelationContext correlationContext)
     {
         return correlationContext.GetCorrelationId() ?? $"corr-{Guid.NewGuid():N}";
-    }
-
-    private static bool IsExpectedAiProviderOutage(Exception ex)
-    {
-        for (var current = ex; current is not null; current = current.InnerException)
-        {
-            if (current is InvalidOperationException &&
-                current.Message.Contains("All configured AI chat providers failed", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            if (current is InvalidOperationException &&
-                current.Message.Contains("All configured embedding providers failed", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            if (current.Message.Contains("Connection refused", StringComparison.OrdinalIgnoreCase) ||
-                current.Message.Contains("operation didn't complete within the allowed timeout", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static string SummarizeException(Exception ex)

@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Linq;
 using System.Collections.Generic;
 using Helpdesk.API;
-using Helpdesk.Application.Services.KB;
 using Helpdesk.Application.Incidents;
 using Helpdesk.Application.Messaging;
 using Helpdesk.Application.Services.Notifications;
@@ -29,7 +28,6 @@ public partial class IncidentCcRecipientsEndpointsTests : IClassFixture<WebAppli
     private readonly WebApplicationFactory<Program> _factory;
     private readonly InMemoryRepository<Incident> _incidentRepo = new();
     private readonly InMemoryRepository<Customer> _customerRepo = new();
-    private readonly InMemoryRepository<KnowledgeBaseArticle> _kbRepo = new();
     private readonly InMemoryRepository<User> _userRepo = new();
     private readonly IRequestSender _sender = Substitute.For<IRequestSender>();
     private readonly ITicketNotificationService _ticketNotificationService = Substitute.For<ITicketNotificationService>();
@@ -59,9 +57,7 @@ public partial class IncidentCcRecipientsEndpointsTests : IClassFixture<WebAppli
             {
                 services.AddSingleton<IRepository<Incident>>(_incidentRepo);
                 services.AddSingleton<IRepository<Customer>>(_customerRepo);
-                services.AddSingleton<IRepository<KnowledgeBaseArticle>>(_kbRepo);
                 services.AddSingleton<IRepository<User>>(_userRepo);
-                services.AddSingleton<IKnowledgeBuilderService, NoopKnowledgeBuilderService>();
                 services.AddSingleton(_sender);
                 services.AddSingleton(_ticketNotificationService);
                 services.AddSingleton(_supportAccessService);
@@ -566,12 +562,6 @@ public partial class IncidentCcRecipientsEndpointsTests : IClassFixture<WebAppli
             OrganizationId = organizationId,
             IsEnabled = enabled
         });
-    }
-
-    private class NoopKnowledgeBuilderService : IKnowledgeBuilderService
-    {
-        public Task<KnowledgeBaseArticle> BuildArticleAsync(string prompt, CancellationToken token) => Task.FromResult(new KnowledgeBaseArticle());
-        public Task<KnowledgeBaseArticle?> GenerateDraftFromResolvedTicketAsync(string ticketId, CancellationToken token, bool regenerate = false) => Task.FromResult<KnowledgeBaseArticle?>(null);
     }
 
     private class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>

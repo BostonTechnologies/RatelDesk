@@ -71,7 +71,7 @@ public sealed class SetupInitializationErrorTests
     public async Task Storage_preflight_failure_points_to_database_requirements()
     {
         using var response = Problem("""{"code":"setup_storage_preflight_failed"}""");
-        Assert.Contains("vector and pg_trgm", await SetupInitializationError.ReadAsync(response, CancellationToken.None));
+        Assert.Contains("database permissions", await SetupInitializationError.ReadAsync(response, CancellationToken.None));
     }
 
     private static HttpResponseMessage Problem(string body) => new(HttpStatusCode.BadRequest)

@@ -63,7 +63,6 @@
                         <MudMenuItem>Profile</MudMenuItem>
                         <MudMenuItem>Preferences</MudMenuItem>
                         <MudMenuItem OnClick="OpenEmailSettings">Email Settings</MudMenuItem>
-                        <MudMenuItem OnClick="OpenAiSettings">AI / Model Settings</MudMenuItem>
                         <MudDivider />
                         @if (SupportsLocalAccounts)
                         {
@@ -92,7 +91,6 @@
                         <MudMenuItem Icon="@Icons.Material.Filled.Person">Profile</MudMenuItem>
                         <MudMenuItem Icon="@Icons.Material.Filled.Tune">Preferences</MudMenuItem>
                         <MudMenuItem OnClick="OpenEmailSettings" Icon="@Icons.Material.Filled.Email">Email Settings</MudMenuItem>
-                        <MudMenuItem OnClick="OpenAiSettings" Icon="@Icons.Material.Filled.Psychology">AI / Model Settings</MudMenuItem>
                         <MudDivider />
                         @if (SupportsLocalAccounts)
                         {
@@ -206,12 +204,6 @@
     {
         var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
         await DialogService.ShowAsync<Dialogs.Settings.EmailSettingsDialog>("IMAP Settings", options);
-    }
-
-    private async Task OpenAiSettings()
-    {
-        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true };
-        await DialogService.ShowAsync<Dialogs.Settings.AiSettingsDialog>("AI / Model Settings", options);
     }
 
     public async ValueTask DisposeAsync()

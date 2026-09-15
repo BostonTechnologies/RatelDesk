@@ -2,12 +2,11 @@ using Helpdesk.Application.Services.AI;
 using Helpdesk.Application.Services.Email;
 using Helpdesk.Application.Services.EmailTemplates;
 using Helpdesk.Application.Services.Branding;
-using Helpdesk.Application.Services.KB;
+using Helpdesk.Application.Services.Changes;
 using Helpdesk.Application.Services.Notifications;
 using Helpdesk.Application.Services.SupportNotifications;
 using Helpdesk.Application.Services.Tenants;
 using Helpdesk.Application.Services.Tickets;
-using Helpdesk.Application.Services.Changes;
 using Helpdesk.Application.Sla;
 using Helpdesk.Application.RequestTasks;
 using Helpdesk.Application.Orchestration;
@@ -20,13 +19,11 @@ using Helpdesk.Application.WorkLogs;
 using Helpdesk.Application.Workflow;
 using Helpdesk.Application.AiAssistant;
 using Helpdesk.Infrastructure.Configuration;
-using Helpdesk.Infrastructure.AI;
-using Helpdesk.Infrastructure.Changes;
 using Helpdesk.Infrastructure.Email;
 using Helpdesk.Infrastructure.Html;
-using Helpdesk.Infrastructure.KB;
 using Helpdesk.Infrastructure.Services;
 using Helpdesk.Infrastructure.Events;
+using Helpdesk.Infrastructure.Changes;
 using Helpdesk.Infrastructure.EmailTemplates;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Infrastructure.Persistence;
@@ -96,17 +93,6 @@ public static class DependencyInjection
 
         AddRepositoryRegistrations(services);
 
-        services.AddHttpClient("OpenAICompatible", client =>
-        {
-            client.Timeout = Timeout.InfiniteTimeSpan;
-        })
-        .SetHandlerLifetime(TimeSpan.FromMinutes(10))
-        .AddStandardResilienceHandler(options =>
-        {
-            options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(2);
-            options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
-            options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(5);
-        });
         services.AddHttpClient("OrchestrationInternalApi")
             .SetHandlerLifetime(TimeSpan.FromMinutes(10));
         services.AddHttpClient("AiAssistantWebhook")
@@ -114,26 +100,6 @@ public static class DependencyInjection
         services.AddHttpClient<IAuthentikAdminClient, AuthentikAdminClient>()
             .SetHandlerLifetime(TimeSpan.FromMinutes(10));
 
-        services.AddScoped<IAiClient, OpenAiCompatibleClient>();
-        services.AddScoped<IAiRuntime, HelpdeskAiRuntime>();
-        services.AddScoped<IAiPromptTemplateService, StaticAiPromptTemplateService>();
-        services.AddScoped<IAiOperationAuditService, LoggerAiOperationAuditService>();
-        services.AddScoped<IAiProviderService, AiProviderService>();
-        services.AddScoped<IEmbeddingService, EmbeddingService>();
-        if (databaseProvider is DatabaseProvider.PostgreSql)
-        {
-            services.AddScoped<IKnowledgeVectorStore, PgVectorKnowledgeVectorStore>();
-        }
-        else
-        {
-            services.AddScoped<IKnowledgeVectorStore, NoOpKnowledgeVectorStore>();
-        }
-        services.AddScoped<IKnowledgeRetrievalService, KnowledgeRetrievalService>();
-        services.AddScoped<IKnowledgeBuilderService, KnowledgeBuilderService>();
-        services.AddScoped<IKnowledgeSuggestionService, KnowledgeSuggestionService>();
-        services.AddScoped<ITicketUnderstandingService, TicketUnderstandingService>();
-        services.AddScoped<IRequesterReplyDraftService, RequesterReplyDraftService>();
-        services.AddScoped<IChangeReviewService, ChangeReviewService>();
         services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
         services.AddScoped<ITicketNotificationService, TicketNotificationService>();
         services.AddScoped<ISupportAccessService, SupportAccessService>();
@@ -249,7 +215,7 @@ public static class DependencyInjection
     {
         if (provider is DatabaseProvider.PostgreSql)
         {
-            options.UseNpgsql(connectionString, npgsql => npgsql.UseVector());
+            options.UseNpgsql(connectionString);
             // The historical PostgreSQL model contains intentional provider
             // annotations that EF Core 10 re-detects as pending changes. The
             // application always applies the explicit migration chain; fresh
@@ -292,6 +258,7 @@ public static class DependencyInjection
         services.AddScoped<IRepository<Request>, EfRepository<Request>>();
         services.AddScoped<IRepository<RequestTask>, EfRepository<RequestTask>>();
         services.AddScoped<IRepository<Change>, EfRepository<Change>>();
+        services.AddScoped<IChangeTemplateService, ChangeTemplateService>();
         services.AddScoped<IRepository<WorkLog>, EfRepository<WorkLog>>();
         services.AddScoped<IRepository<TicketTimelineEvent>, EfRepository<TicketTimelineEvent>>();
         services.AddScoped<IRepository<Ticket>, EfRepository<Ticket>>();
@@ -301,8 +268,6 @@ public static class DependencyInjection
         services.AddScoped<IRepository<Organization>, EfRepository<Organization>>();
         services.AddScoped<IRepository<Customer>, EfRepository<Customer>>();
         services.AddScoped<IRepository<CustomerAuthLink>, EfRepository<CustomerAuthLink>>();
-        services.AddScoped<IRepository<KnowledgeBaseCategory>, EfRepository<KnowledgeBaseCategory>>();
-        services.AddScoped<IRepository<KnowledgeBaseArticle>, EfRepository<KnowledgeBaseArticle>>();
         services.AddScoped<IRepository<Asset>, EfRepository<Asset>>();
         services.AddScoped<IRepository<SlaPolicy>, SlaPolicyRepository>();
         services.AddScoped<IRepository<WorkingCalendar>, EfRepository<WorkingCalendar>>();
@@ -333,11 +298,6 @@ public static class DependencyInjection
         services.AddScoped<IRepository<TenantGraphDatasetSettings>, EfRepository<TenantGraphDatasetSettings>>();
         services.AddScoped<IRepository<PasswordResetToken>, EfRepository<PasswordResetToken>>();
         services.AddScoped<IRepository<TwoFactorCode>, EfRepository<TwoFactorCode>>();
-        services.AddScoped<IRepository<OrganizationAiKbSettings>, EfRepository<OrganizationAiKbSettings>>();
-        services.AddScoped<IRepository<TicketKnowledgeSuggestion>, EfRepository<TicketKnowledgeSuggestion>>();
-        services.AddScoped<IRepository<AiProvider>, EfRepository<AiProvider>>();
-        services.AddScoped<IRepository<AiModel>, EfRepository<AiModel>>();
-        services.AddScoped<IRepository<KnowledgeEmbedding>, EfRepository<KnowledgeEmbedding>>();
         services.AddScoped<IRepository<SupportGroup>, EfRepository<SupportGroup>>();
         services.AddScoped<IRepository<SupportGroupMember>, EfRepository<SupportGroupMember>>();
         services.AddScoped<IRepository<OrganizationSupportCoverage>, EfRepository<OrganizationSupportCoverage>>();
