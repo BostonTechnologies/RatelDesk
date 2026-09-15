@@ -25,17 +25,17 @@ public sealed class InstanceBrandingProvider(
         var effective = BuildEffective(persisted);
         return new InstanceBrandingAdministration(effective,
         [
-            State(nameof(InstanceBranding.ApplicationName), persisted?.ApplicationName, effective.ApplicationName),
-            State(nameof(InstanceBranding.OrganizationName), persisted?.OrganizationName, effective.OrganizationName),
-            State(nameof(InstanceBranding.ApplicationUrl), persisted?.ApplicationUrl, effective.ApplicationUrl),
-            State(nameof(InstanceBranding.OrganizationUrl), persisted?.OrganizationUrl, effective.OrganizationUrl),
-            State(nameof(InstanceBranding.SupportUrl), persisted?.SupportUrl, effective.SupportUrl),
-            State(nameof(InstanceBranding.SupportEmail), persisted?.SupportEmail, effective.SupportEmail),
-            State(nameof(InstanceBranding.LogoUrl), persisted?.LogoUrl, effective.LogoUrl),
-            State(nameof(InstanceBranding.CompactLogoUrl), persisted?.CompactLogoUrl, effective.CompactLogoUrl),
-            State(nameof(InstanceBranding.FaviconUrl), persisted?.FaviconUrl, effective.FaviconUrl),
-            State(nameof(InstanceBranding.EmailFromDisplayName), persisted?.EmailFromDisplayName, effective.EmailFromDisplayName),
-            State(nameof(InstanceBranding.Tagline), persisted?.Tagline, effective.Tagline)
+            State(nameof(InstanceBranding.ApplicationName), persisted?.ApplicationName, effective.ApplicationName, Defaults.ApplicationName),
+            State(nameof(InstanceBranding.OrganizationName), persisted?.OrganizationName, effective.OrganizationName, Defaults.OrganizationName),
+            State(nameof(InstanceBranding.ApplicationUrl), persisted?.ApplicationUrl, effective.ApplicationUrl, Defaults.ApplicationUrl),
+            State(nameof(InstanceBranding.OrganizationUrl), persisted?.OrganizationUrl, effective.OrganizationUrl, Defaults.OrganizationUrl),
+            State(nameof(InstanceBranding.SupportUrl), persisted?.SupportUrl, effective.SupportUrl, Defaults.SupportUrl),
+            State(nameof(InstanceBranding.SupportEmail), persisted?.SupportEmail, effective.SupportEmail, Defaults.SupportEmail),
+            State(nameof(InstanceBranding.LogoUrl), persisted?.LogoUrl, effective.LogoUrl, Defaults.LogoUrl),
+            State(nameof(InstanceBranding.CompactLogoUrl), persisted?.CompactLogoUrl, effective.CompactLogoUrl, Defaults.CompactLogoUrl),
+            State(nameof(InstanceBranding.FaviconUrl), persisted?.FaviconUrl, effective.FaviconUrl, Defaults.FaviconUrl),
+            State(nameof(InstanceBranding.EmailFromDisplayName), persisted?.EmailFromDisplayName, effective.EmailFromDisplayName, Defaults.EmailFromDisplayName),
+            State(nameof(InstanceBranding.Tagline), persisted?.Tagline, effective.Tagline, Defaults.Tagline)
         ]);
     }
 
@@ -76,8 +76,8 @@ public sealed class InstanceBrandingProvider(
         Resolve(nameof(InstanceBranding.EmailFromDisplayName), persisted?.EmailFromDisplayName, Defaults.EmailFromDisplayName),
         Resolve(nameof(InstanceBranding.Tagline), persisted?.Tagline, Defaults.Tagline));
 
-    private InstanceBrandingFieldState State(string name, string? persisted, string effective) => new(
-        name, persisted, effective, Source(name, persisted), !HasDeploymentValue(name));
+    private InstanceBrandingFieldState State(string name, string? persisted, string effective, string fallback) => new(
+        name, persisted, effective, Normalize(configuration[$"Branding:{name}"]) ?? fallback, Source(name, persisted), !HasDeploymentValue(name));
 
     private string Resolve(string name, string? persisted, string fallback) =>
         Normalize(configuration[$"Branding:{name}"]) ?? Normalize(persisted) ?? fallback;

@@ -99,6 +99,7 @@
 
 @code {
     [Parameter] public bool IsCanonical { get; set; }
+    [Parameter] public string? OrganizationId { get; set; }
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<TenantOrganization> organizations = new();
     private List<TenantMember> members = new();
@@ -123,7 +124,9 @@
         }
 
         organizations = await response.Content.ReadFromJsonAsync<List<TenantOrganization>>() ?? new();
-        selectedOrganizationId = organizations.FirstOrDefault()?.Id;
+        selectedOrganizationId = organizations.FirstOrDefault(organization =>
+            string.Equals(organization.Id, OrganizationId, StringComparison.OrdinalIgnoreCase))?.Id
+            ?? organizations.FirstOrDefault()?.Id;
         if (!string.IsNullOrWhiteSpace(selectedOrganizationId) && !IsCanonical)
         {
             NavigationManager.NavigateTo("/admin/organizations", replace: true);

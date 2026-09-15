@@ -361,6 +361,14 @@ public sealed class CustomerInvitationService(
             InviteStatus = status,
             StatusText = GetStatusText(status),
             AuthProviderType = link?.AuthProviderType,
+            LocalAccountId = link?.LocalAccountId,
+            DomainUserId = link?.DomainUserId,
+            IsLinkedLogin = link is not null,
+            IdentitySummary = link is null
+                ? "This contact has no linked login."
+                : !string.IsNullOrWhiteSpace(link.AuthentikEmail) ? link.AuthentikEmail
+                : !string.IsNullOrWhiteSpace(link.AuthentikUsername) ? link.AuthentikUsername
+                : "External identity linked",
             OidcIssuer = link?.OidcIssuer,
             OidcSubject = link?.OidcSubject,
             AuthentikUserId = link?.AuthentikUserId,

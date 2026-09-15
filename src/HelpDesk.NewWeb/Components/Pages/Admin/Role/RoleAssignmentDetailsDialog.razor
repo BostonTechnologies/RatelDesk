@@ -9,6 +9,7 @@
             <MudTabPanel Text="Assignments">
                 <MudText Typo="Typo.caption" Class="mb-2">Explicit user-role-organization assignments (up to 200).</MudText>
                 @if (loading) { <MudProgressLinear Indeterminate="true" /> }
+                else if (!string.IsNullOrWhiteSpace(error)) { <MudAlert Severity="Severity.Warning">@error <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="LoadAsync">Retry</MudButton></MudAlert> }
                 else { <MudTable Items="assignments" Dense="true"><HeaderContent><MudTh>Person</MudTh><MudTh>Email</MudTh><MudTh>Organization</MudTh></HeaderContent><RowTemplate><MudTd>@context.Name</MudTd><MudTd>@context.Email</MudTd><MudTd>@OrganizationName(context.OrganizationId)</MudTd></RowTemplate></MudTable> }
             </MudTabPanel>
         </MudTabs>
@@ -22,8 +23,21 @@
     [Parameter] public IReadOnlyList<RoleManagement.TenantOrganization> Organizations { get; set; } = [];
     private readonly List<RoleAssignment> assignments = [];
     private bool loading = true;
+    private string? error;
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
-    protected override async Task OnInitializedAsync() { assignments.AddRange(await Api.GetFromJsonAsync<List<RoleAssignment>>($"api/v1/admin/role-definitions/{Role.Id}/assignments") ?? []); loading = false; }
+    protected override Task OnInitializedAsync() => LoadAsync();
+    private async Task LoadAsync()
+    {
+        loading = true;
+        error = null;
+        try
+        {
+            assignments.Clear();
+            assignments.AddRange(await Api.GetFromJsonAsync<List<RoleAssignment>>($"api/v1/admin/role-definitions/{Role.Id}/assignments") ?? []);
+        }
+        catch (HttpRequestException) { error = "Role assignments could not be loaded."; }
+        finally { loading = false; }
+    }
     private string OrganizationName(string id) => Organizations.FirstOrDefault(organization => organization.Id == id)?.Name ?? id;
     private sealed record RoleAssignment(string UserId, string Name, string Email, string OrganizationId);
 }

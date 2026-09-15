@@ -78,7 +78,7 @@
         var field = _administration?.Fields.FirstOrDefault(x => x.Name == name);
         if (field is null || !field.IsAdminEditable) return;
         _useDefaultFields.Add(name);
-        SetValue(name, field.EffectiveValue);
+        SetValue(name, field.DefaultValue);
     }
     private void SetValue(string name, string? value)
     {
@@ -101,8 +101,9 @@
     }
     private string? ValueToSave(string name, string value)
     {
-        if (_useDefaultFields.Contains(name)) return null;
         var field = _administration!.Fields.Single(x => x.Name == name);
+        if (_useDefaultFields.Contains(name))
+            return string.Equals(value, field.DefaultValue, StringComparison.Ordinal) ? null : value;
         return string.Equals(value, field.EffectiveValue, StringComparison.Ordinal) ? field.PersistedValue : value;
     }
     private InstanceBrandingUpdate UpdateForSave() => new()

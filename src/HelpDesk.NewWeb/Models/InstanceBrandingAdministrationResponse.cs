@@ -19,6 +19,8 @@ public sealed class InstanceBrandingFieldState
 
     public string EffectiveValue { get; set; } = string.Empty;
 
+    public string DefaultValue { get; set; } = string.Empty;
+
     public InstanceBrandingValueSource Source { get; set; }
 
     public bool IsAdminEditable { get; set; }

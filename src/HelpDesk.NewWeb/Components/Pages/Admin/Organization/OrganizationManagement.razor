@@ -54,16 +54,18 @@
 </MudPaper>
 </Authorized>
 <NotAuthorized Context="delegatedAdministrator">
-    <AuthorizeView Roles="Tenant.Roles.Assign" Context="rolesAdministrator">
-        <Authorized Context="memberAdministrator"><TenantAdministration IsCanonical="true" /></Authorized>
-        <NotAuthorized Context="settingsAdministrator"><TenantSettings IsCanonical="true" /></NotAuthorized>
-    </AuthorizeView>
+    <MudTabs ActivePanelIndex="@(string.Equals(Section, "settings", StringComparison.OrdinalIgnoreCase) ? 0 : 1)">
+        <MudTabPanel Text="General &amp; settings"><TenantSettings IsCanonical="true" OrganizationId="@OrganizationId" /></MudTabPanel>
+        <MudTabPanel Text="Members &amp; access"><TenantAdministration IsCanonical="true" OrganizationId="@OrganizationId" /></MudTabPanel>
+    </MudTabs>
 </NotAuthorized>
 </AuthorizeView>
 
 @code {
     [SupplyParameterFromQuery(Name = "search")]
     public string? QuerySearch { get; set; }
+    [SupplyParameterFromQuery(Name = "section")] public string? Section { get; set; }
+    [SupplyParameterFromQuery(Name = "organizationId")] public string? OrganizationId { get; set; }
 
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<OrganizationDto> organizations = new();

@@ -5,6 +5,7 @@
 @using Helpdesk.Shared.Auth
 @inject IHttpClientFactory HttpClientFactory
 @inject IDialogService DialogService
+@inject AuthenticationStateProvider AuthenticationState
 
 <PageTitle>Roles & Permissions</PageTitle>
 
@@ -111,7 +112,10 @@
 </MudPaper>
 
 @code {
-    private static readonly IReadOnlyList<PermissionOption> PermissionOptions = HelpdeskPermissions.AssignablePermissions
+    private IReadOnlyList<PermissionOption> PermissionOptions => (isInstanceAdministrator
+            ? HelpdeskPermissions.AssignablePermissions.AsEnumerable()
+            : RoleDefinitionCatalog.TenantAdministratorPermissionCeiling.AsEnumerable())
+        .OrderBy(permission => permission, StringComparer.OrdinalIgnoreCase)
         .Select(permission => new PermissionOption(permission, PermissionLabel(permission))).ToArray();
 
     private HttpClient HelpdeskApi => HttpClientFactory.CreateClient("HelpdeskApi");
@@ -125,8 +129,13 @@
     private string draftName = string.Empty;
     private string? draftOwnerOrganizationId;
     private HashSet<string> draftPermissions = new(StringComparer.OrdinalIgnoreCase);
+    private bool isInstanceAdministrator;
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        isInstanceAdministrator = (await AuthenticationState.GetAuthenticationStateAsync()).User.IsInRole("HelpdeskAdmin");
+        await LoadAsync();
+    }
 
     private async Task LoadAsync()
     {
@@ -200,7 +209,8 @@
 
             if (!response.IsSuccessStatusCode)
             {
-                error = "The role could not be saved. Confirm the owner and permission dependencies, then try again.";
+                error = await response.Content.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(error)) error = "The role could not be saved. Confirm the owner and permission dependencies, then try again.";
                 return;
             }
 

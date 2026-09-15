@@ -29,6 +29,7 @@
 
 @code {
     [Parameter] public bool IsCanonical { get; set; }
+    [Parameter] public string? OrganizationId { get; set; }
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
     private List<TenantOrganization> organizations = new();
     private TenantSettingsModel? settings;
@@ -40,7 +41,8 @@
         organizations = (await Api.GetFromJsonAsync<List<TenantOrganization>>("api/v1/tenant-admin/organizations?permission=Tenant.Settings.Manage") ?? new())
             .Where(organization => profile.HasPermission(HelpdeskPermissions.TenantSettingsManage, organization.Id)).ToList();
         if (organizations.Count > 0 && !IsCanonical) NavigationManager.NavigateTo("/admin/organizations", replace: true);
-        else if (organizations.Count > 0) await SelectAsync(organizations[0].Id);
+        else if (organizations.Count > 0) await SelectAsync(organizations.FirstOrDefault(organization =>
+            string.Equals(organization.Id, OrganizationId, StringComparison.OrdinalIgnoreCase))?.Id ?? organizations[0].Id);
     }
     private async Task SelectAsync(string? value)
     {

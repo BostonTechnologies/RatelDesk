@@ -73,6 +73,7 @@ public sealed class InstanceBrandingProviderTests
         Assert.Null(stored.Value?.LogoUrl);
         Assert.Equal("RatelDesk", administration.Effective.ApplicationName);
         Assert.Equal("/branding/rateldesk-wordmark.webp", administration.Effective.LogoUrl);
+        Assert.Equal("RatelDesk", Assert.Single(administration.Fields, x => x.Name == nameof(InstanceBranding.ApplicationName)).DefaultValue);
     }
 
     private static InstanceBrandingProvider CreateProvider(IConfiguration configuration, out BrandingState stored)

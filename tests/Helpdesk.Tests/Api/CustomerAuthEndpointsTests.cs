@@ -6,7 +6,9 @@ using System.Text.Encodings.Web;
 using System.Text.Json.Nodes;
 using Helpdesk.API;
 using Helpdesk.Infrastructure.Auth.Authentik;
+using Helpdesk.Infrastructure.Persistence;
 using Helpdesk.Shared.DTOs.Customer;
+using Helpdesk.Shared.Models;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -74,6 +76,23 @@ public sealed class CustomerAuthEndpointsTests
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         Assert.Contains("Customer invitation request could not be completed", body, StringComparison.Ordinal);
         Assert.Contains("Authentik rejected create recovery link (500 InternalServerError): upstream failure", body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Local", 1, "local account")]
+    [InlineData("Authentik", 2, "Multiple linked identities")]
+    public async Task ExternalInviteAction_RejectsLocalOrAmbiguousLinks_BeforeCallingInvitationService(string provider, int linkCount, string expectedMessage)
+    {
+        using var factory = CreateFactory(new ThrowingInvitationService(
+            new InvalidOperationException("The invitation service must not be called.")));
+        await SeedLinksAsync(factory, provider, linkCount);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "HelpdeskAdmin");
+
+        var response = await client.PostAsync("/api/v1/customers/customer-1/auth/resend-invite", null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains(expectedMessage, (await response.Content.ReadAsStringAsync()), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -156,6 +175,23 @@ public sealed class CustomerAuthEndpointsTests
                 }).AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
             });
         });
+
+    private static async Task SeedLinksAsync(WebApplicationFactory<Program> factory, string provider, int count)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        db.Customers.Add(new Customer { Id = "customer-1", Name = "Customer", Email = "customer@example.test", OrganizationId = "organization-1" });
+        for (var index = 0; index < count; index++)
+        {
+            db.CustomerAuthLinks.Add(new CustomerAuthLink
+            {
+                CustomerId = "customer-1",
+                AuthProviderType = index == 0 ? provider : "Authentik",
+                LocalAccountId = index == 0 && string.Equals(provider, "Local", StringComparison.OrdinalIgnoreCase) ? "local-account" : null
+            });
+        }
+        await db.SaveChangesAsync();
+    }
 
     private sealed class ThrowingInvitationService(Exception exception) : ICustomerInvitationService
     {

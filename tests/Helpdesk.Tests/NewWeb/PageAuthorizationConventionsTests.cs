@@ -72,6 +72,11 @@ public class PageAuthorizationConventionsTests
         Assert.Contains("Href=\"/admin/roles\"", navigation, StringComparison.Ordinal);
         Assert.DoesNotContain("Href=\"/tenant-administration\"", navigation, StringComparison.Ordinal);
         Assert.DoesNotContain("Href=\"/tenant-settings\"", navigation, StringComparison.Ordinal);
+
+        var organizationPage = File.ReadAllText(Path.Combine(repoRoot, "src", "HelpDesk.NewWeb", "Components", "Pages", "Admin", "Organization", "OrganizationManagement.razor"));
+        Assert.Contains("General &amp; settings", organizationPage, StringComparison.Ordinal);
+        Assert.Contains("Members &amp; access", organizationPage, StringComparison.Ordinal);
+        Assert.Contains("OrganizationId=\"@OrganizationId\"", organizationPage, StringComparison.Ordinal);
         Assert.Contains("<TenantAdministrationNavigation />", navMenu, StringComparison.Ordinal);
     }
 }
