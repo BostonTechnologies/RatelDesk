@@ -350,6 +350,7 @@ builder.Services.AddHelpdeskInfrastructure(builder.Configuration);
 if (skipDatabaseStartup)
 {
     var testDatabaseRoot = new InMemoryDatabaseRoot();
+    var testDatabaseName = builder.Configuration["Helpdesk:TestDatabaseName"] ?? $"helpdesk-tests-{Guid.NewGuid():N}";
 #pragma warning disable ASP0000
     var testDatabaseProvider = new ServiceCollection()
         .AddEntityFrameworkInMemoryDatabase()
@@ -359,7 +360,7 @@ if (skipDatabaseStartup)
     builder.Services.RemoveAll<DbContextOptions<HelpdeskDbContext>>();
     builder.Services.AddDbContext<HelpdeskDbContext>(options =>
         options
-            .UseInMemoryDatabase($"helpdesk-tests-{Guid.NewGuid():N}", testDatabaseRoot)
+            .UseInMemoryDatabase(testDatabaseName, testDatabaseRoot)
             .UseInternalServiceProvider(testDatabaseProvider)
             .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
 }

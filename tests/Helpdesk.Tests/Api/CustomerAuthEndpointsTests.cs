@@ -12,6 +12,7 @@ using Helpdesk.Shared.Models;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -83,9 +84,10 @@ public sealed class CustomerAuthEndpointsTests
     [InlineData("Authentik", 2, "Multiple linked identities")]
     public async Task ExternalInviteAction_RejectsLocalOrAmbiguousLinks_BeforeCallingInvitationService(string provider, int linkCount, string expectedMessage)
     {
-        using var factory = CreateFactory(new ThrowingInvitationService(
-            new InvalidOperationException("The invitation service must not be called.")));
+        var invitationService = new ThrowingInvitationService(new InvalidOperationException("The invitation service must not be called."));
+        using var factory = CreateFactory(invitationService);
         await SeedLinksAsync(factory, provider, linkCount);
+        await AssertSeedVisibleFromNewScopeAsync(factory, linkCount);
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "HelpdeskAdmin");
 
@@ -93,6 +95,8 @@ public sealed class CustomerAuthEndpointsTests
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Contains(expectedMessage, (await response.Content.ReadAsStringAsync()), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, invitationService.InvocationCount);
+        await AssertSeedVisibleFromNewScopeAsync(factory, linkCount);
     }
 
     [Fact]
@@ -159,6 +163,7 @@ public sealed class CustomerAuthEndpointsTests
     private static WebApplicationFactory<Program> CreateFactory(ICustomerInvitationService invitationService)
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseSetting("Helpdesk:TestDatabaseName", $"customer-auth-{Guid.NewGuid():N}");
             builder.UseIsolatedTestStorage();
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
             builder.UseEnvironment("Development");
@@ -193,22 +198,36 @@ public sealed class CustomerAuthEndpointsTests
         await db.SaveChangesAsync();
     }
 
+    private static async Task AssertSeedVisibleFromNewScopeAsync(WebApplicationFactory<Program> factory, int expectedLinkCount)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        Assert.Equal(expectedLinkCount, await db.CustomerAuthLinks.CountAsync(link => link.CustomerId == "customer-1"));
+    }
+
     private sealed class ThrowingInvitationService(Exception exception) : ICustomerInvitationService
     {
+        public int InvocationCount { get; private set; }
         public Task<CustomerAuthStatusDto> GetStatusAsync(string customerId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
 
         public Task<CustomerAuthStatusDto> InviteAsync(string customerId, string invitedByUserId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
 
         public Task<CustomerAuthStatusDto> ResendInviteAsync(string customerId, string invitedByUserId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
 
         public Task<CustomerAuthStatusDto> DisableLoginAsync(string customerId, string disabledByUserId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
 
         public Task<CustomerAuthStatusDto> SyncAuthentikAsync(string customerId, CancellationToken ct = default)
-            => throw exception;
+            => Throw();
+
+        private Task<CustomerAuthStatusDto> Throw()
+        {
+            InvocationCount++;
+            return Task.FromException<CustomerAuthStatusDto>(exception);
+        }
     }
 
     private sealed class TestAuthHandler(
