@@ -1,6 +1,24 @@
 # Releases
 
-RatelDesk has one repository-owned release line. The root `Directory.Build.props` is the source of truth: maintainers update `VersionPrefix` when preparing the next release. All application projects inherit that value. `VersionSuffix` creates prereleases without changing the release line; for example, `-p:VersionPrefix=0.2.0 -p:VersionSuffix=beta.1` evaluates to `0.2.0-beta.1`. The current prepared prerelease is `0.1.0-rc.8`.
+RatelDesk has one repository-owned release line. The root `Directory.Build.props` is the source of truth: maintainers update `VersionPrefix` when preparing the next release. All application projects inherit that value. `VersionSuffix` creates prereleases without changing the release line; for example, `-p:VersionPrefix=0.2.0 -p:VersionSuffix=beta.1` evaluates to `0.2.0-beta.1`. The current prepared prerelease is `0.1.0-rc.9`.
+
+## 0.1.0-rc.9
+
+### User experience and administration
+
+- Consolidates Email Settings and Automation in the administration navigation, retaining the Orchestrator route (#59, #58).
+- Restores tenant-scoped Team, Customers, and SLA administration with compact role editing (#57, #56).
+- Prevents a light-theme flash during dark and system-theme startup (#55, #54).
+
+### Dependency and delivery updates
+
+- Updates MailKit from 4.17.0 to 4.18.0 and MudBlazor from 9.5.0 to 9.10.0 (#32). UX assertions now target stable semantic controls and rendered layout state.
+- Updates ModelContextProtocol.AspNetCore from 1.4.1 to 2.2.0, NSubstitute from 5.3.0 to 6.2.0, and xunit.runner.visualstudio from 3.1.5 to 4.0.0 (#33, #34, #36).
+- Refreshes Docker CI actions: setup-qemu 3.6.0 to 4.3.0, metadata 5.8.0 to 6.2.0, setup-buildx 3.11.1 to 4.3.0, login 3.5.0 to 4.6.0, and build-push 6.18.0 to 7.3.0 (#38-#42).
+
+### Not included
+
+- SixLabors.ImageSharp 4.1.2 is not included. Its upgrade PR (#35) requires an approved Six Labors license key or license file before it can pass validation.
 
 ## Build identity
 
