@@ -1,5 +1,5 @@
 @page "/admin/users"
-@attribute [Authorize(Roles = "HelpdeskAdmin")]
+@attribute [Authorize(Roles = "Tenant.Users.Manage,Tenant.Roles.Assign,HelpdeskAdmin")]
 @inject IHttpClientFactory HttpClientFactory
 @inject IDialogService DialogService
 @inject HelpDesk.NewWeb.Models.WebAuthenticationMode AuthenticationMode
@@ -8,6 +8,8 @@
 
 <PageTitle>Team</PageTitle>
 
+<AuthorizeView Roles="HelpdeskAdmin" Context="instanceAdministrator">
+<Authorized>
 <div class="helpdesk-page">
 <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="helpdesk-page-header">
@@ -67,6 +69,17 @@
     </MudTable>
 </MudPaper>
 </div>
+</Authorized>
+<NotAuthorized>
+    <div class="helpdesk-page">
+        <MudPaper Class="helpdesk-content-surface pa-4" Elevation="0">
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Team</MudText>
+            <MudText Typo="Typo.body2" Class="mb-4">Manage membership and application roles for an authorized tenant. Shared account credentials and lifecycle remain instance-administrator actions.</MudText>
+            <TenantAdministration IsCanonical="true" />
+        </MudPaper>
+    </div>
+</NotAuthorized>
+</AuthorizeView>
 
 @code {
     [SupplyParameterFromQuery(Name = "search")]

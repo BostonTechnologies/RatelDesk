@@ -1,0 +1,4 @@
+.tenant-role-dialog-list {
+    max-height: min(48vh, 32rem);
+    overflow-y: auto;
+}

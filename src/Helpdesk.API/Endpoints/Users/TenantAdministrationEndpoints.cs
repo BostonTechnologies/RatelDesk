@@ -28,9 +28,14 @@ public static class TenantAdministrationEndpoints
             CancellationToken cancellationToken) =>
         {
             var access = await accessService.ResolveAsync(context.User, cancellationToken);
-            var requiredPermission = string.Equals(permission, HelpdeskPermissions.TenantSettingsManage, StringComparison.OrdinalIgnoreCase)
-                ? HelpdeskPermissions.TenantSettingsManage
-                : HelpdeskPermissions.TenantRolesAssign;
+            var requiredPermission = ResolveOrganizationLookupPermission(permission);
+            if (requiredPermission is null)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["permission"] = ["Choose a supported tenant administration permission."]
+                });
+            }
             var organizationIds = access.IsHelpdeskAdmin
                 ? null
                 : access.OrganizationIdsFor(requiredPermission);
@@ -195,7 +200,7 @@ public static class TenantAdministrationEndpoints
             UserManager<ApplicationUser> users,
             CancellationToken cancellationToken) =>
         {
-            if (!await CanManageAsync(context, accessService, organizationId, cancellationToken)) return Results.Forbid();
+            if (!await CanViewMembersAsync(context, accessService, organizationId, cancellationToken)) return Results.Forbid();
 
             var members = await db.Users.AsNoTracking()
                 .Where(user => user.OrganizationId == organizationId || db.ScopedRoleAssignments.Any(assignment =>
@@ -382,6 +387,27 @@ public static class TenantAdministrationEndpoints
         var access = await accessService.ResolveAsync(context.User, cancellationToken);
         return access.IsHelpdeskAdmin || access.HasPermission(HelpdeskPermissions.TenantRolesAssign, organizationId);
     }
+
+    private static async Task<bool> CanViewMembersAsync(HttpContext context, ICurrentUserAccessService accessService, string organizationId, CancellationToken cancellationToken)
+    {
+        var access = await accessService.ResolveAsync(context.User, cancellationToken);
+        return access.IsHelpdeskAdmin ||
+               access.HasPermission(HelpdeskPermissions.TenantUsersManage, organizationId) ||
+               access.HasPermission(HelpdeskPermissions.TenantRolesAssign, organizationId);
+    }
+
+    private static string? ResolveOrganizationLookupPermission(string? permission) =>
+        string.IsNullOrWhiteSpace(permission)
+            ? HelpdeskPermissions.TenantRolesAssign
+            : permission.Trim() switch
+        {
+            HelpdeskPermissions.TenantSettingsManage => HelpdeskPermissions.TenantSettingsManage,
+            HelpdeskPermissions.TenantUsersManage => HelpdeskPermissions.TenantUsersManage,
+            HelpdeskPermissions.TenantRolesAssign => HelpdeskPermissions.TenantRolesAssign,
+            HelpdeskPermissions.TenantCustomersManage => HelpdeskPermissions.TenantCustomersManage,
+            HelpdeskPermissions.TenantSlaManage => HelpdeskPermissions.TenantSlaManage,
+            _ => null
+        };
 
     private static async Task<bool> CanInviteAsync(HttpContext context, ICurrentUserAccessService accessService, string organizationId, CancellationToken cancellationToken)
     {

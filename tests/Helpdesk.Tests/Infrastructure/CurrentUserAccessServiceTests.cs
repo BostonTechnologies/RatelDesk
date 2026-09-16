@@ -391,6 +391,37 @@ public class CurrentUserAccessServiceTests
                 .SequenceEqual(HelpdeskPermissions.OperatorBundle.OrderBy(permission => permission)));
     }
 
+    [Fact]
+    public async Task Existing_tenant_administrator_definition_is_reconciled_with_scoped_customer_and_sla_permissions()
+    {
+        await using var db = CreateDb();
+        db.Roles.Add(new Role
+        {
+            Id = "legacy-tenant-administrator",
+            Key = ScopedRoleCatalog.TenantAdministrator,
+            Name = "Tenant Administrator",
+            Scope = RoleScopeKind.Tenant,
+            IsBuiltIn = true,
+            IsProtected = true,
+            Permissions =
+            [
+                new RolePermission { Permission = HelpdeskPermissions.TenantUsersManage },
+                new RolePermission { Permission = HelpdeskPermissions.TenantRolesAssign },
+                new RolePermission { Permission = HelpdeskPermissions.TenantSettingsManage }
+            ]
+        });
+        await db.SaveChangesAsync();
+
+        await RoleDefinitionSeeder.EnsureBuiltInsAsync(db);
+
+        var tenantAdministrator = await db.Roles.Include(role => role.Permissions)
+            .SingleAsync(role => role.Key == ScopedRoleCatalog.TenantAdministrator);
+        Assert.Contains(HelpdeskPermissions.TenantCustomersManage, tenantAdministrator.Permissions.Select(permission => permission.Permission));
+        Assert.Contains(HelpdeskPermissions.TenantSlaManage, tenantAdministrator.Permissions.Select(permission => permission.Permission));
+        Assert.DoesNotContain(HelpdeskPermissions.TenantCustomersManage, RoleDefinitionCatalog.TenantAdministratorPermissionCeiling);
+        Assert.DoesNotContain(HelpdeskPermissions.TenantSlaManage, RoleDefinitionCatalog.TenantAdministratorPermissionCeiling);
+    }
+
     private static ClaimsPrincipal User(string email, string subject, params string[] groups)
         => User(email, subject, tenantId: null, groups);
 

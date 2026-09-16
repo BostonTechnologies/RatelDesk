@@ -1,5 +1,7 @@
 @using System.Net.Http.Json
+@using HelpDesk.NewWeb.Components.Pages.Admin.User
 @inject IHttpClientFactory HttpClientFactory
+@inject IDialogService DialogService
 
 <MudDivider Class="my-3" />
 <MudText Typo="Typo.subtitle2">Organization roles</MudText>
@@ -13,13 +15,15 @@ else if (loading)
 }
 else
 {
-    <MudStack Spacing="0" Class="mt-2">
-        @foreach (var role in roles)
+    <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1" Class="mt-2">
+        @foreach (var roleKey in selectedRoleKeys.Take(3))
         {
-            <MudCheckBox T="bool" Value="@selectedRoleKeys.Contains(role.Key)" ValueChanged="enabled => SetRole(role.Key, enabled)" Label="@role.Name" />
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@RoleLabel(roleKey)</MudChip>
         }
+        @if (selectedRoleKeys.Count == 0) { <MudText Typo="Typo.caption" Color="Color.Secondary">No delegable roles assigned</MudText> }
+        @if (selectedRoleKeys.Count > 3) { <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">+@(selectedRoleKeys.Count - 3) more</MudChip> }
     </MudStack>
-    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="@(!dirty || saving)" OnClick="SaveAsync" Class="mt-2">@(saving ? "Saving…" : "Save organization roles")</MudButton>
+    <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="OpenEditorAsync" Class="mt-2">Edit roles</MudButton>
 }
 
 @code {
@@ -27,12 +31,9 @@ else
     [Parameter, EditorRequired] public string UserId { get; set; } = string.Empty;
     private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
     private readonly List<RoleOption> roles = [];
-    private HashSet<string> originalRoleKeys = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> selectedRoleKeys = new(StringComparer.OrdinalIgnoreCase);
     private bool loading = true;
-    private bool saving;
     private string? error;
-    private bool dirty => !originalRoleKeys.SetEquals(selectedRoleKeys);
 
     protected override Task OnInitializedAsync() => LoadAsync();
     private async Task LoadAsync()
@@ -45,8 +46,7 @@ else
             var membership = await Api.GetFromJsonAsync<Membership>($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(OrganizationId)}/users/{Uri.EscapeDataString(UserId)}/assignments");
             roles.Clear();
             roles.AddRange(roleResponse);
-            originalRoleKeys = membership?.RoleKeys.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);
-            selectedRoleKeys = new HashSet<string>(originalRoleKeys, StringComparer.OrdinalIgnoreCase);
+            selectedRoleKeys = membership?.RoleKeys.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);
         }
         catch (HttpRequestException)
         {
@@ -54,21 +54,22 @@ else
         }
         finally { loading = false; }
     }
-    private void SetRole(string key, bool enabled) { if (enabled) selectedRoleKeys.Add(key); else selectedRoleKeys.Remove(key); }
-    private async Task SaveAsync()
+    private async Task OpenEditorAsync()
     {
-        saving = true;
-        error = null;
-        try
+        var dialog = await DialogService.ShowAsync<TenantRoleAssignmentDialog>("Edit linked account roles", new DialogParameters
         {
-            using var response = await Api.PutAsJsonAsync($"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(OrganizationId)}/users/{Uri.EscapeDataString(UserId)}/assignments", new ReplaceMembership(selectedRoleKeys.Order(StringComparer.OrdinalIgnoreCase).ToArray()));
-            if (!response.IsSuccessStatusCode) { error = await response.Content.ReadAsStringAsync(); return; }
+            ["OrganizationId"] = OrganizationId, ["OrganizationName"] = OrganizationId,
+            ["MemberId"] = UserId, ["MemberName"] = "Linked account", ["MemberEmail"] = string.Empty,
+            ["Roles"] = roles.Select(role => new TenantRoleAssignmentDialog.RoleOption(role.Key, role.Name)).ToArray(),
+            ["AssignedRoleKeys"] = selectedRoleKeys.ToArray()
+        }, new DialogOptions { CloseButton = true, CloseOnEscapeKey = true, MaxWidth = MaxWidth.Medium, FullWidth = true });
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
             await LoadAsync();
         }
-        catch (HttpRequestException) { error = "Organization roles could not be saved."; }
-        finally { saving = false; }
     }
+    private string RoleLabel(string key) => roles.FirstOrDefault(role => string.Equals(role.Key, key, StringComparison.OrdinalIgnoreCase))?.Name ?? key;
     private sealed record RoleOption(string Key, string Name);
     private sealed record Membership(string UserId, string OrganizationId, IReadOnlyList<string> RoleKeys);
-    private sealed record ReplaceMembership(IReadOnlyList<string> RoleKeys);
 }

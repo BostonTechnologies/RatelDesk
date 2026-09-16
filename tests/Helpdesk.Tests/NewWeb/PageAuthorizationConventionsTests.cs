@@ -62,8 +62,11 @@ public class PageAuthorizationConventionsTests
         var navMenu = File.ReadAllText(Path.Combine(repoRoot, "src", "HelpDesk.NewWeb", "Components", "Layout", "NavMenu.razor"));
 
         Assert.Contains("@page \"/tenant-administration\"", page, StringComparison.Ordinal);
-        Assert.Contains("@attribute [Authorize(Roles = \"Tenant.Roles.Assign,HelpdeskAdmin\")]", page, StringComparison.Ordinal);
+        Assert.Contains("@attribute [Authorize(Roles = \"Tenant.Users.Manage,Tenant.Roles.Assign,HelpdeskAdmin\")]", page, StringComparison.Ordinal);
         Assert.Contains("api/v1/tenant-admin/organizations", page, StringComparison.Ordinal);
+        Assert.Contains("TenantRoleAssignmentDialog", page, StringComparison.Ordinal);
+        Assert.Contains("No delegable roles assigned", page, StringComparison.Ordinal);
+        Assert.Contains("Edit roles", page, StringComparison.Ordinal);
         Assert.Contains("OnParametersSetAsync", page, StringComparison.Ordinal);
         Assert.Contains("ApplyOrganizationParameterAsync", page, StringComparison.Ordinal);
         Assert.Contains("Roles=\"Tenant.Roles.Assign,Tenant.Settings.Manage\"", navigation, StringComparison.Ordinal);
@@ -82,5 +85,13 @@ public class PageAuthorizationConventionsTests
         Assert.Contains("Members &amp; access", organizationPage, StringComparison.Ordinal);
         Assert.Contains("OrganizationId=\"@OrganizationId\"", organizationPage, StringComparison.Ordinal);
         Assert.Contains("<TenantAdministrationNavigation />", navMenu, StringComparison.Ordinal);
+
+        var teamPage = File.ReadAllText(Path.Combine(repoRoot, "src", "HelpDesk.NewWeb", "Components", "Pages", "Admin", "User", "UserManagement.razor"));
+        Assert.Contains("@attribute [Authorize(Roles = \"Tenant.Users.Manage,Tenant.Roles.Assign,HelpdeskAdmin\")]", teamPage, StringComparison.Ordinal);
+        Assert.Contains("<TenantAdministration IsCanonical=\"true\" />", teamPage, StringComparison.Ordinal);
+
+        var rolePage = File.ReadAllText(Path.Combine(repoRoot, "src", "HelpDesk.NewWeb", "Components", "Pages", "Admin", "Role", "RoleManagement.razor"));
+        Assert.Contains("role-protected-status", rolePage, StringComparison.Ordinal);
+        Assert.Contains("Variant=\"Variant.Outlined\"", rolePage, StringComparison.Ordinal);
     }
 }

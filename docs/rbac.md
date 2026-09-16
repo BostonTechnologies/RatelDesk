@@ -9,7 +9,7 @@ sent by a browser is not trusted as an authorization decision.
 | Role | Scope | Access |
 | --- | --- | --- |
 | Instance Administrator | Instance | Full instance administration, including roles, tenant administration, and local accounts. It remains compatible with the `HelpdeskAdmin` role. |
-| Tenant Administrator | Each assigned tenant | Tenant user, role-assignment, and settings permissions for that tenant. It has no database, identity-provider, or instance-administrator access. |
+| Tenant Administrator | Each assigned tenant | Tenant user, role-assignment, settings, customer/contact, and SLA-management permissions for that tenant. It has no database, identity-provider, or instance-administrator access. |
 | Technician | Each assigned tenant | Incident, request and change read/write; change approval; self-service. Deletion is a separate permission. |
 | Incident / Request / Change Reader | Each assigned tenant | Read all records of the selected module in that tenant, including staff conversation history; no mutation. |
 | Incident / Request / Change Writer | Each assigned tenant | Read, create and update that module in the tenant. Deletion and change approval remain separate. |
@@ -29,11 +29,13 @@ cannot delegate tenant-management, data-management, or instance permissions.
 
 ## Tenant membership delegation
 
-The **Tenant members** navigation item appears only when the API resolves at
-least one tenant where the signed-in principal has `Tenant.Roles.Assign`. The
-page lists local accounts in those tenants, can add or remove the
-operational built-in assignments or a custom role owned by that tenant, and
-can invite a new local account directly into the selected tenant. The invitation
+The tenant Team workflow is available at **Administration → Accounts & Orgs →
+Team** (`/admin/users`) when the API resolves at least one tenant with
+`Tenant.Users.Manage` or `Tenant.Roles.Assign`. It lists only members of the
+selected authorized tenant. Role editing requires `Tenant.Roles.Assign`; local
+invitations require both `Tenant.Users.Manage` and `Tenant.Roles.Assign` for
+the same tenant. Compact member rows show only delegable assignments, and the
+reusable editor keeps an independent draft until Save. The invitation
 response contains a one-time activation token; the administrator must share it
 through an approved secure channel.
 
@@ -49,9 +51,9 @@ account actions.
 
 The API remains authoritative for the page and all direct requests:
 
-- `GET /api/v1/tenant-admin/organizations` returns only tenants where the
-  caller can assign tenant roles (or all enabled tenants to an instance
-  administrator).
+- `GET /api/v1/tenant-admin/organizations?permission=…` accepts only supported
+  tenant-management permissions and returns only enabled tenants for that
+  exact permission (or all enabled tenants to an instance administrator).
 - Tenant member and membership routes require the same tenant-scoped
   permission and reject users outside that tenant and instance administrators.
 - The membership route accepts operational built-ins and custom tenant roles only
@@ -115,6 +117,17 @@ instance administration. Updates are recorded with actor and organization.
 
 Request-task approvals use the existing signed, designated-recipient capability.
 A Request Writer or Request Executor cannot approve on behalf of that recipient.
+
+## Additional tenant administration capabilities
+
+`Tenant.Customers.Manage` is reserved for tenant-scoped customer/contact
+workflows and `Tenant.Sla.Manage` is reserved for tenant SLA configuration,
+calendars, policies, and reporting subscriptions. They are built into Tenant
+Administrator and reconciled by the protected-role seeder on startup and
+role-definition reads, so existing Tenant Administrator assignments gain the
+capability without manual database edits or reassignment. They are intentionally
+absent from the tenant-administrator delegation ceiling: a tenant administrator
+can exercise these capabilities but cannot manufacture them in a custom role.
 
 Incident and request bulk state/assignment changes require Write in every target
 organization. Every target and assignee is checked before any record changes;
