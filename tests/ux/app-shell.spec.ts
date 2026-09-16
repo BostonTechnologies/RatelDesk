@@ -342,7 +342,15 @@ test('portrait tablet uses an aligned two-column catalogue and mobile drawer lif
   const cards = page.locator('.self-service-catalog-card');
   await expect(cards.first()).toBeVisible();
   await expect.poll(async () => (await getCatalogCardGeometry(page)).length).toBeGreaterThan(1);
-  const geometry = await getCatalogCardGeometry(page);
+  let geometry: CatalogCardGeometry[] = [];
+  await expect.poll(async () => {
+    geometry = await getCatalogCardGeometry(page);
+    return geometry.reduce<number[]>((leftEdges, card) =>
+      leftEdges.some((left) => Math.abs(left - card.cardLeft) <= 2)
+        ? leftEdges
+        : [...leftEdges, card.cardLeft], []).length;
+  }).toBe(2);
+
   const columns = geometry.reduce<number[]>((leftEdges, card) =>
     leftEdges.some((left) => Math.abs(left - card.cardLeft) <= 2)
       ? leftEdges
