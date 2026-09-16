@@ -12,16 +12,16 @@ public class EmailRulesAdminUxTests
     }
 
     [Fact]
-    public void NavMenu_LinksEmailRulesUnderAdminEmailDesign()
+    public void NavMenu_LinksEmailRulesUnderAdminEmailSettings()
     {
         var source = ReadNewWebSource("Components/Layout/NavMenu.razor");
 
-        var emailDesignIndex = source.IndexOf("Title=\"Email Design\"", StringComparison.Ordinal);
+        var emailSettingsIndex = source.IndexOf("Title=\"Email Settings\"", StringComparison.Ordinal);
         var emailRulesIndex = source.IndexOf("Href=\"/admin/email-rules\"", StringComparison.Ordinal);
         var templatesIndex = source.IndexOf("Href=\"/admin/templates\"", StringComparison.Ordinal);
 
-        Assert.True(emailDesignIndex >= 0);
-        Assert.True(emailRulesIndex > emailDesignIndex);
+        Assert.True(emailSettingsIndex >= 0);
+        Assert.True(emailRulesIndex > emailSettingsIndex);
         Assert.True(templatesIndex > emailRulesIndex);
         Assert.Contains(">Email Rules</MudNavLink>", source, StringComparison.Ordinal);
     }

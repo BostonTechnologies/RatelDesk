@@ -41,8 +41,6 @@
             </AuthorizeView>
             <AuthorizeView Roles="HelpdeskAdmin" Context="operationsAuth">
                 <MudNavLink Href="/ops/hangfire" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Timer">Hangfire Ops</MudNavLink>
-                <MudNavLink Href="/settings/connectivity" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.CloudSync">Connectivity</MudNavLink>
-                <MudNavLink Href="/admin/pending-emails" Icon="@Icons.Material.Filled.MarkunreadMailbox">Pending Emails</MudNavLink>
             </AuthorizeView>
         </MudNavGroup>
         </AuthorizeView>
@@ -67,7 +65,7 @@
             <MudNavLink Href="notifications" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Notifications">Notifications</MudNavLink>
             <TenantAdministrationNavigation />
             <AuthorizeView Roles="HelpdeskAdmin" Context="adminAuth">
-                <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="false">
+                <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="@administrationExpanded" ExpandedChanged="OnAdministrationExpandedChanged">
                     <MudNavGroup Title="Accounts & Orgs" Icon="@Icons.Material.Filled.AccountTree" Expanded="false">
                         <MudNavLink Href="/admin/users" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Group">Team</MudNavLink>
                         <MudNavLink Href="/admin/customers" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.People">
@@ -82,18 +80,25 @@
                         <MudNavLink Href="/admin/tenant-sla-settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Tune">Tenant SLA Settings</MudNavLink>
                     </MudNavGroup>
 
-                    <MudNavLink Href="/admin/roles" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Security">Roles & Permissions</MudNavLink>
-                    <MudNavLink Href="/admin/automation" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.SmartToy">Automation Rules</MudNavLink>
-                    <MudNavLink Href="/admin/requests/services" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Apps">Service Explorer</MudNavLink>
-                    <MudNavLink Href="/admin/categories" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Category">Ticket Categories</MudNavLink>
-                    <MudNavLink Href="/admin/ai-assistant-webhooks" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Webhook">Webhooks</MudNavLink>
-                    <MudNavLink Href="/admin/branding" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Palette">Branding &amp; Identity</MudNavLink>
+                    <MudNavLink Href="/admin/roles" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Security">Roles &amp; Permissions</MudNavLink>
 
-                    <MudNavGroup Title="Email Design" Icon="@Icons.Material.Filled.Email" Expanded="false">
-                        <MudNavLink Href="/admin/email-rules" Icon="@Icons.Material.Filled.Rule">Email Rules</MudNavLink>
-                        <MudNavLink Href="/admin/templates" Icon="@Icons.Material.Filled.Email">Email Templates</MudNavLink>
-                        <MudNavLink Href="/admin/layouts" Icon="@Icons.Material.Filled.ViewQuilt">Email Layouts</MudNavLink>
+                    <MudNavGroup Title="Email Settings" Icon="@Icons.Material.Filled.Email" Expanded="@emailSettingsExpanded" ExpandedChanged="OnEmailSettingsExpandedChanged">
+                        <MudNavLink Href="/admin/email-settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Mail">Mailbox Configuration</MudNavLink>
+                        <MudNavLink Href="/admin/pending-emails" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.MarkunreadMailbox">Pending Emails</MudNavLink>
+                        <MudNavLink Href="/admin/email-rules" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Rule">Email Rules</MudNavLink>
+                        <MudNavLink Href="/admin/templates" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Email">Email Templates</MudNavLink>
+                        <MudNavLink Href="/admin/layouts" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ViewQuilt">Email Layouts</MudNavLink>
                     </MudNavGroup>
+
+                    <MudNavGroup Title="Automation" Icon="@Icons.Material.Filled.SmartToy" Expanded="@automationExpanded" ExpandedChanged="OnAutomationExpandedChanged">
+                        <MudNavLink Href="/settings/connectivity" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.CloudSync">Orchestrator</MudNavLink>
+                        <MudNavLink Href="/admin/automation" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.SmartToy">Automation Rules</MudNavLink>
+                        <MudNavLink Href="/admin/requests/services" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Apps">Service Explorer</MudNavLink>
+                        <MudNavLink Href="/admin/ai-assistant-webhooks" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Webhook">Webhooks</MudNavLink>
+                    </MudNavGroup>
+
+                    <MudNavLink Href="/admin/categories" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Category">Ticket Categories</MudNavLink>
+                    <MudNavLink Href="/admin/branding" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Palette">Branding &amp; Identity</MudNavLink>
                 </MudNavGroup>
             </AuthorizeView>
             <MudNavLink Href="/logout" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Logout">Logout</MudNavLink>
@@ -106,19 +111,64 @@
 
 
 @code {
-    private string? currentUrl;
+    private bool administrationExpanded;
+    private bool emailSettingsExpanded;
+    private bool automationExpanded;
 
     protected override void OnInitialized()
     {
-        currentUrl = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        UpdateExpandedGroups(NavigationManager.Uri);
         NavigationManager.LocationChanged += OnLocationChanged;
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
-        currentUrl = NavigationManager.ToBaseRelativePath(e.Location);
+        UpdateExpandedGroups(e.Location);
         StateHasChanged();
     }
+
+    private void OnAdministrationExpandedChanged(bool expanded) => administrationExpanded = expanded;
+
+    private void OnEmailSettingsExpandedChanged(bool expanded) => emailSettingsExpanded = expanded;
+
+    private void OnAutomationExpandedChanged(bool expanded) => automationExpanded = expanded;
+
+    private void UpdateExpandedGroups(string location)
+    {
+        var path = NavigationManager.ToBaseRelativePath(location)
+            .Split(['?', '#'], 2)[0]
+            .TrimStart('/');
+
+        var isEmailSettingsPath = MatchesPath(path, "admin/email-settings")
+            || MatchesPath(path, "admin/pending-emails")
+            || MatchesPath(path, "admin/email-rules")
+            || MatchesPath(path, "admin/templates")
+            || MatchesPath(path, "admin/layouts");
+        var isAutomationPath = MatchesPath(path, "settings/connectivity")
+            || MatchesPath(path, "admin/orchestration/orchestration")
+            || MatchesPath(path, "admin/automation")
+            || MatchesPath(path, "admin/requests/services")
+            || MatchesPath(path, "admin/ai-assistant-webhooks");
+
+        if (isEmailSettingsPath || isAutomationPath)
+        {
+            administrationExpanded = true;
+        }
+
+        if (isEmailSettingsPath)
+        {
+            emailSettingsExpanded = true;
+        }
+
+        if (isAutomationPath)
+        {
+            automationExpanded = true;
+        }
+    }
+
+    private static bool MatchesPath(string path, string target) =>
+        string.Equals(path, target, StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith($"{target}/", StringComparison.OrdinalIgnoreCase);
 
     public void Dispose()
     {
