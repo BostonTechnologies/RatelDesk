@@ -52,7 +52,9 @@ public static class RoleDefinitionCatalog
             [
                 HelpdeskPermissions.TenantUsersManage,
                 HelpdeskPermissions.TenantRolesAssign,
-                HelpdeskPermissions.TenantSettingsManage
+                HelpdeskPermissions.TenantSettingsManage,
+                HelpdeskPermissions.TenantCustomersManage,
+                HelpdeskPermissions.TenantSlaManage
             ]),
         new(
             ScopedRoleCatalog.Technician,

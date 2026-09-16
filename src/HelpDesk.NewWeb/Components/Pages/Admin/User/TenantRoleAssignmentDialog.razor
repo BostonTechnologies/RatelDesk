@@ -1,0 +1,118 @@
+@inject IHttpClientFactory HttpClientFactory
+
+<MudDialog MaxWidth="MaxWidth.Medium" FullWidth="true">
+    <TitleContent>
+        <MudStack Spacing="0">
+            <MudText Typo="Typo.h6">Edit roles for @MemberName</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">@MemberEmail · @OrganizationName</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrWhiteSpace(error))
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@error</MudAlert>
+        }
+        <MudTextField T="string"
+                      @bind-Value="search"
+                      Label="Search roles"
+                      Immediate="true"
+                      Margin="Margin.Dense"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Class="mb-2" />
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="d-block mb-2">@selectedRoleKeys.Count role@(selectedRoleKeys.Count == 1 ? string.Empty : "s") selected</MudText>
+        <MudList T="string" Dense="true" Class="tenant-role-dialog-list">
+            @foreach (var role in FilteredRoles)
+            {
+                <MudListItem T="string" Value="@role.Key">
+                    <MudCheckBox T="bool"
+                                 Value="@selectedRoleKeys.Contains(role.Key)"
+                                 ValueChanged="enabled => SetRole(role.Key, enabled)"
+                                 Label="@role.Name" />
+                </MudListItem>
+            }
+        </MudList>
+        @if (FilteredRoles.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">No assignable roles match your search.</MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" Disabled="@saving" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!IsChanged || saving)" OnClick="SaveAsync">@(saving ? "Saving…" : "Save roles")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public string OrganizationId { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string OrganizationName { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string MemberId { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string MemberName { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string MemberEmail { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public IReadOnlyList<RoleOption> Roles { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<string> AssignedRoleKeys { get; set; } = [];
+
+    private HttpClient Api => HttpClientFactory.CreateClient("HelpdeskApi");
+    private HashSet<string> originalRoleKeys = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> selectedRoleKeys = new(StringComparer.OrdinalIgnoreCase);
+    private string search = string.Empty;
+    private bool saving;
+    private string? error;
+    private IReadOnlyList<RoleOption> FilteredRoles => Roles
+        .Where(role => string.IsNullOrWhiteSpace(search) ||
+                       role.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                       role.Key.Contains(search, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(role => role.Name, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    private bool IsChanged => !originalRoleKeys.SetEquals(selectedRoleKeys);
+
+    protected override void OnInitialized()
+    {
+        originalRoleKeys = AssignedRoleKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        selectedRoleKeys = new HashSet<string>(originalRoleKeys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void SetRole(string key, bool enabled)
+    {
+        if (enabled)
+        {
+            selectedRoleKeys.Add(key);
+        }
+        else
+        {
+            selectedRoleKeys.Remove(key);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        error = null;
+        try
+        {
+            var path = $"api/v1/tenant-admin/organizations/{Uri.EscapeDataString(OrganizationId)}/users/{Uri.EscapeDataString(MemberId)}/assignments";
+            using var response = await Api.PutAsJsonAsync(path, new ReplaceTenantMembershipRequest(selectedRoleKeys.Order(StringComparer.OrdinalIgnoreCase).ToArray()));
+            if (!response.IsSuccessStatusCode)
+            {
+                error = "Roles could not be saved. Your tenant access or available role catalog may have changed.";
+                return;
+            }
+
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        catch (HttpRequestException)
+        {
+            error = "Roles could not be saved. Check your connection and try again.";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+
+    public sealed record RoleOption(string Key, string Name);
+    private sealed record ReplaceTenantMembershipRequest(IReadOnlyList<string> RoleKeys);
+}

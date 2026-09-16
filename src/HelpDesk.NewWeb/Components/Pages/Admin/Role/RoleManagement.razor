@@ -9,10 +9,10 @@
 
 <PageTitle>Roles & Permissions</PageTitle>
 
-<MudPaper Class="pa-4">
+<MudPaper Class="helpdesk-content-surface pa-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
         <MudStack Spacing="0">
-            <MudText Typo="Typo.h5">Roles & Permissions</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="helpdesk-page-title">Roles & Permissions</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">Permissions apply only in the organization shown on each assignment.</MudText>
         </MudStack>
         <MudSpacer />
@@ -63,7 +63,8 @@
     }
     else
     {
-        <MudTable Items="roles" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+        <MudTextField T="string" @bind-Value="searchText" Label="Search roles" Immediate="true" Margin="Margin.Dense" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Class="helpdesk-list-search mb-3" />
+        <MudTable Items="FilteredRoles" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="role-management-table">
             <HeaderContent>
                 <MudTh>Role</MudTh>
                 <MudTh>Scope / owner</MudTh>
@@ -73,12 +74,14 @@
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="Role">
-                    <MudStack Spacing="0">
-                        <MudText>@context.Name</MudText>
+                    <MudStack Spacing="0" Class="role-row-heading">
+                        <MudText Typo="Typo.subtitle2">@context.Name</MudText>
                         <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Key</MudText>
                         @if (context.IsProtected)
                         {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Info">Built-in protected</MudChip>
+                            <MudTooltip Text="Built-in roles are protected and cannot be edited or deleted.">
+                                <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Lock" Class="role-protected-status">Built-in</MudChip>
+                            </MudTooltip>
                         }
                     </MudStack>
                 </MudTd>
@@ -130,6 +133,12 @@
     private string? draftOwnerOrganizationId;
     private HashSet<string> draftPermissions = new(StringComparer.OrdinalIgnoreCase);
     private bool isInstanceAdministrator;
+    private string searchText = string.Empty;
+    private IEnumerable<RoleDefinition> FilteredRoles => string.IsNullOrWhiteSpace(searchText)
+        ? roles
+        : roles.Where(role => role.Name.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+                              role.Key.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+                              (!string.IsNullOrWhiteSpace(role.OwnerOrganizationId) && OrganizationLabel(role.OwnerOrganizationId).Contains(searchText, StringComparison.OrdinalIgnoreCase)));
 
     protected override async Task OnInitializedAsync()
     {
@@ -265,6 +274,7 @@
         HelpdeskPermissions.RequestRead => "Read requests", HelpdeskPermissions.RequestWrite => "Write requests", HelpdeskPermissions.RequestDelete => "Delete requests", HelpdeskPermissions.RequestExecute => "Execute requests",
         HelpdeskPermissions.ChangeRead => "Read changes", HelpdeskPermissions.ChangeWrite => "Write changes", HelpdeskPermissions.ChangeDelete => "Delete changes", HelpdeskPermissions.ChangeApprove => "Approve changes",
         HelpdeskPermissions.TenantUsersManage => "Manage tenant users", HelpdeskPermissions.TenantRolesAssign => "Assign tenant roles", HelpdeskPermissions.TenantSettingsManage => "Manage tenant settings",
+        HelpdeskPermissions.TenantCustomersManage => "Manage tenant customers", HelpdeskPermissions.TenantSlaManage => "Manage tenant SLA",
         HelpdeskPermissions.SelfServiceUser => "Self-service access", _ => permission
     };
 

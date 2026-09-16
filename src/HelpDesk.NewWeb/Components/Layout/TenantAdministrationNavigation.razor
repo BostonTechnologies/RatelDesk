@@ -3,6 +3,9 @@
         <AuthorizeView Roles="Tenant.Roles.Assign,Tenant.Settings.Manage" Context="delegatedAdmin">
             <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="false">
                 <MudNavGroup Title="Accounts &amp; Orgs" Icon="@Icons.Material.Filled.AccountTree" Expanded="false">
+                    <AuthorizeView Roles="Tenant.Users.Manage,Tenant.Roles.Assign" Context="teamAdministrator">
+                        <MudNavLink Href="/admin/users" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Group">Team</MudNavLink>
+                    </AuthorizeView>
                     <MudNavLink Href="/admin/organizations" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Apartment">Organizations</MudNavLink>
                 </MudNavGroup>
                 <AuthorizeView Roles="Tenant.Roles.Assign" Context="roleAdministrator">

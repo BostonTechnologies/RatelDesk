@@ -25,6 +25,8 @@ public static class HelpdeskPermissions
     public const string TenantUsersManage = "Tenant.Users.Manage";
     public const string TenantRolesAssign = "Tenant.Roles.Assign";
     public const string TenantSettingsManage = "Tenant.Settings.Manage";
+    public const string TenantCustomersManage = "Tenant.Customers.Manage";
+    public const string TenantSlaManage = "Tenant.Sla.Manage";
 
     public static readonly string[] AssignablePermissions =
     [
@@ -49,7 +51,9 @@ public static class HelpdeskPermissions
         DataManagementAdmin,
         TenantUsersManage,
         TenantRolesAssign,
-        TenantSettingsManage
+        TenantSettingsManage,
+        TenantCustomersManage,
+        TenantSlaManage
     ];
 
     public static readonly string[] UserBundle =
