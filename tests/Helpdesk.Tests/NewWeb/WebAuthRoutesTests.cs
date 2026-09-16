@@ -435,6 +435,24 @@ public class WebAuthRoutesTests
     }
 
     [Fact]
+    public async Task Anonymous_User_Is_Challenged_By_Authentik_For_Email_Settings()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var response = await client.GetAsync("/admin/email-settings");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.NotNull(response.Headers.Location);
+        Assert.StartsWith("https://id.example.com/application/o/rateldesk/authorize",
+            response.Headers.Location!.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Authenticated_User_Can_Open_Authorized_Page()
     {
         using var factory = CreateFactory(enableTestAuth: true);
@@ -447,6 +465,20 @@ public class WebAuthRoutesTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("Authentication Dashboard", content, StringComparison.Ordinal);
         Assert.Contains("stub-access-token", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HelpdeskAdmin_Can_Open_Email_Settings_Page()
+    {
+        using var factory = CreateFactory(enableTestAuth: true);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "HelpdeskAdmin");
+
+        var response = await client.GetAsync("/admin/email-settings");
+        var content = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("Email Settings / Mailbox Configuration", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -491,6 +523,21 @@ public class WebAuthRoutesTests
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "Technician");
 
         var response = await client.GetAsync("/admin/users");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Authenticated_User_Without_Admin_Role_Gets_Forbidden_For_Email_Settings()
+    {
+        using var factory = CreateFactory(enableTestAuth: true);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", "Technician");
+
+        var response = await client.GetAsync("/admin/email-settings");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }

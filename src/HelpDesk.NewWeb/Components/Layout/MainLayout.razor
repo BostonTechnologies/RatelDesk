@@ -62,7 +62,6 @@
                     <MudMenu Icon="@Icons.Material.Filled.Settings">
                         <MudMenuItem>Profile</MudMenuItem>
                         <MudMenuItem>Preferences</MudMenuItem>
-                        <MudMenuItem OnClick="OpenEmailSettings">Email Settings</MudMenuItem>
                         <MudDivider />
                         @if (SupportsLocalAccounts)
                         {
@@ -90,7 +89,6 @@
                         <MudDivider />
                         <MudMenuItem Icon="@Icons.Material.Filled.Person">Profile</MudMenuItem>
                         <MudMenuItem Icon="@Icons.Material.Filled.Tune">Preferences</MudMenuItem>
-                        <MudMenuItem OnClick="OpenEmailSettings" Icon="@Icons.Material.Filled.Email">Email Settings</MudMenuItem>
                         <MudDivider />
                         @if (SupportsLocalAccounts)
                         {
@@ -139,7 +137,6 @@
         string.Equals(Configuration["Authentication:Mode"], "Local", StringComparison.OrdinalIgnoreCase)
         || string.Equals(Configuration["Authentication:Mode"], "Hybrid", StringComparison.OrdinalIgnoreCase);
 
-    [Inject] private IDialogService DialogService { get; set; } = default!;
     private bool _drawerOpen = true;
     private bool searchOpen;
     private Helpdesk.Shared.Build.BuildInfo _appBarVersion = new("dev", "unknown", "unknown", "HelpDesk.NewWeb", "unknown");
@@ -198,12 +195,6 @@
     {
         searchOpen = value;
         return Task.CompletedTask;
-    }
-
-    private async Task OpenEmailSettings()
-    {
-        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
-        await DialogService.ShowAsync<Dialogs.Settings.EmailSettingsDialog>("IMAP Settings", options);
     }
 
     public async ValueTask DisposeAsync()

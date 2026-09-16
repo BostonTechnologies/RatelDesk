@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -23,6 +24,26 @@ namespace Helpdesk.Tests.Api;
 
 public class EmailSettingsEndpointsTests
 {
+    [Fact]
+    public async Task Get_RequiresHelpdeskAdminAndDoesNotReturnSettingsToDeniedCallers()
+    {
+        await using var harness = await Harness.CreateAsync();
+        await harness.SeedAsync(clientSecret: "stored-secret");
+
+        using var anonymousClient = harness.CreateClient();
+        var anonymous = await anonymousClient.GetAsync("/api/v1/email-settings");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+
+        using var ordinaryClient = harness.CreateClient("Technician");
+        var ordinaryUser = await ordinaryClient.GetAsync("/api/v1/email-settings");
+        var deniedContent = await ordinaryUser.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Forbidden, ordinaryUser.StatusCode);
+        Assert.DoesNotContain("stored-secret", deniedContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("helpdesk@example.com", deniedContent, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Get_ReturnsDisabledSettings()
     {
@@ -225,6 +246,17 @@ public class EmailSettingsEndpointsTests
         public HttpClient Client { get; }
         public IImapEmailService Imap { get; }
 
+        public HttpClient CreateClient(string? role = null)
+        {
+            var client = _app.GetTestClient();
+            if (role is not null)
+            {
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test", role);
+            }
+
+            return client;
+        }
+
         public static async Task<Harness> CreateAsync()
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
@@ -313,10 +345,18 @@ public class EmailSettingsEndpointsTests
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
+            if (!Request.Headers.TryGetValue("Authorization", out var authorization))
+            {
+                return Task.FromResult(AuthenticateResult.Fail("No authorization header"));
+            }
+
+            var role = authorization.ToString().Contains(HelpdeskPermissions.HelpdeskAdmin, StringComparison.OrdinalIgnoreCase)
+                ? HelpdeskPermissions.HelpdeskAdmin
+                : "Technician";
             var claims = new[]
             {
                 new Claim(ClaimTypes.Name, "email-settings-test"),
-                new Claim(ClaimTypes.Role, HelpdeskPermissions.HelpdeskAdmin)
+                new Claim(ClaimTypes.Role, role)
             };
             var identity = new ClaimsIdentity(claims, Scheme.Name);
             var principal = new ClaimsPrincipal(identity);

@@ -54,6 +54,16 @@ public class PageAuthorizationConventionsTests
     }
 
     [Fact]
+    public void EmailSettingsPage_IsRestrictedToInstanceAdministrators()
+    {
+        var pagePath = Path.Combine(TestEnvironment.RepositoryRoot, "src", "HelpDesk.NewWeb", "Components", "Pages", "Admin", "Email", "EmailSettings.razor");
+        var contents = File.ReadAllText(pagePath);
+
+        Assert.Contains("@page \"/admin/email-settings\"", contents, StringComparison.Ordinal);
+        Assert.Contains("@attribute [Authorize(Roles = \"HelpdeskAdmin\")]", contents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TenantMembershipPage_UsesApiResolvedTenantAccess()
     {
         var repoRoot = TestEnvironment.RepositoryRoot;

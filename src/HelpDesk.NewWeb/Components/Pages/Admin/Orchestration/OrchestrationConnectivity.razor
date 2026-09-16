@@ -7,11 +7,14 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
 
-<PageTitle>Connectivity Status</PageTitle>
+<PageTitle>Orchestrator</PageTitle>
 
 <MudPaper Class="pa-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-        <MudText Typo="Typo.h5">External orchestration Connectivity Status</MudText>
+        <div>
+            <MudText Typo="Typo.h4" HtmlTag="h1">Orchestrator</MudText>
+            <MudText Typo="Typo.body2">Connectivity and validation</MudText>
+        </div>
         <MudSpacer />
         @if (settings is not null)
         {
