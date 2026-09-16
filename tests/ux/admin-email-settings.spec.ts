@@ -61,9 +61,9 @@ test('Email Settings is usable from the phone drawer without horizontal overflow
   await authenticate(page);
 
   await page.getByTestId('navigation-toggle').click();
-  const drawer = page.getByTestId('app-navigation-drawer');
+  const drawer = page.locator('[data-testid="app-navigation-drawer"]:visible');
   await expect(drawer.getByRole('link', { name: 'Home' })).toBeVisible();
-  await drawer.getByText('Administration', { exact: true }).click();
+  await drawer.getByRole('button', { name: 'Toggle Administration' }).click();
   await drawer.getByText('Email Settings', { exact: true }).click();
   await drawer.getByRole('link', { name: 'Mailbox Configuration' }).click();
 

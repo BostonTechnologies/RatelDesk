@@ -186,11 +186,11 @@ test('first-run setup initializes, survives restart, and supports isolated scope
     await reader.goto(`/incidents/${incident.id}`);
     await expect(reader.getByText('Colleague incident for reader acceptance', { exact: true })).toBeVisible();
     await expect(reader.getByRole('button', { name: 'Save Changes', exact: true })).toBeDisabled();
-    await expect(reader.getByLabel('Priority', { exact: true })).toBeDisabled();
+    await expect(reader.getByRole('combobox', { name: 'Priority', exact: true })).toBeDisabled();
     await expect(reader.getByRole('link', { name: 'Changes', exact: true })).toHaveCount(0);
     await writer.goto(`/incidents/${incident.id}`);
     await expect(writer.getByText('Colleague incident for reader acceptance', { exact: true })).toBeVisible();
-    await expect(writer.getByLabel('Priority', { exact: true })).toBeEnabled();
+    await expect(writer.getByRole('combobox', { name: 'Priority', exact: true })).toBeEnabled();
     const denied = await reader.request.put(`/api/v1/incidents/${incident.id}`, { headers, data: { priority: 1 } });
     expect(denied.status()).toBe(403);
     const permitted = await writer.request.put(`/api/v1/incidents/${incident.id}`, { headers, data: { priority: 1 } });
