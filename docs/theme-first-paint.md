@@ -1,0 +1,5 @@
+# Theme first-paint contract
+
+`RatelDeskTheme` is the source of truth for both MudBlazor's runtime theme and the head-resident prepaint variables emitted by `RatelDeskPrepaintTheme`. The synchronous bootstrap normalizes the existing `helpdesk.theme.preference` value, resolves System against `prefers-color-scheme`, and sets the document attribute plus `color-scheme` before stylesheet and body parsing can paint visible application content.
+
+The prepaint selectors retain higher specificity than MudBlazor's initial `:root` variables, so the browser does not expose the provider's server-side light default while the interactive provider reads browser state. Runtime ownership then remains with `ThemePreferenceProvider`; it adopts the normalized preference, applies user selections safely even if storage is blocked, and retains System-mode OS change handling. The Playwright first-paint spec pauses only the Blazor runtime and observes real prerendered body/card/text colors before and after runtime release.

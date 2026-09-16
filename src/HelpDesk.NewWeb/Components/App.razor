@@ -4,13 +4,75 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <base href="/" />  
+    <style id="helpdesk-prepaint-theme">@((MarkupString)RatelDeskPrepaintTheme.Css)</style>
     <script>
         (function () {
-            const key = "helpdesk.theme.preference";
-            const stored = window.localStorage.getItem(key);
-            const isDark = stored === "dark" || (stored !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-            document.documentElement.dataset.helpdeskTheme = isDark ? "dark" : "light";
+            const storageKey = "helpdesk.theme.preference";
+
+            const normalize = (value) => typeof value === "string" ? value.trim().toLowerCase() : "system";
+            const storage = () => {
+                try {
+                    return window.localStorage;
+                } catch {
+                    return null;
+                }
+            };
+            const get = () => {
+                const availableStorage = storage();
+                if (!availableStorage) {
+                    return null;
+                }
+
+                try {
+                    return availableStorage.getItem(storageKey);
+                } catch {
+                    return null;
+                }
+            };
+            const systemTheme = () => {
+                try {
+                    return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
+                } catch {
+                    return "light";
+                }
+            };
+            const resolve = (value) => {
+                const preference = normalize(value);
+                return preference === "dark" || preference === "light" ? preference : systemTheme();
+            };
+            const apply = (value) => {
+                const theme = value === true || value === "dark" ? "dark" : "light";
+                document.documentElement.dataset.helpdeskTheme = theme;
+                document.documentElement.style.colorScheme = theme;
+                return theme;
+            };
+
+            window.helpdeskThemePreference = {
+                get: () => normalize(get()),
+                set: (value) => {
+                    const preference = normalize(value);
+                    const availableStorage = storage();
+                    if (!availableStorage) {
+                        return;
+                    }
+
+                    try {
+                        if (preference === "system") {
+                            availableStorage.removeItem(storageKey);
+                        } else {
+                            availableStorage.setItem(storageKey, preference);
+                        }
+                    } catch {
+                        // The in-memory selection is still applied by the caller.
+                    }
+                },
+                apply,
+                resolve
+            };
+
+            apply(resolve(get()));
         }());
     </script>
     <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap" rel="stylesheet" />
@@ -40,7 +102,6 @@
     <script src=@Assets["_content/MudBlazor/MudBlazor.min.js"]></script>
     <script src=@Assets["_content/Extensions.MudBlazor.StaticInput/NavigationObserver.js"]></script>
     <script src="js/global-search-hotkeys.js"></script>
-    <script src="js/theme-preference.js"></script>
     <script>
         window.scrollToNotificationRow = function (id) {
             setTimeout(function () {
