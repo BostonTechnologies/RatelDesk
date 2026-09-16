@@ -21,6 +21,7 @@
     private bool isDarkMode;
     private bool systemDarkMode;
     private bool initialized;
+    private long selectionVersion;
 
     public ThemePreferenceMode Mode => mode;
     public bool IsDarkMode => isDarkMode;
@@ -45,8 +46,16 @@
             return;
         }
 
-        mode = ParseMode(await JS.InvokeAsync<string?>("helpdeskThemePreference.get"));
-        systemDarkMode = await themeProvider.GetSystemDarkModeAsync();
+        var initializationVersion = selectionVersion;
+        var persistedMode = ParseMode(await JS.InvokeAsync<string?>("helpdeskThemePreference.get"));
+        var initialSystemDarkMode = await themeProvider.GetSystemDarkModeAsync();
+
+        if (initializationVersion == selectionVersion)
+        {
+            mode = persistedMode;
+        }
+
+        systemDarkMode = initialSystemDarkMode;
         isDarkMode = ResolveDarkMode();
         initialized = true;
 
@@ -57,11 +66,17 @@
 
     public async Task SetModeAsync(ThemePreferenceMode selectedMode)
     {
+        var updateVersion = ++selectionVersion;
         mode = selectedMode;
 
         if (mode is ThemePreferenceMode.System && themeProvider is not null)
         {
             systemDarkMode = await themeProvider.GetSystemDarkModeAsync();
+        }
+
+        if (updateVersion != selectionVersion)
+        {
+            return;
         }
 
         isDarkMode = ResolveDarkMode();
