@@ -133,6 +133,7 @@ jobs:
             release-assets/*.zip
             release-assets/SHA256SUMS
             release-assets/release-manifest.json
+            release-assets/release-manifest.json.sha256
           if-no-files-found: error
 
       - name: Start and smoke-test source Compose stack

@@ -195,9 +195,9 @@ jobs:
 
       - name: Verify asset manifest and checksums
         run: |
-          test "$(find release-assets -maxdepth 1 -name 'rateldesk-cli-*.tar.gz' | wc -l)" = 4
+          test "$(find release-assets -maxdepth 1 -name 'rateldesk-cli-*.tar.gz' | wc -l)" = 2
           test "$(find release-assets -maxdepth 1 -name 'rateldesk-cli-*.zip' | wc -l)" = 1
-          test "$(find release-assets -maxdepth 1 -name 'rateldesk-mcp-stdio-*.tar.gz' | wc -l)" = 4
+          test "$(find release-assets -maxdepth 1 -name 'rateldesk-mcp-stdio-*.tar.gz' | wc -l)" = 2
           test "$(find release-assets -maxdepth 1 -name 'rateldesk-mcp-stdio-*.zip' | wc -l)" = 1
           (cd release-assets && sha256sum --check SHA256SUMS)
           test -s release-assets/release-manifest.json
@@ -217,6 +217,7 @@ jobs:
             release-assets/*.zip
             release-assets/SHA256SUMS
             release-assets/release-manifest.json
+            release-assets/release-manifest.json.sha256
           retention-days: 14
 
   archive-runtime:
