@@ -19,8 +19,8 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         _factory = factory.WithWebHostBuilder(builder =>
         {
             builder.UseIsolatedTestStorage();
-            builder.UseSetting(WebHostDefaults.EnvironmentKey, "Development");
-            builder.UseEnvironment("Development");
+            builder.UseSetting(WebHostDefaults.EnvironmentKey, "Production");
+            builder.UseEnvironment("Production");
             builder.ConfigureAppConfiguration((_, cfg) =>
             {
                 cfg.AddInMemoryCollection(new Dictionary<string, string?>
@@ -46,6 +46,10 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.Contains("\"openapi\"", content, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/api/v1/system/version", content, StringComparison.Ordinal);
         using var document = JsonDocument.Parse(content);
+        // The direct API document keeps Try It on its own root; the Web-hosted
+        // Scalar configuration supplies the distinct /api proxy server below.
+        var directServers = document.RootElement.GetProperty("servers");
+        Assert.Equal(client.BaseAddress!.GetLeftPart(UriPartial.Authority) + "/", directServers[0].GetProperty("url").GetString());
         Assert.Equal("RatelDesk API", document.RootElement.GetProperty("info").GetProperty("title").GetString());
         Assert.False(string.IsNullOrWhiteSpace(document.RootElement.GetProperty("info").GetProperty("version").GetString()));
         Assert.True(document.RootElement.TryGetProperty("x-tagGroups", out var groups));
@@ -71,6 +75,39 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.Equal(["AiAgentJwt"], SecuritySchemes(document, "/api/v1/auth/ai-agent/status", "get"));
         Assert.Equal(["IntegrationCredential", "JwtBearer", "LocalSession"], SecuritySchemes(document, "/api/v1/incidents", "get"));
         Assert.Equal(["McpIntegrationCredential"], SecuritySchemes(document, "/api/v1/mcp/execution-token", "post"));
+    }
+
+    [Fact]
+    public async Task OpenApi_V1_Json_classifies_every_documented_operation()
+    {
+        using var client = _factory.CreateClient();
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var knownTags = document.RootElement.GetProperty("tags")
+            .EnumerateArray()
+            .Select(tag => tag.GetProperty("name").GetString())
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        var violations = new List<string>();
+        var operationCount = 0;
+
+        foreach (var path in document.RootElement.GetProperty("paths").EnumerateObject())
+        {
+            foreach (var operation in path.Value.EnumerateObject().Where(item => item.Name is "delete" or "get" or "head" or "options" or "patch" or "post" or "put"))
+            {
+                operationCount++;
+                if (!operation.Value.TryGetProperty("tags", out var tags) || tags.GetArrayLength() == 0)
+                {
+                    violations.Add($"{operation.Name.ToUpperInvariant()} {path.Name} is untagged");
+                    continue;
+                }
+
+                foreach (var tag in tags.EnumerateArray().Select(item => item.GetString()).OfType<string>().Where(tag => !knownTags.Contains(tag)))
+                    violations.Add($"{operation.Name.ToUpperInvariant()} {path.Name} uses unknown tag '{tag}'");
+            }
+        }
+
+        Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations));
+        Assert.Equal(343, operationCount);
     }
 
     private static string[] SecuritySchemes(JsonDocument document, string path, string method)

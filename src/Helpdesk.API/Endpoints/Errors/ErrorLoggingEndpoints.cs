@@ -29,6 +29,7 @@ public static class ErrorLoggingEndpoints
         .RequireAuthorization("HelpdeskAdmin")
         .WithName("LogClientError")
         .WithSummary("Client error logging")
-        .WithDescription("Captures errors from the UI");
+        .WithDescription("Captures errors from the UI")
+        .WithTags("System");
     }
 }

@@ -1147,8 +1147,8 @@ app.UseStaticFiles();
 app.MapOpenApi().AllowAnonymous();
 
 // Health checks
-app.MapGet("/health/ready", () => Results.Ok(new { status = "ready" }));
-app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
+app.MapGet("/health/ready", () => Results.Ok(new { status = "ready" })).WithTags("Health");
+app.MapGet("/health/live", () => Results.Ok(new { status = "alive" })).WithTags("Health");
 if (app.Environment.IsDevelopment())
 {
     IResult WriteDebugLog(ILoggerFactory loggerFactory)
@@ -1263,7 +1263,7 @@ app.MapGet("/__debug/me", (HttpContext ctx) => new
     authScheme = ctx.User.Identities.Select(i => i.AuthenticationType).ToArray(),
     name = ctx.User.Identity?.Name,
     roles = ctx.User.Claims.Where(c => c.Type == "roles" || c.Type == ClaimTypes.Role).Select(c => c.Value).ToArray()
-}).RequireAuthorization();
+}).RequireAuthorization().WithTags("System");
 #endif
 app.MapGet("/health/db", async ([FromServices] HelpdeskDbContext db, CancellationToken token) =>
     {
@@ -1336,7 +1336,7 @@ app.MapPost("/api/v1/ingestEmail", async (
     }
 
     return Results.Created($"/api/v1/incidents/{ticket.Id}", ticket); // 201
-}).RequireAuthorization("HelpdeskAdmin");
+}).RequireAuthorization("HelpdeskAdmin").WithTags("Email");
 
 app.MapHub<NotificationHub>("/notification-hub")
     .RequireAuthorization("NotificationAccess");
@@ -1349,7 +1349,7 @@ if (app.Environment.IsDevelopment())
         var s = prot.Protect("ok");
         var u = prot.Unprotect(s);
         return Results.Ok(new { protectedLength = s.Length, unprotected = u });
-    });
+    }).WithTags("System");
 }
 
 if (app.Environment.IsDevelopment() && runStartupTasks)

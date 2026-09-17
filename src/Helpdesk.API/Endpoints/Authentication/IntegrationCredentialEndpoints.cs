@@ -156,7 +156,7 @@ public static class IntegrationCredentialEndpoints
                 await identityDb.SaveChangesAsync(ct);
             }
             return Results.NoContent();
-        }).RequireAuthorization(SelfRevocationPolicy).WithSummary("Revoke the presenting integration credential");
+        }).RequireAuthorization(SelfRevocationPolicy).WithTags("Integration Credentials").WithSummary("Revoke the presenting integration credential");
     }
 
     private static string? CanonicalMcpResourceUri(string? value)

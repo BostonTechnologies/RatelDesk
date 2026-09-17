@@ -143,6 +143,21 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   const locked = await page.request.post('/api/v1/setup/session', { data: { setupCode } });
   expect(locked.status()).toBeGreaterThanOrEqual(400);
 
+  // The reference must render the API document through the public Web proxy;
+  // Scalar's configured /api server keeps Try It requests on that proxy rather
+  // than exposing the internal API address.
+  const openApi = await page.request.get('/api/openapi/v1.json');
+  expect(openApi.ok(), await openApi.text()).toBe(true);
+  await page.goto('/api/docs/');
+  await expect(page.locator('scalar-api-reference')).toBeVisible();
+  await expect(page.getByText('RatelDesk API', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('script').filter({ hasText: '"servers":[{"url":"/api"}]' })).toHaveCount(1);
+  await testInfo.attach('scalar-reference', {
+    body: await page.screenshot({ path: testInfo.outputPath('scalar-reference.png'), fullPage: true }),
+    contentType: 'image/png'
+  });
+  await expect(page.locator('#blazor-error-ui')).not.toBeVisible();
+
   // Account security is available to the signed-in application identity, not only
   // through a local-account-only administration page.
   await page.goto('/account/integration-credentials');

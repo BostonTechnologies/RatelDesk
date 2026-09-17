@@ -55,6 +55,7 @@ public static class ActivityEndpoints
             .RequireAuthorization()
             .WithName("GetIncidentActivity")
             .WithSummary("Incident activity log")
-            .WithDescription("Returns log entries for the specified incident.");
+            .WithDescription("Returns log entries for the specified incident.")
+            .WithTags("Timeline");
     }
 }

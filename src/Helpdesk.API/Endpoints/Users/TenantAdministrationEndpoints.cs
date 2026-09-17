@@ -56,7 +56,8 @@ public static class TenantAdministrationEndpoints
                 .ToArrayAsync(cancellationToken));
         })
         .RequireAuthorization()
-        .WithName("GetTenantAdministrationOrganizations");
+        .WithName("GetTenantAdministrationOrganizations")
+        .WithTags("Tenant administration");
 
         var settings = app.MapGroup("/api/v1/tenant-admin/organizations/{organizationId}/settings")
             .WithTags("Tenant settings")
