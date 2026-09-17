@@ -28,6 +28,26 @@ public sealed class HelpdeskToolsMutationTests
         Assert.True(response.Failure?.Retryable);
     }
 
+    [Fact]
+    public async Task Integration_credential_auth_status_uses_application_identity_endpoint()
+    {
+        var client = Substitute.For<IHelpdeskAgentClient>();
+        client.Configuration.Returns(new AgentClientConfiguration("https://api.example", null, null, null, null, null, null)
+        {
+            CredentialMode = "integration",
+            IntegrationCredential = "rdk_test"
+        });
+        client.GetAsync("/api/v1/auth/me", true, Arg.Any<CancellationToken>())
+            .Returns(new JsonObject { ["authMode"] = "integration" });
+        var tools = new HelpdeskTools(client, Store());
+
+        var response = await tools.helpdesk_auth(cancellationToken: CancellationToken.None);
+
+        Assert.True(response.Success);
+        await client.Received(1).GetAsync("/api/v1/auth/me", true, Arg.Any<CancellationToken>());
+        await client.DidNotReceive().GetAsync("/api/v1/auth/ai-agent/status", true, Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData("helpdesk_incidents", "state", "{\"incidentId\":\"INC-123\",\"newState\":\"Resolved\"}")]
     [InlineData("helpdesk_requests", "assign", "{\"ids\":[\"REQ-123\"],\"assignedToId\":\"user-1\"}")]

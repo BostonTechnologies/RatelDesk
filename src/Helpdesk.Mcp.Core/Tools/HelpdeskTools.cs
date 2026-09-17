@@ -46,8 +46,9 @@ public sealed class HelpdeskTools(
         "taskId", "title", "description", "priority", "assignedToId", "clearAssignment", "linkedAssetIds", "attachments", "dueDate", "clearDueDate"
     };
 
-    [McpServerTool(UseStructuredContent = true), Description("Read Helpdesk AI-agent authentication status. The MCP server never returns bearer tokens.")]
-    public Task<HelpdeskToolResponse> helpdesk_auth(string operation = "status", JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default) => Read("helpdesk_auth", operation, ["status"], "/api/v1/auth/ai-agent/status", null, cancellationToken);
+    [McpServerTool(UseStructuredContent = true), Description("Read authentication status for the configured Helpdesk credential. Integration credentials use the application identity endpoint; Authentik agents use the AI-agent status endpoint. The MCP server never returns bearer tokens.")]
+    public Task<HelpdeskToolResponse> helpdesk_auth(string operation = "status", JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default)
+        => Read("helpdesk_auth", operation, ["status"], AuthStatusPath, null, cancellationToken);
 
     [McpServerTool(UseStructuredContent = true), Description("Read live, readiness, and authenticated Helpdesk health.")]
     public async Task<HelpdeskToolResponse> helpdesk_health(string operation = "get", JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default)
@@ -695,5 +696,9 @@ public sealed class HelpdeskTools(
     private static string? String(JsonElement? element, string property) => element is { ValueKind: JsonValueKind.Object } value && value.TryGetProperty(property, out var node) && node.ValueKind == JsonValueKind.String ? node.GetString() : null;
     private static bool IsHttpUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http";
     private static string Query(string path, JsonObject? values) => values is null || values.Count == 0 ? path : path + "?" + string.Join("&", values.Where(x => x.Value is not null && x.Key is not "id" && !x.Key.EndsWith("Id", StringComparison.Ordinal)).Select(x => Uri.EscapeDataString(x.Key) + "=" + Uri.EscapeDataString(x.Value!.ToString())));
-    private JsonNode Capabilities() => new JsonObject { ["server"] = "Helpdesk.Mcp", ["instance"] = hostContext.Instance, ["catalogRevision"] = hostContext.CatalogRevision, ["transport"] = hostContext.Transport, ["resourceUri"] = hostContext.ResourceUri, ["apiBaseUrl"] = hostContext.CanonicalApiBaseUrl, ["phase"] = 3, ["mutationsEnabled"] = true, ["rawEnabled"] = false, ["mutationConfirmationRequired"] = true, ["configurationWritesEnabled"] = configurationSurface.CanPersist, ["obsoleteMutationProofToolExposed"] = false };
+    private string AuthStatusPath => string.Equals(client.Configuration?.CredentialMode, "integration", StringComparison.OrdinalIgnoreCase)
+        ? "/api/v1/auth/me"
+        : "/api/v1/auth/ai-agent/status";
+
+    private JsonNode Capabilities() => new JsonObject { ["server"] = "Helpdesk.Mcp", ["instance"] = hostContext.Instance, ["catalogRevision"] = hostContext.CatalogRevision, ["transport"] = hostContext.Transport, ["resourceUri"] = hostContext.ResourceUri, ["apiBaseUrl"] = hostContext.CanonicalApiBaseUrl, ["credentialMode"] = client.Configuration?.CredentialMode ?? "authentik", ["authStatusPath"] = AuthStatusPath, ["phase"] = 3, ["mutationsEnabled"] = true, ["rawEnabled"] = false, ["mutationConfirmationRequired"] = true, ["configurationWritesEnabled"] = configurationSurface.CanPersist, ["obsoleteMutationProofToolExposed"] = false };
 }

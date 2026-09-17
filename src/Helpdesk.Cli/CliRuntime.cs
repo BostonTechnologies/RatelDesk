@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Helpdesk.AgentClient;
 
@@ -25,7 +27,7 @@ internal sealed class CliRuntime
 
     public async Task<string> GetAccessTokenAsync(ResolvedCliConfig config, CancellationToken ct = default)
     {
-        var key = $"{config.ApiBaseUrl}|{config.CredentialMode}|{config.AuthentikTokenUrl}|{config.AuthentikClientId}|{config.AuthentikUsername}|{config.AuthentikScope}";
+        var key = $"{config.ApiBaseUrl}|{config.CredentialMode}|{config.AuthentikTokenUrl}|{config.AuthentikClientId}|{config.AuthentikUsername}|{config.AuthentikScope}|{CredentialIdentity(config)}";
         if (!_agentClients.TryGetValue(key, out var agentClient))
         {
             agentClient = new HelpdeskAgentClient(new AgentClientConfiguration(config.ApiBaseUrl.ToString(), config.AuthentikTokenUrl, config.AuthentikClientId, config.AuthentikUsername, config.AuthentikAppPassword, config.AuthentikScope, config.AgentUserEmail)
@@ -45,5 +47,13 @@ internal sealed class CliRuntime
         var client = CreateHttpClient(config.ApiBaseUrl);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await GetAccessTokenAsync(config, ct).ConfigureAwait(false));
         return client;
+    }
+
+    private static string CredentialIdentity(ResolvedCliConfig config)
+    {
+        var value = string.Equals(config.CredentialMode, "integration", StringComparison.OrdinalIgnoreCase)
+            ? config.IntegrationCredential
+            : config.AuthentikAppPassword;
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value ?? string.Empty)));
     }
 }

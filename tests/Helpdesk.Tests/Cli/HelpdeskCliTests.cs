@@ -791,6 +791,35 @@ public sealed class HelpdeskCliTests
     }
 
     [Fact]
+    public async Task Capabilities_reports_integration_credential_configuration_without_Authentik_fields()
+    {
+        var temp = Directory.CreateTempSubdirectory("helpdesk-cli-test-");
+        var path = Path.Combine(temp.FullName, "cli.json");
+        await File.WriteAllTextAsync(path, """{"apiBaseUrl":"https://api.example","credentialMode":"integration","integrationCredential":"rdk_test"}""");
+        var output = new StringWriter();
+
+        var code = await HelpdeskCli.RunAsync(["--config", path, "capabilities", "--json"], new CliRuntime { Out = output, Error = new StringWriter() });
+
+        Assert.Equal(CliExitCodes.Success, code);
+        using var document = JsonDocument.Parse(output.ToString());
+        var profile = document.RootElement.GetProperty("profile");
+        Assert.Equal("integration", profile.GetProperty("credentialMode").GetString());
+        Assert.True(profile.GetProperty("authConfigured").GetBoolean());
+        Assert.DoesNotContain("rdk_test", output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Runtime_does_not_reuse_an_integration_credential_after_configuration_changes()
+    {
+        var runtime = new CliRuntime();
+        var first = new ResolvedCliConfig(new Uri("https://api.example"), null, null, null, null, null, null, "integration", "rdk_first");
+        var second = first with { IntegrationCredential = "rdk_second" };
+
+        Assert.Equal("rdk_first", await runtime.GetAccessTokenAsync(first));
+        Assert.Equal("rdk_second", await runtime.GetAccessTokenAsync(second));
+    }
+
+    [Fact]
     public async Task IncidentsList_RequesterEmail_UsesExpectedQuery()
     {
         var output = new StringWriter();
