@@ -32,8 +32,8 @@ assets+=("rateldesk-deployment-${version}.tar.gz" "SHA256SUMS" "release-manifest
 for asset in "${assets[@]}"; do
   [[ -s "$asset_directory/$asset" ]] || { echo "Expected release asset is missing or empty: $asset" >&2; exit 1; }
 done
-(cd "$asset_directory" && sha256sum --check SHA256SUMS)
-(cd "$asset_directory" && sha256sum --check release-manifest.json.sha256)
+(cd "$asset_directory" && sha256sum --check --status SHA256SUMS)
+(cd "$asset_directory" && sha256sum --check --status release-manifest.json.sha256)
 
 if [[ "${RELEASE_ASSET_DRY_RUN:-false}" == true ]]; then
   printf '%s\n' "${assets[@]}"
