@@ -8,14 +8,20 @@ using Microsoft.Extensions.Options;
 
 namespace Helpdesk.API.Authentication;
 
+public sealed class IntegrationCredentialAuthenticationOptions : AuthenticationSchemeOptions
+{
+    public string Purpose { get; set; } = IntegrationCredentialAuthenticationHandler.ApiPurpose;
+}
+
 public sealed class IntegrationCredentialAuthenticationHandler(
-    IOptionsMonitor<AuthenticationSchemeOptions> options,
+    IOptionsMonitor<IntegrationCredentialAuthenticationOptions> options,
     ILoggerFactory logger,
     System.Text.Encodings.Web.UrlEncoder encoder,
     RatelDeskIdentityDbContext identityDb)
-    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    : AuthenticationHandler<IntegrationCredentialAuthenticationOptions>(options, logger, encoder)
 {
     public const string SchemeName = "IntegrationCredential";
+    public const string McpSchemeName = "McpIntegrationCredential";
     public const string ApiPurpose = "api";
     public const string McpPurpose = "mcp";
 
@@ -36,7 +42,7 @@ public sealed class IntegrationCredentialAuthenticationHandler(
         if (credential is null ||
             credential.RevokedAtUtc is not null ||
             credential.ExpiresAtUtc <= DateTimeOffset.UtcNow ||
-            !string.Equals(credential.Purpose, ApiPurpose, StringComparison.Ordinal))
+            !string.Equals(credential.Purpose, ExpectedPurpose, StringComparison.Ordinal))
         {
             return AuthenticateResult.Fail("The integration credential is not valid for this API.");
         }
@@ -66,10 +72,14 @@ public sealed class IntegrationCredentialAuthenticationHandler(
         };
         if (!string.IsNullOrWhiteSpace(credential.OrganizationId))
             claims.Add(new Claim("integration_organization_id", credential.OrganizationId));
+        if (!string.IsNullOrWhiteSpace(credential.McpResourceUri))
+            claims.Add(new Claim("mcp_resource_uri", credential.McpResourceUri));
         foreach (var permission in credential.Permissions.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             claims.Add(new Claim("integration_permission", permission));
 
-        var identity = new ClaimsIdentity(claims, SchemeName, ClaimTypes.Name, ClaimTypes.Role);
-        return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName));
+        var identity = new ClaimsIdentity(claims, Scheme.Name, ClaimTypes.Name, ClaimTypes.Role);
+        return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name));
     }
+
+    private string ExpectedPurpose => Options.Purpose;
 }

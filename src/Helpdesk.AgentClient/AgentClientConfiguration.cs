@@ -46,7 +46,9 @@ public sealed record AgentClientConfiguration(
         var mode = string.IsNullOrWhiteSpace(CredentialMode) ? "authentik" : CredentialMode.Trim().ToLowerInvariant();
         if (mode == "integration")
             return new(new Uri(string.IsNullOrWhiteSpace(ApiBaseUrl) ? DefaultApiBaseUrl : ApiBaseUrl), null, null, null, Required(IntegrationCredential, "RATELDESK_INTEGRATION_CREDENTIAL"), null, AgentUserEmail, mode, IntegrationCredential);
-        if (mode != "authentik") throw new AgentClientValidationException("credentialMode must be authentik or integration.");
+        if (mode == "gateway")
+            return new(new Uri(Required(ApiBaseUrl, "RATELDESK_API_BASE_URL")), null, null, null, null, null, AgentUserEmail, mode, null);
+        if (mode != "authentik") throw new AgentClientValidationException("credentialMode must be authentik, integration, or gateway.");
         return new(new Uri(string.IsNullOrWhiteSpace(ApiBaseUrl) ? DefaultApiBaseUrl : ApiBaseUrl), Required(AuthentikTokenUrl, "RATELDESK_AUTHENTIK_TOKEN_URL"), Required(AuthentikClientId, "RATELDESK_AUTHENTIK_CLIENT_ID"), Required(AuthentikUsername, "RATELDESK_AUTHENTIK_USERNAME"), Required(AuthentikAppPassword, "RATELDESK_AUTHENTIK_APP_PASSWORD"), string.IsNullOrWhiteSpace(AuthentikScope) ? DefaultScope : AuthentikScope, AgentUserEmail, mode, null);
     }
 

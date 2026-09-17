@@ -88,6 +88,34 @@ public sealed class IntegrationCredentialSqliteTests
         Assert.Equal(createdAtUtc.ToUnixTimeMilliseconds(), Convert.ToInt64(await verify.ExecuteScalarAsync()));
     }
 
+    [Fact]
+    public async Task Create_endpoint_pairs_an_mcp_credential_to_its_canonical_resource()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var response = await harness.Client.PostAsJsonAsync("/api/v1/integration-credentials/", new
+        {
+            name = "MCP client",
+            purpose = "mcp",
+            organizationId = "org-a",
+            permissions = new[] { "Incident.Read" },
+            lifetimeDays = 30,
+            mcpResourceUri = "https://helpdesk.example/mcp/"
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<IntegrationCredentialEndpoints.CreatedIntegrationCredential>();
+        Assert.NotNull(created);
+        Assert.Equal("https://helpdesk.example/mcp", created.McpResourceUri);
+        Assert.StartsWith("rdk_", created.Secret, StringComparison.Ordinal);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+
+        await using var scope = harness.Services.CreateAsyncScope();
+        var credential = await scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>()
+            .IntegrationCredentials.SingleAsync();
+        Assert.Equal("mcp", credential.Purpose);
+        Assert.Equal("https://helpdesk.example/mcp", credential.McpResourceUri);
+    }
+
     private static IntegrationCredential Credential(string ownerId, string name, DateTimeOffset createdAtUtc) => new()
     {
         Id = Guid.NewGuid(),
@@ -116,7 +144,7 @@ public sealed class IntegrationCredentialSqliteTests
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
             builder.WebHost.UseTestServer();
             builder.Services.AddDbContext<RatelDeskIdentityDbContext>(options => options.UseSqlite(connection));
-            builder.Services.AddSingleton(Substitute.For<ICurrentUserAccessService>());
+            builder.Services.AddSingleton<ICurrentUserAccessService>(new TestAccessService());
             builder.Services.AddScoped<IIntegrationCredentialOwnerResolver, StaticOwnerResolver>();
             builder.Services.AddScoped<IAuthorizationHandler, IntegrationCredentialManagementSessionHandler>();
             builder.Services.AddAuthentication("Test").AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("Test", _ => { });
@@ -167,5 +195,18 @@ public sealed class IntegrationCredentialSqliteTests
     {
         public Task<IntegrationCredentialOwner?> ResolveAsync(ClaimsPrincipal principal, CancellationToken cancellationToken = default)
             => Task.FromResult<IntegrationCredentialOwner?>(new IntegrationCredentialOwner("owner"));
+    }
+
+    private sealed class TestAccessService : ICurrentUserAccessService
+    {
+        private static readonly CurrentUserAccessProfile Profile = new(
+            true, "owner", "owner@example.test", "org-a", null, null, false,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(["Incident.Read"], StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(["org-a"], StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
+            => Task.FromResult(Profile);
     }
 }

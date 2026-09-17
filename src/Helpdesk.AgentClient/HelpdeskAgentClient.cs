@@ -16,6 +16,16 @@ public interface IHelpdeskAgentClient
 }
 
 /// <summary>
+/// Supplies an API access token for a transport that has already authenticated
+/// the current caller. Implementations must be request-scoped in behavior;
+/// they must not retain an inbound caller credential in a shared client.
+/// </summary>
+public interface IAgentAccessTokenProvider
+{
+    Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Calls the Helpdesk API using immutable, deployment-owned configuration.
 /// It never inspects inbound HTTP context or forwards inbound credentials.
 /// </summary>
@@ -31,6 +41,7 @@ public sealed class HelpdeskAgentClient : IHelpdeskAgentClient
     private readonly Func<HttpMessageHandler>? _handlerFactory;
     private readonly IHttpClientFactory? _httpClientFactory;
     private readonly CancellationToken _applicationStopping;
+    private readonly IAgentAccessTokenProvider? _accessTokenProvider;
     private readonly object _tokenRefreshLock = new();
     private TokenCacheEntry? _tokenCache;
     private Task<TokenCacheEntry>? _tokenRefresh;
@@ -44,11 +55,13 @@ public sealed class HelpdeskAgentClient : IHelpdeskAgentClient
     public HelpdeskAgentClient(
         AgentClientConfiguration configuration,
         IHttpClientFactory httpClientFactory,
-        IHostApplicationLifetime applicationLifetime)
+        IHostApplicationLifetime applicationLifetime,
+        IAgentAccessTokenProvider? accessTokenProvider = null)
     {
         Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
         _applicationStopping = applicationLifetime?.ApplicationStopping ?? throw new ArgumentNullException(nameof(applicationLifetime));
+        _accessTokenProvider = accessTokenProvider;
     }
 
     public AgentClientConfiguration Configuration { get; }
@@ -138,6 +151,8 @@ public sealed class HelpdeskAgentClient : IHelpdeskAgentClient
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (_accessTokenProvider is not null)
+            return await _accessTokenProvider.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
         var configuration = Configuration.Resolve();
         if (string.Equals(configuration.CredentialMode, "integration", StringComparison.Ordinal))
             return configuration.IntegrationCredential!;

@@ -11,6 +11,7 @@ services:
       Helpdesk__Mcp__ExpectedApiBaseUrl: http://api:8222/
       Helpdesk__Mcp__PublicResourceUri: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:?Set the canonical HTTPS MCP URL, for example https://mcp.example.test/mcp.}
       Helpdesk__Mcp__AllowedOrigins__0: ${RATELDESK_MCP_ALLOWED_ORIGIN:?Set the browser origin allowed to call this MCP endpoint.}
+      Helpdesk__Mcp__AuthenticationMode: authentik
       Authentication__AuthentikMcp__Authority: ${RATELDESK_MCP_AUTHENTIK_AUTHORITY:?Set the configured external authorization server URL.}
       Authentication__AuthentikMcp__Audience: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:?Set the canonical HTTPS MCP URL, for example https://mcp.example.test/mcp.}
       Authentication__AuthentikMcp__RequiredScopes__0: ${RATELDESK_MCP_REQUIRED_SCOPE:-helpdesk.mcp}

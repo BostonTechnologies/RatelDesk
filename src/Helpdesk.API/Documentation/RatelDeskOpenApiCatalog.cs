@@ -12,6 +12,7 @@ public static class RatelDeskOpenApiCatalog
 {
     private const string JwtBearerScheme = "JwtBearer";
     private const string IntegrationCredentialScheme = "IntegrationCredential";
+    private const string McpIntegrationCredentialScheme = "McpIntegrationCredential";
     private const string LocalSessionScheme = "LocalSession";
     private const string AiAgentScheme = "AiAgentJwt";
     private const string OrchestrationScheme = "OrchestrationM2M";
@@ -28,6 +29,7 @@ public static class RatelDeskOpenApiCatalog
         new("Users", "Identity & Access", "Application users and access."),
         new("Role Definitions", "Identity & Access", "Scoped application role definitions."),
         new("Integration Credentials", "Identity & Access", "Revocable API credentials. Secrets are shown once."),
+        new("MCP Gateway", "Automation & Integrations", "Paired MCP credential delegation."),
         new("Organizations", "Organizations & Customers", "Application tenant organizations."),
         new("Customers", "Organizations & Customers", "Contacts; a customer is not the application tenant."),
         new("Tenant Administration", "Organizations & Customers", "Tenant-scoped administration."),
@@ -92,6 +94,15 @@ public static class RatelDeskOpenApiCatalog
             BearerFormat = "opaque rdk credential",
             In = ParameterLocation.Header,
             Description = "Opaque integration credential: `Bearer rdk_<credential-id>_<secret>`. It is not a JWT and is scoped to its organization and permissions."
+        };
+        document.Components.SecuritySchemes[McpIntegrationCredentialScheme] = new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "Bearer",
+            BearerFormat = "paired opaque rdk credential",
+            In = ParameterLocation.Header,
+            Description = "Paired MCP credential: `Bearer rdk_<credential-id>_<secret>`. It is valid only for the MCP execution-token exchange and cannot call ordinary API operations."
         };
         document.Components.SecuritySchemes[LocalSessionScheme] = new OpenApiSecurityScheme
         {
@@ -164,6 +175,7 @@ public static class RatelDeskOpenApiCatalog
             _ when policies.Contains("OrchestrationM2MOnly") => Requirements(document, OrchestrationScheme),
             _ when policies.Contains("SystemBlazorWeb") => Requirements(document, SystemScheme),
             _ when policies.Contains("IntegrationCredentialManagementSession") => Requirements(document, JwtBearerScheme, LocalSessionScheme),
+            _ when policies.Contains("McpCredentialDelegation") => Requirements(document, McpIntegrationCredentialScheme),
             _ => Requirements(document, JwtBearerScheme, IntegrationCredentialScheme, LocalSessionScheme)
         };
         return Task.CompletedTask;

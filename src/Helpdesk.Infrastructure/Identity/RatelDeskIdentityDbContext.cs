@@ -31,6 +31,7 @@ public sealed class RatelDeskIdentityDbContext(DbContextOptions<RatelDeskIdentit
             entity.Property(credential => credential.Prefix).HasMaxLength(32).IsRequired();
             entity.Property(credential => credential.SecretHash).HasMaxLength(128).IsRequired();
             entity.Property(credential => credential.Purpose).HasMaxLength(16).IsRequired();
+            entity.Property(credential => credential.McpResourceUri).HasMaxLength(2048);
             entity.Property(credential => credential.OrganizationId).HasMaxLength(128);
             entity.Property(credential => credential.Permissions).HasMaxLength(4096).IsRequired();
             entity.HasIndex(credential => credential.OwnerUserId);

@@ -12,6 +12,12 @@ public sealed class IntegrationCredential
     public string Prefix { get; set; } = string.Empty;
     public string SecretHash { get; set; } = string.Empty;
     public string Purpose { get; set; } = string.Empty;
+    /// <summary>
+    /// Canonical HTTP MCP resource this credential is paired to. This is set
+    /// only for <c>mcp</c>-purpose credentials and prevents a bearer copied to
+    /// another gateway from being delegated there.
+    /// </summary>
+    public string? McpResourceUri { get; set; }
     public string? OrganizationId { get; set; }
     public string Permissions { get; set; } = string.Empty;
     public DateTimeOffset ExpiresAtUtc { get; set; }

@@ -33,7 +33,10 @@ public static class IntegrationCredentialEndpoints
                 .Select(credential => new IntegrationCredentialMetadata(
                     credential.Id, credential.Name, credential.Prefix, credential.Purpose,
                     credential.OrganizationId, credential.Permissions.Split(' ', StringSplitOptions.RemoveEmptyEntries),
-                    credential.ExpiresAtUtc, credential.CreatedAtUtc, credential.LastUsedAtUtc, credential.RevokedAtUtc))
+                    credential.ExpiresAtUtc, credential.CreatedAtUtc, credential.LastUsedAtUtc, credential.RevokedAtUtc)
+                {
+                    McpResourceUri = credential.McpResourceUri
+                })
                 .ToListAsync(ct);
             return Results.Ok(credentials);
         }).WithSummary("List integration credentials");
@@ -52,7 +55,13 @@ public static class IntegrationCredentialEndpoints
             if (request is null) return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["A credential request is required."] });
             if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 128) return Results.ValidationProblem(new Dictionary<string, string[]> { ["name"] = ["A credential name up to 128 characters is required."] });
             if (request.Purpose is not ("api" or "mcp")) return Results.ValidationProblem(new Dictionary<string, string[]> { ["purpose"] = ["Purpose must be api or mcp."] });
-            if (request.Purpose == "mcp") return Results.ValidationProblem(new Dictionary<string, string[]> { ["purpose"] = ["MCP credentials are created through the paired HTTP MCP gateway configuration flow."] });
+            var mcpResourceUri = request.Purpose == "mcp"
+                ? CanonicalMcpResourceUri(request.McpResourceUri)
+                : null;
+            if (request.Purpose == "mcp" && mcpResourceUri is null)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["mcpResourceUri"] = ["MCP credentials require an absolute HTTPS resource URI ending in /mcp."] });
+            if (request.Purpose == "api" && !string.IsNullOrWhiteSpace(request.McpResourceUri))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["mcpResourceUri"] = ["MCP resource URIs can only be configured for MCP credentials."] });
 
             var access = await accessService.ResolveAsync(principal, ct);
             var requestedPermissions = request.Permissions?
@@ -80,6 +89,7 @@ public static class IntegrationCredentialEndpoints
                 Prefix = prefix,
                 SecretHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret))),
                 Purpose = request.Purpose,
+                McpResourceUri = mcpResourceUri,
                 OrganizationId = request.OrganizationId,
                 Permissions = string.Join(' ', requestedPermissions.Order(StringComparer.OrdinalIgnoreCase)),
                 CreatedAtUtc = createdAtUtc,
@@ -91,7 +101,10 @@ public static class IntegrationCredentialEndpoints
             context.Response.Headers.CacheControl = "no-store";
             return Results.Created($"/api/v1/integration-credentials/{credential.Id:N}", new CreatedIntegrationCredential(
                 credential.Id, credential.Prefix, $"rdk_{credential.Id:N}_{secret}", credential.Purpose,
-                credential.OrganizationId, requestedPermissions, credential.ExpiresAtUtc));
+                credential.OrganizationId, requestedPermissions, credential.ExpiresAtUtc)
+            {
+                McpResourceUri = credential.McpResourceUri
+            });
         }).WithSummary("Create an API integration credential");
 
         group.MapDelete("/{credentialId:guid}", async (Guid credentialId, ClaimsPrincipal principal, IIntegrationCredentialOwnerResolver ownerResolver, RatelDeskIdentityDbContext identityDb, CancellationToken ct) =>
@@ -109,7 +122,31 @@ public static class IntegrationCredentialEndpoints
         }).WithSummary("Revoke an integration credential");
     }
 
-    public sealed record CreateIntegrationCredentialRequest(string Name, string Purpose, string OrganizationId, IReadOnlyList<string> Permissions, int? LifetimeDays);
-    public sealed record IntegrationCredentialMetadata(Guid Id, string Name, string Prefix, string Purpose, string? OrganizationId, IReadOnlyList<string> Permissions, DateTimeOffset ExpiresAtUtc, DateTimeOffset CreatedAtUtc, DateTimeOffset? LastUsedAtUtc, DateTimeOffset? RevokedAtUtc);
-    public sealed record CreatedIntegrationCredential(Guid Id, string Prefix, string Secret, string Purpose, string? OrganizationId, IReadOnlyList<string> Permissions, DateTimeOffset ExpiresAtUtc);
+    private static string? CanonicalMcpResourceUri(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment) ||
+            !string.Equals(uri.AbsolutePath.TrimEnd('/'), "/mcp", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return uri.AbsoluteUri.TrimEnd('/');
+    }
+
+    public sealed record CreateIntegrationCredentialRequest(string Name, string Purpose, string OrganizationId, IReadOnlyList<string> Permissions, int? LifetimeDays)
+    {
+        public string? McpResourceUri { get; init; }
+    }
+
+    public sealed record IntegrationCredentialMetadata(Guid Id, string Name, string Prefix, string Purpose, string? OrganizationId, IReadOnlyList<string> Permissions, DateTimeOffset ExpiresAtUtc, DateTimeOffset CreatedAtUtc, DateTimeOffset? LastUsedAtUtc, DateTimeOffset? RevokedAtUtc)
+    {
+        public string? McpResourceUri { get; init; }
+    }
+
+    public sealed record CreatedIntegrationCredential(Guid Id, string Prefix, string Secret, string Purpose, string? OrganizationId, IReadOnlyList<string> Permissions, DateTimeOffset ExpiresAtUtc)
+    {
+        public string? McpResourceUri { get; init; }
+    }
 }

@@ -124,6 +124,10 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Identity
                     b.Property<DateTimeOffset?>("LastUsedAtUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("McpResourceUri")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(128)

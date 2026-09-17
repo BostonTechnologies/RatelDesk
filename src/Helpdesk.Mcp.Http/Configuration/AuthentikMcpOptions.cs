@@ -21,6 +21,8 @@ public sealed class HelpdeskMcpHttpOptions
     public string ExpectedApiBaseUrl { get; init; } = string.Empty;
     public string PublicResourceUri { get; init; } = string.Empty;
     public string[] AllowedOrigins { get; init; } = [];
+    /// <summary>Ingress mode: <c>gateway</c> for paired local credentials or <c>authentik</c> for external OAuth.</summary>
+    public string AuthenticationMode { get; init; } = "authentik";
 }
 
 public sealed class AuthentikMcpOptionsValidator(IOptions<HelpdeskMcpHttpOptions> mcpOptions)
@@ -58,5 +60,6 @@ public sealed class AuthentikMcpOptionsValidator(IOptions<HelpdeskMcpHttpOptions
         && (uri.AbsolutePath is "" or "/")
         && string.IsNullOrEmpty(uri.Query)
         && string.IsNullOrEmpty(uri.Fragment);
+    public static bool IsAuthenticationMode(string value) => value is "gateway" or "authentik";
     internal static string Normalize(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) ? uri.AbsoluteUri.TrimEnd('/') : value;
 }

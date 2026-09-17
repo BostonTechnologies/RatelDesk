@@ -527,6 +527,8 @@ builder.Services.AddAuthentication(options =>
         var token = auth.Substring("Bearer ".Length).Trim();
         if (token.StartsWith("rdk_", StringComparison.OrdinalIgnoreCase))
             return IntegrationCredentialAuthenticationHandler.SchemeName;
+        if (token.StartsWith(McpExecutionTokenService.TokenPrefix, StringComparison.OrdinalIgnoreCase))
+            return McpExecutionAuthenticationHandler.SchemeName;
         try
         {
             var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
@@ -564,8 +566,14 @@ builder.Services.AddAuthentication(options =>
         return "Azure";
     };
 })
-.AddScheme<AuthenticationSchemeOptions, IntegrationCredentialAuthenticationHandler>(
+.AddScheme<IntegrationCredentialAuthenticationOptions, IntegrationCredentialAuthenticationHandler>(
     IntegrationCredentialAuthenticationHandler.SchemeName,
+    options => options.Purpose = IntegrationCredentialAuthenticationHandler.ApiPurpose)
+.AddScheme<IntegrationCredentialAuthenticationOptions, IntegrationCredentialAuthenticationHandler>(
+    IntegrationCredentialAuthenticationHandler.McpSchemeName,
+    options => options.Purpose = IntegrationCredentialAuthenticationHandler.McpPurpose)
+.AddScheme<AuthenticationSchemeOptions, McpExecutionAuthenticationHandler>(
+    McpExecutionAuthenticationHandler.SchemeName,
     _ => { })
 .AddCookie(LocalAuthenticationOptions.Scheme, options =>
 {
@@ -945,6 +953,12 @@ builder.Services.AddAuthentication(options =>
 });
 builder.Services.AddAuthorization(opts =>
 {
+    opts.AddPolicy(McpGatewayDelegationEndpoints.DelegationPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(IntegrationCredentialAuthenticationHandler.McpSchemeName);
+        policy.RequireAuthenticatedUser();
+    });
+
     opts.AddPolicy(IntegrationCredentialEndpoints.CredentialManagementPolicy, policy =>
     {
         policy.RequireAuthenticatedUser();
@@ -1034,6 +1048,7 @@ builder.Services.AddAuthorization(opts =>
 
 builder.Services.AddScoped<IIntegrationCredentialOwnerResolver, IntegrationCredentialOwnerResolver>();
 builder.Services.AddScoped<IAuthorizationHandler, IntegrationCredentialManagementSessionHandler>();
+builder.Services.AddSingleton<McpExecutionTokenService>();
 
 
 builder.Logging.AddFilter("Microsoft.AspNetCore.Authentication", LogLevel.Debug);
@@ -1163,6 +1178,7 @@ if (useHangfireRuntime)
 
 app.MapCurrentUserAccessEndpoint();
 app.MapIntegrationCredentialEndpoints();
+app.MapMcpGatewayDelegationEndpoints();
 app.MapGet("/api/v1/setup/status", () => Results.Ok(new { state = "Ready" }))
     .AllowAnonymous()
     .WithTags("Setup");

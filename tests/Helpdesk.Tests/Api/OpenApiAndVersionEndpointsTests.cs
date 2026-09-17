@@ -54,6 +54,7 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         var schemes = document.RootElement.GetProperty("components").GetProperty("securitySchemes");
         Assert.Equal("JWT", schemes.GetProperty("JwtBearer").GetProperty("bearerFormat").GetString());
         Assert.Equal("opaque rdk credential", schemes.GetProperty("IntegrationCredential").GetProperty("bearerFormat").GetString());
+        Assert.Equal("paired opaque rdk credential", schemes.GetProperty("McpIntegrationCredential").GetProperty("bearerFormat").GetString());
         Assert.Equal("cookie", schemes.GetProperty("LocalSession").GetProperty("in").GetString());
 
         var integrationCredentialsEndpoint = _factory.Services.GetServices<EndpointDataSource>()
@@ -69,6 +70,7 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.Equal(["OrchestrationM2M"], SecuritySchemes(document, "/api/v1/orchestration/provider/m2m/ping", "get"));
         Assert.Equal(["AiAgentJwt"], SecuritySchemes(document, "/api/v1/auth/ai-agent/status", "get"));
         Assert.Equal(["IntegrationCredential", "JwtBearer", "LocalSession"], SecuritySchemes(document, "/api/v1/incidents", "get"));
+        Assert.Equal(["McpIntegrationCredential"], SecuritySchemes(document, "/api/v1/mcp/execution-token", "post"));
     }
 
     private static string[] SecuritySchemes(JsonDocument document, string path, string method)
