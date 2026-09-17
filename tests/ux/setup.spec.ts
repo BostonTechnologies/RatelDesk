@@ -143,6 +143,19 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   const locked = await page.request.post('/api/v1/setup/session', { data: { setupCode } });
   expect(locked.status()).toBeGreaterThanOrEqual(400);
 
+  // Account security is available to the signed-in application identity, not only
+  // through a local-account-only administration page.
+  await page.goto('/account/integration-credentials');
+  await expect(page.getByTestId('integration-credentials-page')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Integration credentials', exact: true })).toBeVisible();
+  await expect(page.getByTestId('integration-credential-create')).toBeEnabled();
+  await page.getByTestId('integration-credential-create').click();
+  await expect(page.getByLabel('Name', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Organization', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Permissions', { exact: true })).toBeVisible();
+  await expect(page.getByText('The secret is displayed once.')).toBeVisible();
+  await expect(page.locator('#blazor-error-ui')).not.toBeVisible();
+
   const headers = { 'X-Requested-With': 'XMLHttpRequest' };
   const organizations = await (await page.request.get('/api/v1/ticketing/organizations?module=incident')).json();
   const organizationId = organizations[0].id;
