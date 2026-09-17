@@ -390,14 +390,18 @@ jobs:
           path: release-assets
 
       - name: Verify public packages and anonymous pulls
+        # A fresh Docker configuration proves the packages are anonymously
+        # pullable. The GitHub Actions token cannot reliably read org package
+        # metadata even with packages: read, so do not let that API limitation
+        # weaken or block the actual public-access verification.
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
+          anonymous_docker_config="$(mktemp -d)"
+          trap 'rm -rf "$anonymous_docker_config"' EXIT
+          export DOCKER_CONFIG="$anonymous_docker_config"
           for image in rateldesk-web rateldesk-api rateldesk-mcp-http; do
-            test "$(gh api "orgs/BostonTechnologies/packages/container/$image" --jq '.visibility')" = public
-            test "$(gh api "orgs/BostonTechnologies/packages/container/$image" --jq '.repository.full_name')" = BostonTechnologies/RatelDesk
             docker pull "ghcr.io/bostontechnologies/$image:$VERSION"
           done
 
