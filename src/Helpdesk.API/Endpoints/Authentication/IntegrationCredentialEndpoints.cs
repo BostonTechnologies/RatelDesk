@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Helpdesk.API.Authentication;
 using Helpdesk.Infrastructure.Identity;
 using Helpdesk.Shared.Auth;
 using Helpdesk.Shared.Services;
@@ -11,6 +12,7 @@ namespace Helpdesk.API.Endpoints.Authentication;
 
 public static class IntegrationCredentialEndpoints
 {
+    public const string CredentialManagementPolicy = "IntegrationCredentialManagementSession";
     private const int DefaultLifetimeDays = 30;
     private const int MaximumLifetimeDays = 90;
 
@@ -18,14 +20,14 @@ public static class IntegrationCredentialEndpoints
     {
         var group = app.MapGroup("/api/v1/integration-credentials")
             .WithTags("Integration Credentials")
-            .RequireAuthorization();
+            .RequireAuthorization(CredentialManagementPolicy);
 
-        group.MapGet("/", async (ClaimsPrincipal principal, RatelDeskIdentityDbContext identityDb, CancellationToken ct) =>
+        group.MapGet("/", async (ClaimsPrincipal principal, IIntegrationCredentialOwnerResolver ownerResolver, RatelDeskIdentityDbContext identityDb, CancellationToken ct) =>
         {
-            var ownerId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrWhiteSpace(ownerId)) return Results.Unauthorized();
+            var owner = await ownerResolver.ResolveAsync(principal, ct);
+            if (owner is null) return Results.Forbid();
             var credentials = await identityDb.IntegrationCredentials.AsNoTracking()
-                .Where(credential => credential.OwnerUserId == ownerId)
+                .Where(credential => credential.OwnerUserId == owner.UserId)
                 .OrderByDescending(credential => credential.CreatedAtUnixMilliseconds)
                 .ThenByDescending(credential => credential.Id)
                 .Select(credential => new IntegrationCredentialMetadata(
@@ -37,20 +39,27 @@ public static class IntegrationCredentialEndpoints
         }).WithSummary("List integration credentials");
 
         group.MapPost("/", async (
-            [FromBody] CreateIntegrationCredentialRequest request,
+            [FromBody] CreateIntegrationCredentialRequest? request,
             ClaimsPrincipal principal,
+            HttpContext context,
+            IIntegrationCredentialOwnerResolver ownerResolver,
             ICurrentUserAccessService accessService,
             RatelDeskIdentityDbContext identityDb,
             CancellationToken ct) =>
         {
-            var ownerId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrWhiteSpace(ownerId) || !principal.HasClaim("auth_mode", "local")) return Results.Forbid();
+            var owner = await ownerResolver.ResolveAsync(principal, ct);
+            if (owner is null) return Results.Forbid();
+            if (request is null) return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["A credential request is required."] });
             if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 128) return Results.ValidationProblem(new Dictionary<string, string[]> { ["name"] = ["A credential name up to 128 characters is required."] });
             if (request.Purpose is not ("api" or "mcp")) return Results.ValidationProblem(new Dictionary<string, string[]> { ["purpose"] = ["Purpose must be api or mcp."] });
             if (request.Purpose == "mcp") return Results.ValidationProblem(new Dictionary<string, string[]> { ["purpose"] = ["MCP credentials are created through the paired HTTP MCP gateway configuration flow."] });
 
             var access = await accessService.ResolveAsync(principal, ct);
-            var requestedPermissions = request.Permissions.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var requestedPermissions = request.Permissions?
+                .Where(permission => !string.IsNullOrWhiteSpace(permission))
+                .Select(permission => permission.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? [];
             if (requestedPermissions.Length == 0 || requestedPermissions.Except(access.Permissions, StringComparer.OrdinalIgnoreCase).Any() ||
                 requestedPermissions.Any(permission => !HelpdeskPermissions.AssignablePermissions.Contains(permission, StringComparer.OrdinalIgnoreCase)))
             {
@@ -66,7 +75,7 @@ public static class IntegrationCredentialEndpoints
             var credential = new IntegrationCredential
             {
                 Id = id,
-                OwnerUserId = ownerId,
+                OwnerUserId = owner.UserId,
                 Name = request.Name.Trim(),
                 Prefix = prefix,
                 SecretHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret))),
@@ -79,16 +88,17 @@ public static class IntegrationCredentialEndpoints
             };
             identityDb.IntegrationCredentials.Add(credential);
             await identityDb.SaveChangesAsync(ct);
+            context.Response.Headers.CacheControl = "no-store";
             return Results.Created($"/api/v1/integration-credentials/{credential.Id:N}", new CreatedIntegrationCredential(
                 credential.Id, credential.Prefix, $"rdk_{credential.Id:N}_{secret}", credential.Purpose,
                 credential.OrganizationId, requestedPermissions, credential.ExpiresAtUtc));
         }).WithSummary("Create an API integration credential");
 
-        group.MapDelete("/{credentialId:guid}", async (Guid credentialId, ClaimsPrincipal principal, RatelDeskIdentityDbContext identityDb, CancellationToken ct) =>
+        group.MapDelete("/{credentialId:guid}", async (Guid credentialId, ClaimsPrincipal principal, IIntegrationCredentialOwnerResolver ownerResolver, RatelDeskIdentityDbContext identityDb, CancellationToken ct) =>
         {
-            var ownerId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrWhiteSpace(ownerId)) return Results.Unauthorized();
-            var credential = await identityDb.IntegrationCredentials.SingleOrDefaultAsync(candidate => candidate.Id == credentialId && candidate.OwnerUserId == ownerId, ct);
+            var owner = await ownerResolver.ResolveAsync(principal, ct);
+            if (owner is null) return Results.Forbid();
+            var credential = await identityDb.IntegrationCredentials.SingleOrDefaultAsync(candidate => candidate.Id == credentialId && candidate.OwnerUserId == owner.UserId, ct);
             if (credential is null) return Results.NotFound();
             if (credential.RevokedAtUtc is null)
             {

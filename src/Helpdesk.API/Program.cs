@@ -68,6 +68,7 @@ using Hangfire.Storage.SQLite;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
@@ -944,6 +945,12 @@ builder.Services.AddAuthentication(options =>
 });
 builder.Services.AddAuthorization(opts =>
 {
+    opts.AddPolicy(IntegrationCredentialEndpoints.CredentialManagementPolicy, policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new IntegrationCredentialManagementSessionRequirement());
+    });
+
     opts.AddPolicy("HelpdeskAdmin", p =>
     {
         // Do not pin schemes here so tests (and custom schemes) can satisfy the policy.
@@ -1024,6 +1031,9 @@ builder.Services.AddAuthorization(opts =>
     });
 
 });
+
+builder.Services.AddScoped<IIntegrationCredentialOwnerResolver, IntegrationCredentialOwnerResolver>();
+builder.Services.AddScoped<IAuthorizationHandler, IntegrationCredentialManagementSessionHandler>();
 
 
 builder.Logging.AddFilter("Microsoft.AspNetCore.Authentication", LogLevel.Debug);
