@@ -13,9 +13,14 @@ standalone_compose=(
 )
 
 cleanup() {
+  local status=$?
+  if [[ "$status" -ne 0 ]]; then
+    docker compose "${standalone_compose[@]}" logs --no-color >&2 || true
+  fi
   docker compose "${standalone_compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
   docker image rm "$mcp_image" >/dev/null 2>&1 || true
   rm -rf "$work_directory"
+  exit "$status"
 }
 trap cleanup EXIT
 
