@@ -139,6 +139,58 @@ public sealed class IntegrationCredentialSqliteTests
             .IntegrationCredentials.ToListAsync());
     }
 
+    [Theory]
+    [InlineData("integration")]
+    [InlineData("mcp")]
+    [InlineData("gateway")]
+    public async Task Non_interactive_credentials_cannot_revoke_a_same_owner_sibling(string authenticationMode)
+    {
+        await using var harness = await Harness.CreateAsync();
+        var first = Credential("owner", "first", DateTimeOffset.UtcNow.AddMinutes(-1));
+        var sibling = Credential("owner", "sibling", DateTimeOffset.UtcNow);
+        await harness.AddCredentialsAsync(first, sibling);
+
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/integration-credentials/{sibling.Id:N}");
+        request.Headers.Add("X-Test-Auth-Mode", authenticationMode);
+        using var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.False(await harness.IsRevokedAsync(first.Id));
+        Assert.False(await harness.IsRevokedAsync(sibling.Id));
+    }
+
+    [Fact]
+    public async Task Anonymous_and_wrong_owner_requests_cannot_revoke_a_credential()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var credential = Credential("owner", "owner credential", DateTimeOffset.UtcNow);
+        await harness.AddCredentialsAsync(credential);
+
+        using var anonymous = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/integration-credentials/{credential.Id:N}");
+        anonymous.Headers.Add("X-Test-Auth-Mode", "anonymous");
+        using var anonymousResponse = await harness.Client.SendAsync(anonymous);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousResponse.StatusCode);
+
+        using var wrongOwner = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/integration-credentials/{credential.Id:N}");
+        wrongOwner.Headers.Add("X-Test-User", "other");
+        using var wrongOwnerResponse = await harness.Client.SendAsync(wrongOwner);
+        Assert.Equal(HttpStatusCode.NotFound, wrongOwnerResponse.StatusCode);
+        Assert.False(await harness.IsRevokedAsync(credential.Id));
+    }
+
+    [Fact]
+    public async Task Interactive_owner_can_revoke_its_own_credential()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var credential = Credential("owner", "owner credential", DateTimeOffset.UtcNow);
+        await harness.AddCredentialsAsync(credential);
+
+        using var response = await harness.Client.DeleteAsync($"/api/v1/integration-credentials/{credential.Id:N}");
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.True(await harness.IsRevokedAsync(credential.Id));
+    }
+
     private static IntegrationCredential Credential(string ownerId, string name, DateTimeOffset createdAtUtc) => new()
     {
         Id = Guid.NewGuid(),
@@ -176,7 +228,7 @@ public sealed class IntegrationCredentialSqliteTests
                 return tenant;
             });
             builder.Services.AddSingleton<ICurrentUserAccessService>(new TestAccessService());
-            builder.Services.AddScoped<IIntegrationCredentialOwnerResolver, StaticOwnerResolver>();
+            builder.Services.AddScoped<IIntegrationCredentialOwnerResolver, IntegrationCredentialOwnerResolver>();
             builder.Services.AddScoped<IAuthorizationHandler, IntegrationCredentialManagementSessionHandler>();
             builder.Services.AddAuthentication("Test").AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("Test", _ => { });
             builder.Services.AddAuthorization(options => options.AddPolicy(IntegrationCredentialEndpoints.CredentialManagementPolicy, policy =>
@@ -193,7 +245,9 @@ public sealed class IntegrationCredentialSqliteTests
             {
                 var identity = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
                 await identity.Database.EnsureCreatedAsync();
-                identity.Users.Add(new ApplicationUser { Id = "owner", UserName = "owner", Email = "owner@example.test", IsEnabled = true });
+                identity.Users.AddRange(
+                    new ApplicationUser { Id = "owner", UserName = "owner", Email = "owner@example.test", IsEnabled = true },
+                    new ApplicationUser { Id = "other", UserName = "other", Email = "other@example.test", IsEnabled = true });
                 await identity.SaveChangesAsync();
                 var domain = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
                 await domain.GetService<IRelationalDatabaseCreator>().CreateTablesAsync();
@@ -204,6 +258,24 @@ public sealed class IntegrationCredentialSqliteTests
             }
 
             return new Harness(application, connection);
+        }
+
+        public async Task AddCredentialsAsync(params IntegrationCredential[] credentials)
+        {
+            await using var scope = application.Services.CreateAsyncScope();
+            var identity = scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>();
+            identity.IntegrationCredentials.AddRange(credentials);
+            await identity.SaveChangesAsync();
+        }
+
+        public async Task<bool> IsRevokedAsync(Guid credentialId)
+        {
+            await using var scope = application.Services.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>()
+                .IntegrationCredentials
+                .Where(credential => credential.Id == credentialId)
+                .Select(credential => credential.RevokedAtUtc != null)
+                .SingleAsync();
         }
 
         public async ValueTask DisposeAsync()
@@ -221,17 +293,18 @@ public sealed class IntegrationCredentialSqliteTests
     {
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
+            var authenticationMode = Request.Headers["X-Test-Auth-Mode"].ToString();
+            if (string.Equals(authenticationMode, "anonymous", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(AuthenticateResult.NoResult());
+
             var identity = new ClaimsIdentity(
-                [new Claim(ClaimTypes.NameIdentifier, "owner"), new Claim("auth_mode", "local")],
+                [
+                    new Claim(ClaimTypes.NameIdentifier, Request.Headers["X-Test-User"].FirstOrDefault() ?? "owner"),
+                    new Claim("auth_mode", string.IsNullOrWhiteSpace(authenticationMode) ? "local" : authenticationMode)
+                ],
                 Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name)));
         }
-    }
-
-    private sealed class StaticOwnerResolver : IIntegrationCredentialOwnerResolver
-    {
-        public Task<IntegrationCredentialOwner?> ResolveAsync(ClaimsPrincipal principal, CancellationToken cancellationToken = default)
-            => Task.FromResult<IntegrationCredentialOwner?>(new IntegrationCredentialOwner("owner"));
     }
 
     private sealed class TestAccessService : ICurrentUserAccessService
