@@ -202,6 +202,9 @@ jobs:
           (cd release-assets && sha256sum --check SHA256SUMS)
           test -s release-assets/release-manifest.json
 
+      - name: Execute extracted Linux x64 archives
+        run: tools/release/test-executable-archives.sh release-assets linux-x64
+
       - name: Test draft release asset upload semantics
         run: tools/release/test-publish-release-assets.sh
 
@@ -215,6 +218,39 @@ jobs:
             release-assets/SHA256SUMS
             release-assets/release-manifest.json
           retention-days: 14
+
+  archive-runtime:
+    name: Release archive runtime (${{ matrix.rid }})
+    needs: release-assets
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            rid: linux-x64
+          - runner: ubuntu-24.04-arm
+            rid: linux-arm64
+          - runner: windows-latest
+            rid: win-x64
+          - runner: macos-13
+            rid: osx-x64
+          - runner: macos-14
+            rid: osx-arm64
+    steps:
+      - name: Check out archive validation script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the validated release rehearsal payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-asset-rehearsal
+          path: release-assets
+
+      - name: Extract and execute matching release archives
+        shell: bash
+        run: tools/release/test-executable-archives.sh release-assets "${{ matrix.rid }}"
 
   compose:
     name: Compose startup validation
