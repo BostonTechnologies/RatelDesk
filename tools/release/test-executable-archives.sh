@@ -69,11 +69,55 @@ cat > "$configuration" <<'EOF'
 }
 EOF
 
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"release-archive-probe","version":"1"}}}' \
-  | RATELDESK_MCP_CONFIG="$configuration" \
-    RATELDESK_MCP_INSTANCE=archivetest \
-    RATELDESK_MCP_ARCHIVETEST_API_BASE_URL=https://api.example.test \
-    "$mcp" >"$temporary_directory/mcp-stdout.jsonl" 2>"$temporary_directory/mcp-stderr.txt"
+"$python_bin" - "$mcp" "$configuration" "$temporary_directory/mcp-stdout.jsonl" "$temporary_directory/mcp-stderr.txt" <<'PY'
+import os
+import queue
+import subprocess
+import sys
+import threading
+
+mcp, configuration, stdout_path, stderr_path = sys.argv[1:]
+environment = os.environ.copy()
+environment.update({
+    "RATELDESK_MCP_CONFIG": configuration,
+    "RATELDESK_MCP_INSTANCE": "archivetest",
+    "RATELDESK_MCP_ARCHIVETEST_API_BASE_URL": "https://api.example.test",
+})
+process = subprocess.Popen(
+    [mcp],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    encoding="utf-8",
+    env=environment,
+)
+response = queue.Queue()
+threading.Thread(target=lambda: response.put(process.stdout.readline()), daemon=True).start()
+process.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"release-archive-probe","version":"1"}}}\n')
+process.stdin.flush()
+try:
+    first_line = response.get(timeout=10)
+except queue.Empty:
+    process.kill()
+    process.wait()
+    stderr = process.stderr.read()
+    open(stderr_path, "w", encoding="utf-8").write(stderr)
+    raise SystemExit("The extracted MCP server did not respond to initialize within 10 seconds.")
+
+process.stdin.close()
+try:
+    process.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    process.kill()
+    process.wait()
+remaining_output = process.stdout.read()
+stderr = process.stderr.read()
+open(stdout_path, "w", encoding="utf-8").write(first_line + remaining_output)
+open(stderr_path, "w", encoding="utf-8").write(stderr)
+if process.returncode != 0:
+    raise SystemExit(f"The extracted MCP server exited with code {process.returncode}.")
+PY
 
 "$python_bin" - "$temporary_directory/mcp-stdout.jsonl" <<'PY'
 import json

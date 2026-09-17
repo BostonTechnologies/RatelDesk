@@ -151,7 +151,7 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   await expect(page.getByTestId('integration-credential-create')).toBeEnabled();
   await page.getByTestId('integration-credential-create').click();
   await expect(page.getByLabel('Name', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Organization', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Organization', exact: true })).toBeVisible();
   await expect(page.getByLabel('Permissions', { exact: true })).toBeVisible();
   await expect(page.getByText('The secret is displayed once.')).toBeVisible();
   await expect(page.locator('#blazor-error-ui')).not.toBeVisible();
