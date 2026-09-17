@@ -7,10 +7,12 @@ using Helpdesk.Mcp.Http.Observability;
 using Helpdesk.Mcp.Prompts;
 using Helpdesk.Mcp.Resources;
 using Helpdesk.Mcp.Tools;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using ModelContextProtocol.Authentication;
 using Microsoft.IdentityModel.Tokens;
 using System.Threading.RateLimiting;
@@ -23,7 +25,7 @@ public sealed partial class Program
     {
         const string McpScheme = "HelpdeskMcp";
         const string JwtScheme = "HelpdeskMcpJwt";
-        const string PolicyName = "HelpdeskMcpRemote";
+        const string PolicyName = "HelpdeskMcpAccess";
 
         var builder = WebApplication.CreateBuilder(args);
         builder.ConfigureOpenTelemetry();
@@ -31,6 +33,8 @@ public sealed partial class Program
         builder.Services.AddServiceDiscovery();
 
         var httpOptions = builder.Configuration.GetSection(HelpdeskMcpHttpOptions.SectionName).Get<HelpdeskMcpHttpOptions>() ?? new HelpdeskMcpHttpOptions();
+        var authenticationMode = httpOptions.AuthenticationMode.Trim().ToLowerInvariant();
+        var usesGatewayCredentials = string.Equals(authenticationMode, "gateway", StringComparison.Ordinal);
         var configurationPath = string.IsNullOrWhiteSpace(httpOptions.ConfigurationPath)
             ? Environment.GetEnvironmentVariable(HelpdeskMcpTarget.ConfigurationEnvironmentVariable)
             : httpOptions.ConfigurationPath;
@@ -40,23 +44,35 @@ public sealed partial class Program
         builder.Services.AddOptions<HelpdeskMcpHttpOptions>()
             .Bind(builder.Configuration.GetSection(HelpdeskMcpHttpOptions.SectionName))
             .Validate(options => AuthentikMcpOptionsValidator.IsCanonicalMcpResource(options.PublicResourceUri), "Helpdesk:Mcp:PublicResourceUri must be an absolute HTTPS /mcp URI.")
+            .Validate(options => options.AllowedOrigins.Length > 0 && options.AllowedOrigins.All(AuthentikMcpOptionsValidator.IsAllowedOrigin), "Helpdesk:Mcp:AllowedOrigins must contain one or more absolute HTTP(S) origins without paths.")
+            .Validate(options => AuthentikMcpOptionsValidator.IsAuthenticationMode(options.AuthenticationMode.Trim().ToLowerInvariant()), "Helpdesk:Mcp:AuthenticationMode must be gateway or authentik.")
             .ValidateOnStart();
-        builder.Services.AddSingleton<IValidateOptions<AuthentikMcpOptions>, AuthentikMcpOptionsValidator>();
-        builder.Services.AddOptions<AuthentikMcpOptions>()
-            .Bind(builder.Configuration.GetSection(AuthentikMcpOptions.SectionName))
-            .ValidateOnStart();
+        if (usesGatewayCredentials && !string.Equals(agentConfiguration.CredentialMode, "gateway", StringComparison.OrdinalIgnoreCase))
+            throw new AgentClientValidationException("Local HTTP MCP gateway mode requires credentialMode=gateway and does not accept a deployment credential.");
 
-        var authOptions = builder.Configuration.GetSection(AuthentikMcpOptions.SectionName).Get<AuthentikMcpOptions>() ?? new AuthentikMcpOptions();
-        var authorizationServer = $"{authOptions.Authority.TrimEnd('/')}/";
-        var hostContext = target.ToHostContext("http", httpOptions.PublicResourceUri);
-        var resourceMetadataUri = new Uri(new Uri(hostContext.ResourceUri), "/.well-known/oauth-protected-resource/mcp");
-        var protectedResourceMetadata = new ProtectedResourceMetadata
+        AuthentikMcpOptions? authOptions = null;
+        if (!usesGatewayCredentials)
         {
-            Resource = hostContext.ResourceUri,
-            AuthorizationServers = [authorizationServer],
-            ScopesSupported = authOptions.RequiredScopes,
-            BearerMethodsSupported = ["header"]
-        };
+            builder.Services.AddSingleton<IValidateOptions<AuthentikMcpOptions>, AuthentikMcpOptionsValidator>();
+            builder.Services.AddOptions<AuthentikMcpOptions>()
+                .Bind(builder.Configuration.GetSection(AuthentikMcpOptions.SectionName))
+                .ValidateOnStart();
+            authOptions = builder.Configuration.GetSection(AuthentikMcpOptions.SectionName).Get<AuthentikMcpOptions>() ?? new AuthentikMcpOptions();
+        }
+
+        var hostContext = target.ToHostContext("http", httpOptions.PublicResourceUri);
+        var resourceMetadataUri = usesGatewayCredentials
+            ? null
+            : new Uri(new Uri(hostContext.ResourceUri), "/.well-known/oauth-protected-resource/mcp");
+        var protectedResourceMetadata = usesGatewayCredentials
+            ? null
+            : new ProtectedResourceMetadata
+            {
+                Resource = hostContext.ResourceUri,
+                AuthorizationServers = [$"{authOptions!.Authority.TrimEnd('/')}/"],
+                ScopesSupported = authOptions.RequiredScopes,
+                BearerMethodsSupported = ["header"]
+            };
         IServiceProvider? applicationServices = null;
         var resourceTarget = new HelpdeskResources(
             () => applicationServices?.GetRequiredService<IHelpdeskAgentClient>()
@@ -64,14 +80,35 @@ public sealed partial class Program
             hostContext);
 
         builder.Services.AddHelpdeskMcpCore(agentConfiguration, new ReadOnlyHelpdeskMcpConfigurationSurface(agentConfiguration), hostContext);
-        builder.Services.AddAuthentication(options =>
+        var authentication = builder.Services.AddAuthentication(options =>
         {
-            options.DefaultAuthenticateScheme = McpScheme;
-            options.DefaultChallengeScheme = McpScheme;
-        })
-            .AddJwtBearer(JwtScheme, options =>
+            options.DefaultAuthenticateScheme = usesGatewayCredentials ? GatewayDelegationAuthenticationHandler.SchemeName : McpScheme;
+            options.DefaultChallengeScheme = usesGatewayCredentials ? GatewayDelegationAuthenticationHandler.SchemeName : McpScheme;
+        });
+        if (usesGatewayCredentials)
+        {
+            builder.Services.AddHttpContextAccessor();
+            builder.Services.AddHttpClient(GatewayDelegationAuthenticationHandler.DelegationClientName, client =>
             {
-                options.Authority = authOptions.Authority;
+                client.BaseAddress = new Uri(hostContext.CanonicalApiBaseUrl);
+                client.Timeout = TimeSpan.FromSeconds(20);
+            });
+            builder.Services.RemoveAll<IHelpdeskAgentClient>();
+            builder.Services.AddSingleton<IAgentAccessTokenProvider, GatewayExecutionTokenProvider>();
+            builder.Services.AddSingleton<IHelpdeskAgentClient>(provider => new HelpdeskAgentClient(
+                agentConfiguration,
+                provider.GetRequiredService<IHttpClientFactory>(),
+                provider.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
+                provider.GetRequiredService<IAgentAccessTokenProvider>()));
+            authentication.AddScheme<AuthenticationSchemeOptions, GatewayDelegationAuthenticationHandler>(
+                GatewayDelegationAuthenticationHandler.SchemeName,
+                _ => { });
+        }
+        else
+        {
+            authentication.AddJwtBearer(JwtScheme, options =>
+            {
+                options.Authority = authOptions!.Authority;
                 options.Audience = authOptions.Audience;
                 options.RequireHttpsMetadata = true;
                 options.TokenValidationParameters = new TokenValidationParameters
@@ -87,17 +124,21 @@ public sealed partial class Program
             .AddMcp(McpScheme, "Helpdesk MCP", options =>
             {
                 options.ForwardAuthenticate = JwtScheme;
-                options.ResourceMetadataUri = resourceMetadataUri;
-                options.ResourceMetadata = protectedResourceMetadata;
+                options.ResourceMetadataUri = resourceMetadataUri!;
+                options.ResourceMetadata = protectedResourceMetadata!;
             });
+        }
         builder.Services.AddSingleton<IAuthorizationHandler, RequiredMcpClaimsHandler>();
         builder.Services.AddAuthorization(options => options.AddPolicy(PolicyName, policy =>
         {
-            policy.AddAuthenticationSchemes(McpScheme);
+            policy.AddAuthenticationSchemes(usesGatewayCredentials ? GatewayDelegationAuthenticationHandler.SchemeName : McpScheme);
             policy.RequireAuthenticatedUser();
-            policy.Requirements.Add(new RequiredMcpClaimsRequirement(
-                authOptions.RequiredScopes.ToHashSet(StringComparer.Ordinal),
-                authOptions.RequiredGroups.ToHashSet(StringComparer.Ordinal)));
+            if (!usesGatewayCredentials)
+            {
+                policy.Requirements.Add(new RequiredMcpClaimsRequirement(
+                    authOptions!.RequiredScopes.ToHashSet(StringComparer.Ordinal),
+                    authOptions.RequiredGroups.ToHashSet(StringComparer.Ordinal)));
+            }
         }));
         builder.Services.AddRateLimiter(options => options.AddConcurrencyLimiter("HelpdeskMcp", limiter =>
         {
@@ -136,7 +177,8 @@ public sealed partial class Program
         app.UseAuthorization();
         app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = check => check.Tags.Contains("live") });
         app.MapHealthChecks("/health/ready");
-        app.MapGet("/.well-known/oauth-protected-resource/mcp", () => Results.Json(protectedResourceMetadata)).AllowAnonymous();
+        if (protectedResourceMetadata is not null)
+            app.MapGet("/.well-known/oauth-protected-resource/mcp", () => Results.Json(protectedResourceMetadata)).AllowAnonymous();
         app.MapMcp("/mcp").RequireAuthorization(PolicyName).RequireRateLimiting("HelpdeskMcp");
         app.Run();
     }

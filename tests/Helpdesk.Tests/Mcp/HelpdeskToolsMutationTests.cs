@@ -28,6 +28,45 @@ public sealed class HelpdeskToolsMutationTests
         Assert.True(response.Failure?.Retryable);
     }
 
+    [Fact]
+    public async Task Integration_credential_auth_status_uses_application_identity_endpoint()
+    {
+        var client = Substitute.For<IHelpdeskAgentClient>();
+        client.Configuration.Returns(new AgentClientConfiguration("https://api.example", null, null, null, null, null, null)
+        {
+            CredentialMode = "integration",
+            IntegrationCredential = "rdk_test"
+        });
+        client.GetAsync("/api/v1/auth/me", true, Arg.Any<CancellationToken>())
+            .Returns(new JsonObject { ["authMode"] = "integration" });
+        var tools = new HelpdeskTools(client, Store());
+
+        var response = await tools.helpdesk_auth(cancellationToken: CancellationToken.None);
+
+        Assert.True(response.Success);
+        await client.Received(1).GetAsync("/api/v1/auth/me", true, Arg.Any<CancellationToken>());
+        await client.DidNotReceive().GetAsync("/api/v1/auth/ai-agent/status", true, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Gateway_credential_auth_status_uses_application_identity_endpoint()
+    {
+        var client = Substitute.For<IHelpdeskAgentClient>();
+        client.Configuration.Returns(new AgentClientConfiguration("https://api.example", null, null, null, null, null, null)
+        {
+            CredentialMode = "gateway"
+        });
+        client.GetAsync("/api/v1/auth/me", true, Arg.Any<CancellationToken>())
+            .Returns(new JsonObject { ["authMode"] = "integration" });
+        var tools = new HelpdeskTools(client, Store());
+
+        var response = await tools.helpdesk_auth(cancellationToken: CancellationToken.None);
+
+        Assert.True(response.Success);
+        await client.Received(1).GetAsync("/api/v1/auth/me", true, Arg.Any<CancellationToken>());
+        await client.DidNotReceive().GetAsync("/api/v1/auth/ai-agent/status", true, Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData("helpdesk_incidents", "state", "{\"incidentId\":\"INC-123\",\"newState\":\"Resolved\"}")]
     [InlineData("helpdesk_requests", "assign", "{\"ids\":[\"REQ-123\"],\"assignedToId\":\"user-1\"}")]
@@ -149,6 +188,53 @@ public sealed class HelpdeskToolsMutationTests
         Assert.Equal("confirmation_required", response.Status);
         await client.DidNotReceive().GetAsync(Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         await client.DidNotReceive().SendAsync(Arg.Any<HttpMethod>(), Arg.Any<string>(), Arg.Any<JsonNode?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Caller_bound_assign_self_rejects_an_email_override_without_an_upstream_call()
+    {
+        var client = Substitute.For<IHelpdeskAgentClient>();
+        client.Configuration.Returns(new AgentClientConfiguration("https://api.example", null, null, null, null, null, "operator@example.test")
+        {
+            CredentialMode = "integration",
+            IntegrationCredential = "rdk_test"
+        });
+        var tools = new HelpdeskTools(client, Store());
+
+        var response = await tools.helpdesk_incidents("assign_self", Request("""{"ids":["INC-123"],"agentUserEmail":"other@example.test"}"""), confirm: true);
+
+        Assert.Equal("validation_failed", response.Status);
+        Assert.Contains("not permitted", response.Summary, StringComparison.Ordinal);
+        await client.DidNotReceive().GetAsync(Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Caller_bound_assign_self_uses_the_authenticated_application_identity()
+    {
+        var client = Substitute.For<IHelpdeskAgentClient>();
+        client.Configuration.Returns(new AgentClientConfiguration("https://api.example", null, null, null, null, null, "operator@example.test")
+        {
+            CredentialMode = "integration",
+            IntegrationCredential = "rdk_test"
+        });
+        client.GetAsync("/api/v1/auth/me", true, Arg.Any<CancellationToken>())
+            .Returns(new JsonObject { ["userId"] = "caller-user" });
+        JsonNode? assignedBody = null;
+        client.SendAsync(Arg.Any<HttpMethod>(), Arg.Any<string>(), Arg.Any<JsonNode?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                assignedBody = call.ArgAt<JsonNode?>(2);
+                return new JsonObject { ["id"] = "INC-123" };
+            });
+        var tools = new HelpdeskTools(client, Store());
+
+        var response = await tools.helpdesk_incidents("assign_self", Request("""{"ids":["INC-123"]}"""), confirm: true);
+
+        Assert.True(response.Success);
+        await client.Received(1).GetAsync("/api/v1/auth/me", true, Arg.Any<CancellationToken>());
+        await client.DidNotReceive().GetAsync(Arg.Is<string>(path => path.StartsWith("/api/v1/users/by-email/", StringComparison.Ordinal)), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await client.Received(1).SendAsync(HttpMethod.Post, "/api/v1/incidents/bulk/assign", Arg.Any<JsonNode?>(), true, Arg.Any<CancellationToken>());
+        Assert.Equal("caller-user", (assignedBody as JsonObject)?["assignedToId"]?.ToString());
     }
     [Fact]
     public async Task Close_incident_without_confirmation_does_not_call_the_api()

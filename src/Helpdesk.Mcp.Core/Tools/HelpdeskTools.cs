@@ -46,8 +46,9 @@ public sealed class HelpdeskTools(
         "taskId", "title", "description", "priority", "assignedToId", "clearAssignment", "linkedAssetIds", "attachments", "dueDate", "clearDueDate"
     };
 
-    [McpServerTool(UseStructuredContent = true), Description("Read Helpdesk AI-agent authentication status. The MCP server never returns bearer tokens.")]
-    public Task<HelpdeskToolResponse> helpdesk_auth(string operation = "status", JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default) => Read("helpdesk_auth", operation, ["status"], "/api/v1/auth/ai-agent/status", null, cancellationToken);
+    [McpServerTool(UseStructuredContent = true), Description("Read authentication status for the configured Helpdesk credential. Integration credentials use the application identity endpoint; Authentik agents use the AI-agent status endpoint. The MCP server never returns bearer tokens.")]
+    public Task<HelpdeskToolResponse> helpdesk_auth(string operation = "status", JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default)
+        => Read("helpdesk_auth", operation, ["status"], AuthStatusPath, null, cancellationToken);
 
     [McpServerTool(UseStructuredContent = true), Description("Read live, readiness, and authenticated Helpdesk health.")]
     public async Task<HelpdeskToolResponse> helpdesk_health(string operation = "get", JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default)
@@ -98,7 +99,7 @@ public sealed class HelpdeskTools(
         return await Execute(() => client.GetAsync(Query("/api/v1/ops/ai-agent/logs", payload), true, cancellationToken), "Operational diagnostics read.").ConfigureAwait(false);
     }
 
-    [McpServerTool(UseStructuredContent = true), Description("Manage incidents. Read operations: list, get, peek, timeline, timeline_count, attachments_count, listeners_count. Confirmed mutations: create, bulk_create, update, delete, state, bulk_state, assign, assign_self, add_worklog, close. assign_self resolves the configured agent user only after confirmation. close requires request.incidentId and request.closureNote, writes an internal closure note by default, then sets the incident state to Resolved. Every mutation requires confirm:true.")]
+    [McpServerTool(UseStructuredContent = true), Description("Manage incidents. Read operations: list, get, peek, timeline, timeline_count, attachments_count, listeners_count. Confirmed mutations: create, bulk_create, update, delete, state, bulk_state, assign, assign_self, add_worklog, close. In caller-bound mode, assign_self uses the authenticated application identity; external agents use their configured agent identity. close requires request.incidentId and request.closureNote, writes an internal closure note by default, then sets the incident state to Resolved. Every mutation requires confirm:true.")]
     public Task<HelpdeskToolResponse> helpdesk_incidents(string operation, JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default) => TicketOperation("helpdesk_incidents", "/api/v1/incidents", "incidentId", operation, request, confirm, cancellationToken);
     [McpServerTool(UseStructuredContent = true), Description("Manage service requests. Reads: list, get, tasks, timeline, timeline_count, attachments_count, listeners_count. Confirmed mutations: create, bulk_create, update, delete, state, bulk_state, assign, assign_self, add_worklog. state requires request.requestId and request.newState; bulk_state requires request.ids and request.newState; assign requires request.ids and request.assignedToId. Every mutation requires confirm:true.")]
     public Task<HelpdeskToolResponse> helpdesk_requests(string operation, JsonElement? request = null, bool confirm = false, CancellationToken cancellationToken = default) => TicketOperation("helpdesk_requests", "/api/v1/requests", "requestId", operation, request, confirm, cancellationToken);
@@ -386,18 +387,32 @@ public sealed class HelpdeskTools(
     {
         var ids = Strings(request, "ids");
         if (ids.Count == 0) return Validation("request.ids must contain at least one ticket identifier.");
-        var email = request?["agentUserEmail"]?.ToString() ?? client.Configuration.AgentUserEmail;
-        if (string.IsNullOrWhiteSpace(email)) return Validation("request.agentUserEmail or RATELDESK_AGENT_USER_EMAIL is required for assign_self.");
-        if (!confirm) return Response(false, "confirmation_required", $"This would assign {ids.Count} tickets to the configured agent user.", AffectedIds: ids, Confirmation: new HelpdeskConfirmation("confirm", true, operation, ids));
+        if (UsesCallerBoundIdentity && request?["agentUserEmail"] is not null)
+            return Validation("request.agentUserEmail is not permitted for caller-bound credentials; assign_self uses the authenticated application identity.");
+        if (!confirm) return Response(false, "confirmation_required", $"This would assign {ids.Count} tickets to the {(UsesCallerBoundIdentity ? "authenticated caller" : "configured agent user")}.", AffectedIds: ids, Confirmation: new HelpdeskConfirmation("confirm", true, operation, ids));
         try
         {
-            var user = await client.GetAsync($"/api/v1/users/by-email/{Uri.EscapeDataString(email)}", true, ct).ConfigureAwait(false) as JsonObject;
-            var userId = user?["id"]?.ToString();
-            if (string.IsNullOrWhiteSpace(userId)) return Validation($"Configured agent user '{email}' could not be resolved.");
+            var userId = UsesCallerBoundIdentity
+                ? (await client.GetAsync("/api/v1/auth/me", true, ct).ConfigureAwait(false) as JsonObject)?["userId"]?.ToString()
+                : await ResolveConfiguredAgentUserIdAsync(request, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(userId))
+                return Validation(UsesCallerBoundIdentity
+                    ? "The authenticated caller is not linked to an application user."
+                    : "Configured agent user could not be resolved.");
             var body = new JsonObject { ["ids"] = JsonSerializer.SerializeToNode(ids), ["assignedToId"] = userId };
             return await Mutation("assign", [.. ids, userId], true, HttpMethod.Post, basePath + "/bulk/assign", body, ct).ConfigureAwait(false);
         }
         catch (AgentClientRemoteException ex) { return Response(false, Status(ex.StatusCode), ex.Message, AffectedIds: ids, Failure: new HelpdeskToolFailure(ex.Code, ex.StatusCode >= 500, ex.StatusCode)); }
+    }
+
+    private async Task<string?> ResolveConfiguredAgentUserIdAsync(JsonObject? request, CancellationToken ct)
+    {
+        var email = request?["agentUserEmail"]?.ToString() ?? client.Configuration.AgentUserEmail;
+        if (string.IsNullOrWhiteSpace(email))
+            return null;
+
+        var user = await client.GetAsync($"/api/v1/users/by-email/{Uri.EscapeDataString(email)}", true, ct).ConfigureAwait(false) as JsonObject;
+        return user?["id"]?.ToString();
     }
 
     private async Task<HelpdeskToolResponse> DomainTicketCount(string tool, string basePath, string idName, string operation, JsonElement? request, CancellationToken ct)
@@ -695,5 +710,11 @@ public sealed class HelpdeskTools(
     private static string? String(JsonElement? element, string property) => element is { ValueKind: JsonValueKind.Object } value && value.TryGetProperty(property, out var node) && node.ValueKind == JsonValueKind.String ? node.GetString() : null;
     private static bool IsHttpUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http";
     private static string Query(string path, JsonObject? values) => values is null || values.Count == 0 ? path : path + "?" + string.Join("&", values.Where(x => x.Value is not null && x.Key is not "id" && !x.Key.EndsWith("Id", StringComparison.Ordinal)).Select(x => Uri.EscapeDataString(x.Key) + "=" + Uri.EscapeDataString(x.Value!.ToString())));
-    private JsonNode Capabilities() => new JsonObject { ["server"] = "Helpdesk.Mcp", ["instance"] = hostContext.Instance, ["catalogRevision"] = hostContext.CatalogRevision, ["transport"] = hostContext.Transport, ["resourceUri"] = hostContext.ResourceUri, ["apiBaseUrl"] = hostContext.CanonicalApiBaseUrl, ["phase"] = 3, ["mutationsEnabled"] = true, ["rawEnabled"] = false, ["mutationConfirmationRequired"] = true, ["configurationWritesEnabled"] = configurationSurface.CanPersist, ["obsoleteMutationProofToolExposed"] = false };
+    private string AuthStatusPath => UsesCallerBoundIdentity
+        ? "/api/v1/auth/me"
+        : "/api/v1/auth/ai-agent/status";
+    private bool UsesCallerBoundIdentity => string.Equals(client.Configuration?.CredentialMode, "integration", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(client.Configuration?.CredentialMode, "gateway", StringComparison.OrdinalIgnoreCase);
+
+    private JsonNode Capabilities() => new JsonObject { ["server"] = "Helpdesk.Mcp", ["instance"] = hostContext.Instance, ["catalogRevision"] = hostContext.CatalogRevision, ["transport"] = hostContext.Transport, ["resourceUri"] = hostContext.ResourceUri, ["apiBaseUrl"] = hostContext.CanonicalApiBaseUrl, ["credentialMode"] = client.Configuration?.CredentialMode ?? "authentik", ["authStatusPath"] = AuthStatusPath, ["phase"] = 3, ["mutationsEnabled"] = true, ["rawEnabled"] = false, ["mutationConfirmationRequired"] = true, ["configurationWritesEnabled"] = configurationSurface.CanPersist, ["obsoleteMutationProofToolExposed"] = false };
 }

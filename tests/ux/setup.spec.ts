@@ -143,6 +143,37 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   const locked = await page.request.post('/api/v1/setup/session', { data: { setupCode } });
   expect(locked.status()).toBeGreaterThanOrEqual(400);
 
+  // The browser must load the reference document through the public Web proxy.
+  // The Web-host route test separately verifies Scalar's /api Try It server.
+  const openApi = await page.request.get('/api/openapi/v1.json');
+  const openApiContent = await openApi.text();
+  expect(openApi.ok(), openApiContent).toBe(true);
+  expect(new URL(openApi.url()).pathname).toBe('/api/openapi/v1.json');
+  await page.goto('/api/docs/');
+  // Scalar replaces its bootstrap custom element once it renders. Assert the
+  // rendered reference UI instead of the transient bootstrap element.
+  await expect(page.getByRole('complementary', { name: 'Sidebar for RatelDesk API' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Introduction', exact: true })).toBeVisible();
+  await expect(page.getByText('RatelDesk API', { exact: true }).first()).toBeVisible();
+  await testInfo.attach('scalar-reference', {
+    body: await page.screenshot({ path: testInfo.outputPath('scalar-reference.png'), fullPage: true }),
+    contentType: 'image/png'
+  });
+  await expect(page.locator('#blazor-error-ui')).not.toBeVisible();
+
+  // Account security is available to the signed-in application identity, not only
+  // through a local-account-only administration page.
+  await page.goto('/account/integration-credentials');
+  await expect(page.getByTestId('integration-credentials-page')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Integration credentials', exact: true })).toBeVisible();
+  await expect(page.getByTestId('integration-credential-create')).toBeEnabled();
+  await page.getByTestId('integration-credential-create').click();
+  await expect(page.getByLabel('Name', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Organization', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Permissions', { exact: true })).toBeVisible();
+  await expect(page.getByText('The secret is displayed once.')).toBeVisible();
+  await expect(page.locator('#blazor-error-ui')).not.toBeVisible();
+
   const headers = { 'X-Requested-With': 'XMLHttpRequest' };
   const organizations = await (await page.request.get('/api/v1/ticketing/organizations?module=incident')).json();
   const organizationId = organizations[0].id;

@@ -277,6 +277,70 @@ public class CurrentUserAccessServiceTests
     }
 
     [Fact]
+    public async Task Linked_oidc_identity_resolves_its_persisted_instance_administrator_account()
+    {
+        await using var db = CreateDb();
+        await using var identityDb = CreateIdentityDb();
+        db.CustomerAuthLinks.Add(new CustomerAuthLink
+        {
+            CustomerId = "customer-a",
+            LocalAccountId = "application-admin",
+            OidcIssuer = "https://id.example.com/application/o/rateldesk",
+            OidcSubject = "linked-admin",
+            InviteStatus = CustomerInviteStatus.Active
+        });
+        identityDb.Users.Add(new ApplicationUser
+        {
+            Id = "application-admin",
+            UserName = "admin@example.test",
+            Email = "admin@example.test",
+            IsEnabled = true,
+            IsInstanceAdministrator = true
+        });
+        await db.SaveChangesAsync();
+        await identityDb.SaveChangesAsync();
+
+        var access = await new CurrentUserAccessService(db, identityDb)
+            .ResolveAsync(User("admin@example.test", "linked-admin"));
+
+        Assert.True(access.IsHelpdeskAdmin);
+    }
+
+    [Fact]
+    public async Task Instance_administrator_integration_credential_is_limited_to_its_requested_permission_tuple()
+    {
+        await using var db = CreateDb();
+        await using var identityDb = CreateIdentityDb();
+        db.Organizations.AddRange(
+            new Organization { Id = "org-a", Name = "Organization A" },
+            new Organization { Id = "org-b", Name = "Organization B" });
+        identityDb.Users.Add(new ApplicationUser
+        {
+            Id = "application-admin",
+            UserName = "admin@example.test",
+            IsEnabled = true,
+            IsInstanceAdministrator = true
+        });
+        await db.SaveChangesAsync();
+        await identityDb.SaveChangesAsync();
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, "application-admin"),
+                new Claim("auth_mode", "integration"),
+                new Claim("integration_organization_id", "org-b"),
+                new Claim("integration_permission", HelpdeskPermissions.IncidentRead)
+            ],
+            "IntegrationCredential"));
+
+        var access = await new CurrentUserAccessService(db, identityDb).ResolveAsync(principal);
+
+        Assert.False(access.IsHelpdeskAdmin);
+        Assert.True(access.HasPermission(HelpdeskPermissions.IncidentRead, "org-b"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentRead, "org-a"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.IncidentWrite, "org-b"));
+    }
+
+    [Fact]
     public async Task Persisted_custom_role_permissions_are_scoped_to_the_assigned_tenant()
     {
         await using var db = CreateDb();

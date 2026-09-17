@@ -29,6 +29,7 @@ internal static partial class HelpdeskCli
                 ["profile"] = new JsonObject
                 {
                     ["apiBaseUrl"] = string.IsNullOrWhiteSpace(profile.ApiBaseUrl) ? null : profile.ApiBaseUrl,
+                    ["credentialMode"] = CredentialMode(profile),
                     ["authConfigured"] = HasAuthConfig(profile)
                 },
                 ["output"] = new JsonObject
@@ -243,11 +244,16 @@ internal static partial class HelpdeskCli
         }
     }
 
+    private static string CredentialMode(CliConfig profile)
+        => string.IsNullOrWhiteSpace(profile.CredentialMode) ? "authentik" : profile.CredentialMode.Trim().ToLowerInvariant();
+
     private static bool HasAuthConfig(CliConfig profile)
-        => !string.IsNullOrWhiteSpace(profile.AuthentikTokenUrl)
-            && !string.IsNullOrWhiteSpace(profile.AuthentikClientId)
-            && !string.IsNullOrWhiteSpace(profile.AuthentikUsername)
-            && !string.IsNullOrWhiteSpace(profile.AuthentikAppPassword);
+        => CredentialMode(profile) == "integration"
+            ? !string.IsNullOrWhiteSpace(profile.IntegrationCredential)
+            : !string.IsNullOrWhiteSpace(profile.AuthentikTokenUrl)
+              && !string.IsNullOrWhiteSpace(profile.AuthentikClientId)
+              && !string.IsNullOrWhiteSpace(profile.AuthentikUsername)
+              && !string.IsNullOrWhiteSpace(profile.AuthentikAppPassword);
 
     private static List<JsonObject> BuildExampleEntries()
         =>

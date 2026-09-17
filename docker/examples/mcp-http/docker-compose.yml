@@ -1,0 +1,46 @@
+name: rateldesk-mcp-http
+
+# Connects to an already-running API; it deliberately has no depends_on entry.
+services:
+  mcp-config-init:
+    image: ghcr.io/bostontechnologies/rateldesk-mcp-http:${RATELDESK_VERSION:?Set RATELDESK_VERSION to an exact published RatelDesk version.}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        mkdir -p /run/rateldesk-mcp &&
+        cp /input/config.json /run/rateldesk-mcp/config.json &&
+        chown 10001:10001 /run/rateldesk-mcp/config.json &&
+        chmod 0400 /run/rateldesk-mcp/config.json
+    volumes:
+      - type: bind
+        source: ${RATELDESK_MCP_CONFIG_FILE:?Set the protected MCP configuration file.}
+        target: /input/config.json
+        read_only: true
+      - type: volume
+        source: mcp-http-config
+        target: /run/rateldesk-mcp
+
+  mcp-http:
+    image: ghcr.io/bostontechnologies/rateldesk-mcp-http:${RATELDESK_VERSION:?Set RATELDESK_VERSION to an exact published RatelDesk version.}
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      RATELDESK_MCP_CONFIG: /run/rateldesk-mcp/config.json
+      Helpdesk__Mcp__Instance: ${RATELDESK_MCP_INSTANCE:-example}
+      Helpdesk__Mcp__ExpectedApiBaseUrl: ${RATELDESK_API_BASE_URL:?Set the pinned API URL.}
+      Helpdesk__Mcp__PublicResourceUri: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:?Set the canonical HTTPS MCP URL.}
+      Helpdesk__Mcp__AllowedOrigins__0: ${RATELDESK_MCP_ALLOWED_ORIGIN:?Set the browser origin allowed to call this MCP endpoint.}
+      Helpdesk__Mcp__AuthenticationMode: gateway
+    volumes:
+      - type: volume
+        source: mcp-http-config
+        target: /run/rateldesk-mcp
+        read_only: true
+    depends_on:
+      mcp-config-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${RATELDESK_MCP_PORT:-8223}:8223"
+
+volumes:
+  mcp-http-config:

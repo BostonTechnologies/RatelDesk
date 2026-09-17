@@ -1,5 +1,7 @@
 using Dodo.Primitives;
 using FluentValidation;
+using Helpdesk.API.Authentication;
+using Helpdesk.API.Documentation;
 using Helpdesk.API.Email;
 using Helpdesk.API.Configuration;
 using Helpdesk.API.DependencyInjection;
@@ -40,6 +42,7 @@ using Helpdesk.API.Hubs;
 using Helpdesk.API.Services;
 using Helpdesk.API.Middleware;
 using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.Build;
 using Helpdesk.API.Ops;
 using Helpdesk.API.Validators;
 using Helpdesk.API.Background;
@@ -66,6 +69,7 @@ using Hangfire.Storage.SQLite;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
@@ -79,7 +83,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 using Microsoft.AspNetCore.Identity;
 using Npgsql;
 using System.IdentityModel.Tokens.Jwt;
@@ -522,6 +525,10 @@ builder.Services.AddAuthentication(options =>
                 : "Azure";
 
         var token = auth.Substring("Bearer ".Length).Trim();
+        if (token.StartsWith("rdk_", StringComparison.OrdinalIgnoreCase))
+            return IntegrationCredentialAuthenticationHandler.SchemeName;
+        if (token.StartsWith(McpExecutionTokenService.TokenPrefix, StringComparison.OrdinalIgnoreCase))
+            return McpExecutionAuthenticationHandler.SchemeName;
         try
         {
             var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
@@ -559,6 +566,15 @@ builder.Services.AddAuthentication(options =>
         return "Azure";
     };
 })
+.AddScheme<IntegrationCredentialAuthenticationOptions, IntegrationCredentialAuthenticationHandler>(
+    IntegrationCredentialAuthenticationHandler.SchemeName,
+    options => options.Purpose = IntegrationCredentialAuthenticationHandler.ApiPurpose)
+.AddScheme<IntegrationCredentialAuthenticationOptions, IntegrationCredentialAuthenticationHandler>(
+    IntegrationCredentialAuthenticationHandler.McpSchemeName,
+    options => options.Purpose = IntegrationCredentialAuthenticationHandler.McpPurpose)
+.AddScheme<AuthenticationSchemeOptions, McpExecutionAuthenticationHandler>(
+    McpExecutionAuthenticationHandler.SchemeName,
+    _ => { })
 .AddCookie(LocalAuthenticationOptions.Scheme, options =>
 {
     options.Cookie.Name = localAuthenticationCookieName;
@@ -937,6 +953,23 @@ builder.Services.AddAuthentication(options =>
 });
 builder.Services.AddAuthorization(opts =>
 {
+    opts.AddPolicy(McpGatewayDelegationEndpoints.DelegationPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(IntegrationCredentialAuthenticationHandler.McpSchemeName);
+        policy.RequireAuthenticatedUser();
+    });
+
+    opts.AddPolicy(IntegrationCredentialEndpoints.CredentialManagementPolicy, policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new IntegrationCredentialManagementSessionRequirement());
+    });
+    opts.AddPolicy(IntegrationCredentialEndpoints.SelfRevocationPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(IntegrationCredentialAuthenticationHandler.SchemeName);
+        policy.RequireAuthenticatedUser();
+    });
+
     opts.AddPolicy("HelpdeskAdmin", p =>
     {
         // Do not pin schemes here so tests (and custom schemes) can satisfy the policy.
@@ -1018,6 +1051,10 @@ builder.Services.AddAuthorization(opts =>
 
 });
 
+builder.Services.AddScoped<IIntegrationCredentialOwnerResolver, IntegrationCredentialOwnerResolver>();
+builder.Services.AddScoped<IAuthorizationHandler, IntegrationCredentialManagementSessionHandler>();
+builder.Services.AddSingleton<McpExecutionTokenService>();
+
 
 builder.Logging.AddFilter("Microsoft.AspNetCore.Authentication", LogLevel.Debug);
 builder.Logging.AddFilter("Helpdesk", LogLevel.Warning);
@@ -1026,42 +1063,16 @@ builder.Services.AddOpenApi(options =>
 {
     options.AddDocumentTransformer((document, context, cancellationToken) =>
     {
-        document.Components ??= new OpenApiComponents();
-        document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
-        document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
-        {
-            Name = "Authorization",
-            Type = SecuritySchemeType.Http,
-            Scheme = "Bearer",
-            BearerFormat = "JWT",
-            In = ParameterLocation.Header,
-            Description = "JWT Authorization header using the Bearer scheme"
-        };
-
-        document.Security ??= new List<OpenApiSecurityRequirement>();
-        if (!document.Security.Any(requirement =>
-                requirement.Keys.Any(scheme => string.Equals(scheme.Reference?.Id, "Bearer", StringComparison.OrdinalIgnoreCase))))
-        {
-            document.Security.Add(new OpenApiSecurityRequirement
-            {
-                [new OpenApiSecuritySchemeReference("Bearer", document)] = []
-            });
-        }
+        RatelDeskOpenApiCatalog.TransformDocumentAsync(document, cancellationToken);
+        document.Info.Version = BuildInfoProvider.FromAssembly(typeof(Program).Assembly, builder.Environment.EnvironmentName).Version;
+        RatelDeskOpenApiCatalog.ConfigureSecuritySchemes(document, localAuthenticationCookieName);
 
         return Task.CompletedTask;
     });
 
     options.AddOperationTransformer((operation, context, cancellationToken) =>
     {
-        operation.Security ??= new List<OpenApiSecurityRequirement>();
-        if (!operation.Security.Any(requirement =>
-                requirement.Keys.Any(scheme => string.Equals(scheme.Reference?.Id, "Bearer", StringComparison.OrdinalIgnoreCase))))
-        {
-            operation.Security.Add(new OpenApiSecurityRequirement
-            {
-                [new OpenApiSecuritySchemeReference("Bearer")] = []
-            });
-        }
+        RatelDeskOpenApiCatalog.TransformOperationAsync(operation, context.Description, context.Document, context.ApplicationServices, cancellationToken);
 
         return Task.CompletedTask;
     });
@@ -1136,8 +1147,8 @@ app.UseStaticFiles();
 app.MapOpenApi().AllowAnonymous();
 
 // Health checks
-app.MapGet("/health/ready", () => Results.Ok(new { status = "ready" }));
-app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
+app.MapGet("/health/ready", () => Results.Ok(new { status = "ready" })).WithTags("Health");
+app.MapGet("/health/live", () => Results.Ok(new { status = "alive" })).WithTags("Health");
 if (app.Environment.IsDevelopment())
 {
     IResult WriteDebugLog(ILoggerFactory loggerFactory)
@@ -1171,6 +1182,8 @@ if (useHangfireRuntime)
 }
 
 app.MapCurrentUserAccessEndpoint();
+app.MapIntegrationCredentialEndpoints();
+app.MapMcpGatewayDelegationEndpoints();
 app.MapGet("/api/v1/setup/status", () => Results.Ok(new { state = "Ready" }))
     .AllowAnonymous()
     .WithTags("Setup");
@@ -1250,7 +1263,7 @@ app.MapGet("/__debug/me", (HttpContext ctx) => new
     authScheme = ctx.User.Identities.Select(i => i.AuthenticationType).ToArray(),
     name = ctx.User.Identity?.Name,
     roles = ctx.User.Claims.Where(c => c.Type == "roles" || c.Type == ClaimTypes.Role).Select(c => c.Value).ToArray()
-}).RequireAuthorization();
+}).RequireAuthorization().WithTags("System");
 #endif
 app.MapGet("/health/db", async ([FromServices] HelpdeskDbContext db, CancellationToken token) =>
     {
@@ -1323,7 +1336,7 @@ app.MapPost("/api/v1/ingestEmail", async (
     }
 
     return Results.Created($"/api/v1/incidents/{ticket.Id}", ticket); // 201
-}).RequireAuthorization("HelpdeskAdmin");
+}).RequireAuthorization("HelpdeskAdmin").WithTags("Email");
 
 app.MapHub<NotificationHub>("/notification-hub")
     .RequireAuthorization("NotificationAccess");
@@ -1336,7 +1349,7 @@ if (app.Environment.IsDevelopment())
         var s = prot.Protect("ok");
         var u = prot.Unprotect(s);
         return Results.Ok(new { protectedLength = s.Length, unprotected = u });
-    });
+    }).WithTags("System");
 }
 
 if (app.Environment.IsDevelopment() && runStartupTasks)

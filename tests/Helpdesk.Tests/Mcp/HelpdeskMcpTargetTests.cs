@@ -21,17 +21,16 @@ public sealed class HelpdeskMcpTargetTests
     }
 
     [Theory]
-    [InlineData(null, "https://dev.example", "RATELDESK_MCP_INSTANCE must be dev or prod.")]
-    [InlineData("stage", "https://dev.example", "RATELDESK_MCP_INSTANCE must be dev or prod.")]
-    [InlineData("dev", null, "RATELDESK_MCP_DEV_API_BASE_URL must be an absolute http or https URL.")]
+    [InlineData(null, "https://dev.example", "RATELDESK_MCP_INSTANCE must be a lowercase instance label containing letters, digits, and hyphens.")]
+    [InlineData("stage", "https://stage.example", "RATELDESK_MCP_INSTANCE 'stage' requires")]
+    [InlineData("dev", null, "RATELDESK_MCP_DEV_API_BASE_URL must be an absolute http or https URL without credentials, query, or fragment.")]
     [InlineData("prod", "https://prod.example", "RATELDESK_MCP_INSTANCE 'prod' requires")]
     public void Resolve_rejects_missing_or_mismatched_target_configuration(string? instance, string? expectedEndpoint, string error)
     {
         using var environment = new EnvironmentVariables(
             (HelpdeskMcpTarget.InstanceEnvironmentVariable, instance),
             (HelpdeskMcpTarget.ConfigurationEnvironmentVariable, "/tmp/helpdesk-prod.json"),
-            ("RATELDESK_MCP_DEV_API_BASE_URL", expectedEndpoint),
-            ("RATELDESK_MCP_PROD_API_BASE_URL", expectedEndpoint));
+            (instance is null ? "RATELDESK_MCP_DEV_API_BASE_URL" : $"RATELDESK_MCP_{instance.ToUpperInvariant()}_API_BASE_URL", expectedEndpoint));
 
         var exception = Assert.Throws<AgentClientValidationException>(() => HelpdeskMcpTarget.Resolve(Configuration("https://dev.example"), "/tmp/helpdesk-prod.json"));
 

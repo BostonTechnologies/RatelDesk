@@ -173,6 +173,82 @@ jobs:
         if: matrix.name == 'web'
         run: tools/ci/smoke-web-static-assets.sh "${{ matrix.image }}"
 
+      - name: Validate MCP Compose configuration ownership
+        if: matrix.name == 'mcp-http'
+        run: tools/ci/test-mcp-compose-config.sh "${{ matrix.image }}"
+
+  release-assets:
+    name: Release asset rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Assemble self-contained CLI, stdio MCP, and deployment assets
+        run: tools/release/package-assets.sh 0.0.0-pr "${{ github.sha }}" release-assets
+
+      - name: Verify asset manifest and checksums
+        run: |
+          test "$(find release-assets -maxdepth 1 -name 'rateldesk-cli-*.tar.gz' | wc -l)" = 2
+          test "$(find release-assets -maxdepth 1 -name 'rateldesk-cli-*.zip' | wc -l)" = 1
+          test "$(find release-assets -maxdepth 1 -name 'rateldesk-mcp-stdio-*.tar.gz' | wc -l)" = 2
+          test "$(find release-assets -maxdepth 1 -name 'rateldesk-mcp-stdio-*.zip' | wc -l)" = 1
+          (cd release-assets && sha256sum --check SHA256SUMS)
+          test -s release-assets/release-manifest.json
+
+      - name: Execute extracted Linux x64 archives
+        run: tools/release/test-executable-archives.sh release-assets linux-x64
+
+      - name: Test draft release asset upload semantics
+        run: tools/release/test-publish-release-assets.sh
+
+      - name: Upload release rehearsal assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-asset-rehearsal
+          path: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/SHA256SUMS
+            release-assets/release-manifest.json
+            release-assets/release-manifest.json.sha256
+          retention-days: 14
+
+  archive-runtime:
+    name: Release archive runtime (${{ matrix.rid }})
+    needs: release-assets
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            rid: linux-x64
+          - runner: ubuntu-24.04-arm
+            rid: linux-arm64
+          - runner: windows-latest
+            rid: win-x64
+    steps:
+      - name: Check out archive validation script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the validated release rehearsal payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-asset-rehearsal
+          path: release-assets
+
+      - name: Extract and execute matching release archives
+        shell: bash
+        run: tools/release/test-executable-archives.sh release-assets "${{ matrix.rid }}"
+
   compose:
     name: Compose startup validation
     runs-on: ubuntu-latest
@@ -228,6 +304,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
+      RATELDESK_VERSION: 0.0.0-ci
       RATELDESK_POSTGRES_CONNECTION_STRING: Host=postgres.example.test;Port=5432;Database=rateldesk;Username=rateldesk;Password=ci-placeholder;Ssl Mode=Require
       RATELDESK_BOOTSTRAP_ADMIN_EMAIL: admin@example.test
       RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME: Initial Administrator

@@ -389,7 +389,7 @@ app.MapScalarApiReference(
     {
         var request = context.Request;
         var openApiUrl = $"{request.Scheme}://{request.Host}{request.PathBase}/api/openapi/v1.json";
-        options.AddDocument("v1", "Helpdesk API", openApiUrl, isDefault: true);
+        options.AddDocument("v1", "RatelDesk API", openApiUrl, isDefault: true);
         options.Servers = new[] { new ScalarServer("/api") };
     }).AllowAnonymous();
 

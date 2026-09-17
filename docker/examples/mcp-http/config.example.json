@@ -1,0 +1,4 @@
+{
+  "apiBaseUrl": "https://api.example.test/",
+  "credentialMode": "gateway"
+}

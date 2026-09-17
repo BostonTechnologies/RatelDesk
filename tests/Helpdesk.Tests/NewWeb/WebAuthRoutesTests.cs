@@ -176,6 +176,20 @@ public class WebAuthRoutesTests
     }
 
     [Fact]
+    public async Task Scalar_reference_loads_the_document_and_uses_the_web_proxy_for_try_it()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/api/docs/");
+        var html = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("/api/openapi/v1.json", html, StringComparison.Ordinal);
+        Assert.Contains("\"servers\":[{\"url\":\"/api\"}]", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Login_Authentik_Challenges_Authentik_Oidc()
     {
         using var factory = CreateFactory();

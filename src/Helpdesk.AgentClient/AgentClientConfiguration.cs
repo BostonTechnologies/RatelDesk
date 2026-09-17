@@ -20,6 +20,8 @@ public sealed record AgentClientConfiguration(
     string? AuthentikScope,
     string? AgentUserEmail)
 {
+    public string? CredentialMode { get; init; }
+    public string? IntegrationCredential { get; init; }
     public const string DefaultApiBaseUrl = "https://api.helpdesk.example.com";
     public const string DefaultScope = "openid profile email";
     public static AgentClientConfiguration Empty { get; } = new(null, null, null, null, null, null, null);
@@ -33,19 +35,27 @@ public sealed record AgentClientConfiguration(
         AuthentikUsername = Pick(next.AuthentikUsername, AuthentikUsername),
         AuthentikAppPassword = Pick(next.AuthentikAppPassword, AuthentikAppPassword),
         AuthentikScope = Pick(next.AuthentikScope, AuthentikScope),
-        AgentUserEmail = Pick(next.AgentUserEmail, AgentUserEmail)
+        AgentUserEmail = Pick(next.AgentUserEmail, AgentUserEmail),
+        CredentialMode = Pick(next.CredentialMode, CredentialMode),
+        IntegrationCredential = Pick(next.IntegrationCredential, IntegrationCredential)
     };
 
     public ResolvedAgentClientConfiguration Resolve()
     {
         static string Required(string? value, string key) => string.IsNullOrWhiteSpace(value) ? throw new AgentClientValidationException($"{key} is required.") : value;
-        return new(new Uri(string.IsNullOrWhiteSpace(ApiBaseUrl) ? DefaultApiBaseUrl : ApiBaseUrl), Required(AuthentikTokenUrl, "RATELDESK_AUTHENTIK_TOKEN_URL"), Required(AuthentikClientId, "RATELDESK_AUTHENTIK_CLIENT_ID"), Required(AuthentikUsername, "RATELDESK_AUTHENTIK_USERNAME"), Required(AuthentikAppPassword, "RATELDESK_AUTHENTIK_APP_PASSWORD"), string.IsNullOrWhiteSpace(AuthentikScope) ? DefaultScope : AuthentikScope, AgentUserEmail);
+        var mode = string.IsNullOrWhiteSpace(CredentialMode) ? "authentik" : CredentialMode.Trim().ToLowerInvariant();
+        if (mode == "integration")
+            return new(new Uri(string.IsNullOrWhiteSpace(ApiBaseUrl) ? DefaultApiBaseUrl : ApiBaseUrl), null, null, null, Required(IntegrationCredential, "RATELDESK_INTEGRATION_CREDENTIAL"), null, AgentUserEmail, mode, IntegrationCredential);
+        if (mode == "gateway")
+            return new(new Uri(Required(ApiBaseUrl, "RATELDESK_API_BASE_URL")), null, null, null, null, null, AgentUserEmail, mode, null);
+        if (mode != "authentik") throw new AgentClientValidationException("credentialMode must be authentik, integration, or gateway.");
+        return new(new Uri(string.IsNullOrWhiteSpace(ApiBaseUrl) ? DefaultApiBaseUrl : ApiBaseUrl), Required(AuthentikTokenUrl, "RATELDESK_AUTHENTIK_TOKEN_URL"), Required(AuthentikClientId, "RATELDESK_AUTHENTIK_CLIENT_ID"), Required(AuthentikUsername, "RATELDESK_AUTHENTIK_USERNAME"), Required(AuthentikAppPassword, "RATELDESK_AUTHENTIK_APP_PASSWORD"), string.IsNullOrWhiteSpace(AuthentikScope) ? DefaultScope : AuthentikScope, AgentUserEmail, mode, null);
     }
 
     private static string? Pick(string? primary, string? fallback) => string.IsNullOrWhiteSpace(primary) ? fallback : primary;
 }
 
-public sealed record ResolvedAgentClientConfiguration(Uri ApiBaseUrl, string AuthentikTokenUrl, string AuthentikClientId, string AuthentikUsername, string AuthentikAppPassword, string AuthentikScope, string? AgentUserEmail);
+public sealed record ResolvedAgentClientConfiguration(Uri ApiBaseUrl, string? AuthentikTokenUrl, string? AuthentikClientId, string? AuthentikUsername, string? AuthentikAppPassword, string? AuthentikScope, string? AgentUserEmail, string CredentialMode, string? IntegrationCredential);
 
 public sealed class AgentClientConfigurationStore(string? path = null)
 {
@@ -84,8 +94,12 @@ public static class AgentClientConfigurationResolver
     public static AgentClientConfiguration Load(string? path = null)
     {
         var file = new AgentClientConfigurationStore(path).Load();
-        var env = new AgentClientConfiguration(Environment.GetEnvironmentVariable("RATELDESK_API_BASE_URL"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_TOKEN_URL"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_CLIENT_ID"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_USERNAME"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_APP_PASSWORD"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_SCOPE"), Environment.GetEnvironmentVariable("RATELDESK_AGENT_USER_EMAIL"));
+        var env = new AgentClientConfiguration(Environment.GetEnvironmentVariable("RATELDESK_API_BASE_URL"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_TOKEN_URL"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_CLIENT_ID"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_USERNAME"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_APP_PASSWORD"), Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_SCOPE"), Environment.GetEnvironmentVariable("RATELDESK_AGENT_USER_EMAIL"))
+        {
+            CredentialMode = Environment.GetEnvironmentVariable("RATELDESK_CREDENTIAL_MODE"),
+            IntegrationCredential = Environment.GetEnvironmentVariable("RATELDESK_INTEGRATION_CREDENTIAL")
+        };
         return file.Merge(env);
     }
-    public static object Redact(AgentClientConfiguration config) => new { config.ApiBaseUrl, config.AuthentikTokenUrl, config.AuthentikClientId, config.AuthentikUsername, authentikAppPassword = string.IsNullOrWhiteSpace(config.AuthentikAppPassword) ? null : "***REDACTED***", config.AuthentikScope, config.AgentUserEmail };
+    public static object Redact(AgentClientConfiguration config) => new { config.ApiBaseUrl, config.CredentialMode, config.AuthentikTokenUrl, config.AuthentikClientId, config.AuthentikUsername, authentikAppPassword = string.IsNullOrWhiteSpace(config.AuthentikAppPassword) ? null : "***REDACTED***", integrationCredential = string.IsNullOrWhiteSpace(config.IntegrationCredential) ? null : "***REDACTED***", config.AuthentikScope, config.AgentUserEmail };
 }

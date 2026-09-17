@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Helpdesk.AgentClient;
 using Helpdesk.Mcp.Http.Observability;
+using Helpdesk.Mcp.Http.Authorization;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -136,6 +137,46 @@ public sealed class McpHttpHostTests
         Assert.Equal(1, outbound.ApiRequests);
         var auditMessage = Assert.Single(audit.Messages, message => message.StartsWith("MCP tool invocation completed.", StringComparison.Ordinal));
         Assert.Contains("CorrelationId=corr-123", auditMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Paired_gateway_callers_receive_request_scoped_execution_credentials()
+    {
+        using var environment = new McpHostEnvironment(gateway: true);
+        var delegation = new GatewayDelegationProbe();
+        var outbound = new AgentClientBoundaryProbe();
+        using var factory = CreateFactory(environment.SigningKey, boundaryProbe: outbound, delegationProbe: delegation);
+        using var client = CreateClient(factory);
+
+        var calls = await Task.WhenAll(
+            HttpCallAsync(client, "rdk_local-a", 1, "tools/call", ToolCallParameters("helpdesk_auth", "status")),
+            HttpCallAsync(client, "rdk_local-b", 2, "tools/call", ToolCallParameters("helpdesk_auth", "status")));
+        using var first = calls[0];
+        using var second = calls[1];
+
+        Assert.All(calls, response => Assert.Equal("completed", StructuredContent(response.RootElement).GetProperty("status").GetString()));
+        Assert.Equal(2, delegation.Requests);
+        Assert.DoesNotContain(outbound.ApiAuthorizations, value => value.Contains("rdk_local-a", StringComparison.Ordinal));
+        Assert.DoesNotContain(outbound.ApiAuthorizations, value => value.Contains("rdk_local-b", StringComparison.Ordinal));
+        Assert.Equal(["Bearer rdx_local-a", "Bearer rdx_local-b"], outbound.ApiAuthorizations.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task Paired_gateway_mode_does_not_advertise_oauth_metadata()
+    {
+        using var environment = new McpHostEnvironment(gateway: true);
+        var delegation = new GatewayDelegationProbe();
+        using var factory = CreateFactory(environment.SigningKey, delegationProbe: delegation);
+        using var client = CreateClient(factory);
+
+        using var metadata = await client.GetAsync("/.well-known/oauth-protected-resource/mcp");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = McpRequest("initialize") };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "rdk_local-a");
+        request.Headers.Accept.ParseAdd("application/json, text/event-stream");
+        using var initialize = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, metadata.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, initialize.StatusCode);
     }
 
     [Fact]
@@ -337,7 +378,7 @@ public sealed class McpHttpHostTests
         Assert.Equal(0, outbound.CallCount);
     }
 
-    private static WebApplicationFactory<Helpdesk.Mcp.Http.Program> CreateFactory(ECDsa signingKey, AuditLogCollector? audit = null, OutboundCallProbe? outboundProbe = null, McpJwtValidation? jwt = null, AgentClientBoundaryProbe? boundaryProbe = null)
+    private static WebApplicationFactory<Helpdesk.Mcp.Http.Program> CreateFactory(ECDsa signingKey, AuditLogCollector? audit = null, OutboundCallProbe? outboundProbe = null, McpJwtValidation? jwt = null, AgentClientBoundaryProbe? boundaryProbe = null, GatewayDelegationProbe? delegationProbe = null)
         => new WebApplicationFactory<Helpdesk.Mcp.Http.Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
@@ -358,6 +399,11 @@ public sealed class McpHttpHostTests
                         .ConfigurePrimaryHttpMessageHandler(outboundProbe.CreateHandler);
                     services.AddHttpClient(Helpdesk.AgentClient.HelpdeskAgentClient.AuthHttpClientName)
                         .ConfigurePrimaryHttpMessageHandler(outboundProbe.CreateHandler);
+                }
+                if (delegationProbe is not null)
+                {
+                    services.AddHttpClient(GatewayDelegationAuthenticationHandler.DelegationClientName)
+                        .ConfigurePrimaryHttpMessageHandler(delegationProbe.CreateHandler);
                 }
 
                 services.PostConfigure<JwtBearerOptions>("HelpdeskMcpJwt", options =>
@@ -517,6 +563,8 @@ public sealed class McpHttpHostTests
         private const string DevApiVariable = "RATELDESK_MCP_DEV_API_BASE_URL";
         private const string ProdApiVariable = "RATELDESK_MCP_PROD_API_BASE_URL";
         private const string PublicResourceVariable = "Helpdesk__Mcp__PublicResourceUri";
+        private const string AllowedOriginVariable = "Helpdesk__Mcp__AllowedOrigins__0";
+        private const string AuthenticationModeVariable = "Helpdesk__Mcp__AuthenticationMode";
         private const string AuthorityVariable = "Authentication__AuthentikMcp__Authority";
         private const string AudienceVariable = "Authentication__AuthentikMcp__Audience";
         private const string ScopeVariable = "Authentication__AuthentikMcp__RequiredScopes__0";
@@ -526,26 +574,31 @@ public sealed class McpHttpHostTests
         private readonly string? _previousDevApi = Environment.GetEnvironmentVariable(DevApiVariable);
         private readonly string? _previousProdApi = Environment.GetEnvironmentVariable(ProdApiVariable);
         private readonly string? _previousPublicResource = Environment.GetEnvironmentVariable(PublicResourceVariable);
+        private readonly string? _previousAllowedOrigin = Environment.GetEnvironmentVariable(AllowedOriginVariable);
+        private readonly string? _previousAuthenticationMode = Environment.GetEnvironmentVariable(AuthenticationModeVariable);
         private readonly string? _previousAuthority = Environment.GetEnvironmentVariable(AuthorityVariable);
         private readonly string? _previousAudience = Environment.GetEnvironmentVariable(AudienceVariable);
         private readonly string? _previousScope = Environment.GetEnvironmentVariable(ScopeVariable);
         private readonly string? _previousGroup = Environment.GetEnvironmentVariable(GroupVariable);
         private readonly string _configurationPath = Path.Combine(Path.GetTempPath(), $"helpdesk-mcp-http-{Guid.NewGuid():N}.json");
 
-        public McpHostEnvironment(string instance = "dev", string apiBaseUrl = "https://api.example", string publicResourceUri = ResourceUri)
+        public McpHostEnvironment(string instance = "dev", string apiBaseUrl = "https://api.example", string publicResourceUri = ResourceUri, bool gateway = false)
         {
             File.WriteAllText(_configurationPath, JsonSerializer.Serialize(new
             {
                 apiBaseUrl,
-                authentikTokenUrl = "https://auth.example/token",
-                authentikClientId = "helpdesk-mcp-test",
-                authentikUsername = "helpdesk-mcp-test",
-                authentikAppPassword = "test-only-password"
+                credentialMode = gateway ? "gateway" : "authentik",
+                authentikTokenUrl = gateway ? null : "https://auth.example/token",
+                authentikClientId = gateway ? null : "helpdesk-mcp-test",
+                authentikUsername = gateway ? null : "helpdesk-mcp-test",
+                authentikAppPassword = gateway ? null : "test-only-password"
             }));
             Environment.SetEnvironmentVariable(ConfigurationPathVariable, _configurationPath);
             Environment.SetEnvironmentVariable(InstanceVariable, instance);
             Environment.SetEnvironmentVariable(instance == "dev" ? DevApiVariable : ProdApiVariable, apiBaseUrl);
             Environment.SetEnvironmentVariable(PublicResourceVariable, publicResourceUri);
+            Environment.SetEnvironmentVariable(AllowedOriginVariable, "https://client.example");
+            Environment.SetEnvironmentVariable(AuthenticationModeVariable, gateway ? "gateway" : "authentik");
             Environment.SetEnvironmentVariable(AuthorityVariable, Authority);
             Environment.SetEnvironmentVariable(AudienceVariable, publicResourceUri);
             Environment.SetEnvironmentVariable(ScopeVariable, "helpdesk.mcp");
@@ -565,6 +618,8 @@ public sealed class McpHttpHostTests
             Environment.SetEnvironmentVariable(DevApiVariable, _previousDevApi);
             Environment.SetEnvironmentVariable(ProdApiVariable, _previousProdApi);
             Environment.SetEnvironmentVariable(PublicResourceVariable, _previousPublicResource);
+            Environment.SetEnvironmentVariable(AllowedOriginVariable, _previousAllowedOrigin);
+            Environment.SetEnvironmentVariable(AuthenticationModeVariable, _previousAuthenticationMode);
             Environment.SetEnvironmentVariable(AuthorityVariable, _previousAuthority);
             Environment.SetEnvironmentVariable(AudienceVariable, _previousAudience);
             Environment.SetEnvironmentVariable(ScopeVariable, _previousScope);
@@ -621,10 +676,12 @@ public sealed class McpHttpHostTests
         private int _tokenRequests;
         private int _apiRequests;
         private string? _apiAuthorization;
+        private readonly ConcurrentQueue<string> _apiAuthorizations = new();
 
         public int TokenRequests => Volatile.Read(ref _tokenRequests);
         public int ApiRequests => Volatile.Read(ref _apiRequests);
         public string? ApiAuthorization => Volatile.Read(ref _apiAuthorization);
+        public IReadOnlyCollection<string> ApiAuthorizations => _apiAuthorizations.ToArray();
 
         public HttpMessageHandler CreateHandler() => new ProbeHandler(this);
 
@@ -643,9 +700,50 @@ public sealed class McpHttpHostTests
 
                 Interlocked.Increment(ref probe._apiRequests);
                 Volatile.Write(ref probe._apiAuthorization, request.Headers.Authorization?.ToString());
+                if (request.Headers.Authorization is not null)
+                    probe._apiAuthorizations.Enqueue(request.Headers.Authorization.ToString());
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("{\"correlationId\":\"corr-123\"}", Encoding.UTF8, "application/json")
+                });
+            }
+        }
+    }
+
+    private sealed class GatewayDelegationProbe
+    {
+        private int _requests;
+
+        public int Requests => Volatile.Read(ref _requests);
+
+        public HttpMessageHandler CreateHandler() => new ProbeHandler(this);
+
+        private sealed class ProbeHandler(GatewayDelegationProbe probe) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                Interlocked.Increment(ref probe._requests);
+                var inbound = request.Headers.TryGetValues("Authorization", out var authorizationValues)
+                    ? authorizationValues.SingleOrDefault()?.Replace("Bearer ", string.Empty, StringComparison.OrdinalIgnoreCase)
+                    : null;
+                var resource = request.Headers.GetValues("X-RatelDesk-Mcp-Resource").SingleOrDefault();
+                if (string.IsNullOrWhiteSpace(inbound) || string.IsNullOrWhiteSpace(resource))
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+
+                var suffix = inbound["rdk_".Length..];
+                var json = JsonSerializer.Serialize(new
+                {
+                    accessToken = $"rdx_{suffix}",
+                    expiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(1),
+                    userId = $"user-{suffix}",
+                    name = $"User {suffix}",
+                    primaryOrganizationId = $"org-{suffix}",
+                    permissions = new[] { "Incident.Read" },
+                    allowedOrganizationIds = new[] { $"org-{suffix}" }
+                });
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
                 });
             }
         }

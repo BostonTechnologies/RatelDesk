@@ -1,10 +1,11 @@
 using Helpdesk.AgentClient;
 using Helpdesk.Mcp.Tools;
+using System.Text.RegularExpressions;
 using System.Text.Json.Serialization;
 
 namespace Helpdesk.Mcp.Configuration;
 
-public sealed record HelpdeskMcpTarget(string Instance, Uri ApiBaseUrl)
+public sealed partial record HelpdeskMcpTarget(string Instance, Uri ApiBaseUrl)
 {
     public const string InstanceEnvironmentVariable = "RATELDESK_MCP_INSTANCE";
     public const string ConfigurationEnvironmentVariable = "RATELDESK_MCP_CONFIG";
@@ -27,8 +28,8 @@ public sealed record HelpdeskMcpTarget(string Instance, Uri ApiBaseUrl)
             throw new AgentClientValidationException($"{ConfigurationEnvironmentVariable} is required for isolated MCP configuration.");
 
         var instance = (string.IsNullOrWhiteSpace(instanceOverride) ? Environment.GetEnvironmentVariable(InstanceEnvironmentVariable) : instanceOverride)?.Trim().ToLowerInvariant();
-        if (instance is not ("dev" or "prod"))
-            throw new AgentClientValidationException($"{InstanceEnvironmentVariable} must be dev or prod.");
+        if (string.IsNullOrWhiteSpace(instance) || !InstanceLabel().IsMatch(instance))
+            throw new AgentClientValidationException($"{InstanceEnvironmentVariable} must be a lowercase instance label containing letters, digits, and hyphens.");
 
         var expectedEndpointVariable = $"RATELDESK_MCP_{instance.ToUpperInvariant()}_API_BASE_URL";
         var expectedEndpoint = ParseUri(string.IsNullOrWhiteSpace(expectedEndpointOverride) ? Environment.GetEnvironmentVariable(expectedEndpointVariable) : expectedEndpointOverride, expectedEndpointVariable);
@@ -47,8 +48,11 @@ public sealed record HelpdeskMcpTarget(string Instance, Uri ApiBaseUrl)
 
     private static Uri ParseUri(string? value, string name)
     {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || !IsHttpUri(uri))
-            throw new AgentClientValidationException($"{name} must be an absolute http or https URL.");
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || !IsHttpUri(uri) ||
+            !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+        {
+            throw new AgentClientValidationException($"{name} must be an absolute http or https URL without credentials, query, or fragment.");
+        }
 
         return uri;
     }
@@ -71,6 +75,9 @@ public sealed record HelpdeskMcpTarget(string Instance, Uri ApiBaseUrl)
 
         return builder.Uri.AbsoluteUri.TrimEnd('/');
     }
+
+    [GeneratedRegex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")]
+    private static partial Regex InstanceLabel();
 }
 
 public sealed record HelpdeskMcpTargetInfo(
