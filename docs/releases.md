@@ -1,6 +1,14 @@
 # Releases
 
-RatelDesk has one repository-owned release line. The root `Directory.Build.props` is the source of truth: maintainers update `VersionPrefix` when preparing the next release. All application projects inherit that value. `VersionSuffix` creates prereleases without changing the release line; for example, `-p:VersionPrefix=0.2.0 -p:VersionSuffix=beta.1` evaluates to `0.2.0-beta.1`. The current prepared prerelease is `0.1.0-rc.9`.
+RatelDesk has one repository-owned release line. The root `Directory.Build.props` is the source of truth: maintainers update `VersionPrefix` when preparing the next release. All application projects inherit that value. `VersionSuffix` creates prereleases without changing the release line; for example, `-p:VersionPrefix=0.2.0 -p:VersionSuffix=beta.1` evaluates to `0.2.0-beta.1`. The current stable tag is `0.1.0`.
+
+## 0.1.0 — first usable alpha
+
+This is the first RatelDesk release intended for real alpha evaluation. It includes the complete first-run local-account setup flow, scoped role and tenant authorization, containerized Web/API deployment, PostgreSQL and SQLite support, deterministic API documentation, and bounded integration credentials for the CLI, stdio MCP, and HTTP MCP gateway modes.
+
+The release packages self-contained `rateldesk` CLI and `rateldesk-mcp` stdio MCP executables for Linux x64, Linux ARM64, and Windows x64. The release also publishes Web, API, and HTTP MCP container images with provenance, SBOM data, immutable digests, and a verified release manifest.
+
+As an alpha, validate upgrades and workflows with disposable or non-production data first, keep deployments pinned to exact tags or recorded digests, and report any problem with environment and reproduction details.
 
 ## 0.1.0-rc.9
 
@@ -26,7 +34,7 @@ Assemblies contain the semantic version, source repository, source revision, and
 
 ```json
 {
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0",
   "commitHash": "abcdef1234567890",
   "buildTimestamp": "2026-09-10T10:34:00Z",
   "assemblyName": "Helpdesk.API",
@@ -43,8 +51,8 @@ After the release-engineering pull request is merged and `main` is green, verify
 ```bash
 dotnet msbuild src/Helpdesk.API/Helpdesk.API.csproj -nologo -getProperty:Version
 git status --short
-git tag -a v0.1.0-rc.5 -m "RatelDesk 0.1.0-rc.5"
-git push origin v0.1.0-rc.5
+git tag -a v0.1.0 -m "RatelDesk 0.1.0 — first usable alpha"
+git push origin v0.1.0
 ```
 
 The tag must be a SemVer tag (`vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-prerelease`) on `main`, and its value must exactly equal MSBuild's evaluated repository version. The tag workflow reruns release validation, builds Web and API images for amd64 and arm64, attaches provenance/SBOM data, then creates the GitHub Release only after both image pushes complete.
@@ -54,7 +62,7 @@ Stable releases publish `ghcr.io/bostontechnologies/rateldesk-web` and `ghcr.io/
 To use released images locally, set required credentials and run:
 
 ```bash
-RATELDESK_VERSION=0.1.0-rc.5 docker compose -f docker/docker-compose.release.yml up -d
+RATELDESK_VERSION=0.1.0 docker compose -f docker/docker-compose.release.yml up -d
 ```
 
 The GitHub Release records the source commit, UTC build timestamp, and immutable Web/API digests. Before a private deployment is updated, operators should clean-pull both public images and pin the deployment to those recorded digests.
