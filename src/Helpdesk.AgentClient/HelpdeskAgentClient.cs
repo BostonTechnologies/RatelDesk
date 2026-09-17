@@ -111,7 +111,7 @@ public sealed class HelpdeskAgentClient : IHelpdeskAgentClient
                  {
                      ("live", "/health/live", false),
                      ("ready", "/health/ready", false),
-                     ("auth", string.Equals(Configuration.Resolve().CredentialMode, "integration", StringComparison.Ordinal) ? "/api/v1/auth/me" : "/api/v1/auth/ai-agent/status", true)
+                     ("auth", UsesCurrentUserEndpoint(Configuration.Resolve().CredentialMode) ? "/api/v1/auth/me" : "/api/v1/auth/ai-agent/status", true)
                  })
         {
             try
@@ -147,6 +147,10 @@ public sealed class HelpdeskAgentClient : IHelpdeskAgentClient
 
         return values;
     }
+
+    private static bool UsesCurrentUserEndpoint(string credentialMode) =>
+        string.Equals(credentialMode, "integration", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(credentialMode, "gateway", StringComparison.OrdinalIgnoreCase);
 
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
     {

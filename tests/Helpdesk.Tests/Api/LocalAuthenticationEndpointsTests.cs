@@ -113,6 +113,7 @@ public sealed class LocalAuthenticationEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, currentUser.StatusCode);
         var access = await currentUser.Content.ReadFromJsonAsync<CurrentUserAccessDto>();
         Assert.True(access!.IsHelpdeskAdmin);
+        Assert.NotNull(access.UserId);
     }
 
     [Fact]

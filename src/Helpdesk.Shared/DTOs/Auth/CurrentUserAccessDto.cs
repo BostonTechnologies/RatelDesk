@@ -15,6 +15,9 @@ public sealed record CurrentUserAccessDto(
     IReadOnlyList<string> AllowedOrganizationIds,
     IReadOnlyList<string> ManagedOrganizationIds)
 {
+    /// <summary>Stable application identity of the authenticated caller, when one is linked.</summary>
+    public string? UserId { get; init; }
+
     public bool UsesScopedPermissions { get; init; }
 
     public IReadOnlyList<ScopedPermissionGrant> ScopedPermissionGrants { get; init; } = [];

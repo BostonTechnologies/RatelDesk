@@ -21,7 +21,7 @@ public static class AuthenticationEndpoints
             CancellationToken ct) =>
         {
             var access = await accessService.ResolveAsync(user, ct);
-            return Results.Ok(ToDto(access));
+            return Results.Ok(ToDto(access, user.FindFirstValue(ClaimTypes.NameIdentifier)));
         })
         .RequireAuthorization()
         .WithTags("Authentication")
@@ -83,7 +83,7 @@ public static class AuthenticationEndpoints
         }
     }
 
-    private static CurrentUserAccessDto ToDto(CurrentUserAccessProfile access) => new(
+    private static CurrentUserAccessDto ToDto(CurrentUserAccessProfile access, string? userId) => new(
             access.IsAuthenticated,
             access.Name,
             access.Email,
@@ -96,6 +96,7 @@ public static class AuthenticationEndpoints
             access.AllowedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             access.ManagedOrganizationIds.Order(StringComparer.OrdinalIgnoreCase).ToArray())
         {
+            UserId = userId,
             UsesScopedPermissions = access.UsesScopedPermissions,
             ScopedPermissionGrants = access.ScopedPermissionGrants
                 .OrderBy(grant => grant.OrganizationId, StringComparer.OrdinalIgnoreCase)
