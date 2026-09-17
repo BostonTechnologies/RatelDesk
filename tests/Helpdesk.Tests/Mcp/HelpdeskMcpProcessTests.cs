@@ -36,7 +36,7 @@ public sealed class HelpdeskMcpProcessTests
 
         Assert.Equal(78, process.ExitCode);
         Assert.Equal(string.Empty, await stdout);
-        Assert.Contains("RATELDESK_MCP_INSTANCE must be dev or prod.", await stderr, StringComparison.Ordinal);
+        Assert.Contains("RATELDESK_MCP_INSTANCE must be a lowercase instance label containing letters, digits, and hyphens.", await stderr, StringComparison.Ordinal);
     }
 
     [Fact]
