@@ -148,13 +148,14 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   // than exposing the internal API address.
   const openApi = await page.request.get('/api/openapi/v1.json');
   expect(openApi.ok(), await openApi.text()).toBe(true);
+  const openApiDocument = await openApi.json();
+  expect(openApiDocument.servers).toEqual([{ url: '/api' }]);
   await page.goto('/api/docs/');
   // Scalar replaces its bootstrap custom element once it renders. Assert the
   // rendered reference UI instead of the transient bootstrap element.
   await expect(page.getByRole('complementary', { name: 'Sidebar for RatelDesk API' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Introduction', exact: true })).toBeVisible();
   await expect(page.getByText('RatelDesk API', { exact: true }).first()).toBeVisible();
-  await expect(page.locator('script').filter({ hasText: '"servers":[{"url":"/api"}]' })).toHaveCount(1);
   await testInfo.attach('scalar-reference', {
     body: await page.screenshot({ path: testInfo.outputPath('scalar-reference.png'), fullPage: true }),
     contentType: 'image/png'
