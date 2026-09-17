@@ -108,6 +108,23 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
 
         Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations));
         Assert.Equal(343, operationCount);
+
+        var pathOrder = document.RootElement.GetProperty("paths").EnumerateObject().Select(path => path.Name).ToArray();
+        Assert.Equal(pathOrder.Order(StringComparer.Ordinal), pathOrder);
+        foreach (var path in document.RootElement.GetProperty("paths").EnumerateObject())
+        {
+            var methodOrder = path.Value.EnumerateObject()
+                .Where(item => item.Name is "delete" or "get" or "head" or "options" or "patch" or "post" or "put")
+                .Select(item => item.Name)
+                .ToArray();
+            Assert.Equal(methodOrder.Order(StringComparer.Ordinal), methodOrder);
+        }
+
+        var tagOrder = document.RootElement.GetProperty("tags").EnumerateArray()
+            .Select(tag => tag.GetProperty("name").GetString())
+            .OfType<string>()
+            .ToArray();
+        Assert.Equal(tagOrder.Order(StringComparer.Ordinal), tagOrder);
     }
 
     private static string[] SecuritySchemes(JsonDocument document, string path, string method)

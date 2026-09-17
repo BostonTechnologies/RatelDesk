@@ -57,7 +57,23 @@ public static class RatelDeskOpenApiCatalog
     {
         document.Info.Title = "RatelDesk API";
         document.Info.Description = "Use the Web-hosted reference at `/api/docs`. The API base URL is the server selected in Scalar. Local sign-in uses a browser cookie and CSRF protection; CLI and MCP use configured integration credentials. Organizations are application tenants; Customers are contacts. Pagination, filters, and errors are documented per operation.";
-        document.Tags = Tags.Select(tag => new OpenApiTag { Name = tag.Name, Description = tag.Description }).ToHashSet();
+        // OpenApiDocument uses set and dictionary collections. Rebuild each collection in
+        // a defined order so the generated reference is stable across endpoint discovery
+        // order, rather than merely stable by the current collection implementation.
+        document.Tags = new SortedSet<OpenApiTag>(
+            Tags.Select(tag => new OpenApiTag { Name = tag.Name, Description = tag.Description }),
+            Comparer<OpenApiTag>.Create((left, right) => StringComparer.Ordinal.Compare(left.Name, right.Name)));
+        var paths = document.Paths.OrderBy(path => path.Key, StringComparer.Ordinal).ToArray();
+        document.Paths.Clear();
+        foreach (var path in paths)
+        {
+            var operations = path.Value.Operations.OrderBy(operation => operation.Key.ToString(), StringComparer.Ordinal).ToArray();
+            path.Value.Operations.Clear();
+            foreach (var operation in operations)
+                path.Value.Operations.Add(operation.Key, operation.Value);
+
+            document.Paths.Add(path.Key, path.Value);
+        }
         document.Extensions ??= new Dictionary<string, IOpenApiExtension>();
         document.Extensions["x-tagGroups"] = new JsonNodeExtension(new JsonArray(Tags.GroupBy(tag => tag.Group).Select(group => (JsonNode)new JsonObject
         {
