@@ -11,13 +11,14 @@ standalone_compose=(
   -p "$project_name"
   -f docker/examples/mcp-http/docker-compose.yml
 )
+compose_environment=()
 
 cleanup() {
   local status=$?
   if [[ "$status" -ne 0 ]]; then
-    docker compose "${standalone_compose[@]}" logs --no-color >&2 || true
+    env "${compose_environment[@]}" docker compose "${standalone_compose[@]}" logs --no-color >&2 || true
   fi
-  docker compose "${standalone_compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  env "${compose_environment[@]}" docker compose "${standalone_compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
   docker image rm "$mcp_image" >/dev/null 2>&1 || true
   rm -rf "$work_directory"
   exit "$status"
