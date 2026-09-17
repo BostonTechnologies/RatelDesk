@@ -147,8 +147,9 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   // Scalar's configured /api server keeps Try It requests on that proxy rather
   // than exposing the internal API address.
   const openApi = await page.request.get('/api/openapi/v1.json');
-  expect(openApi.ok(), await openApi.text()).toBe(true);
-  const openApiDocument = await openApi.json();
+  const openApiContent = await openApi.text();
+  expect(openApi.ok(), openApiContent).toBe(true);
+  const openApiDocument = JSON.parse(openApiContent);
   expect(openApiDocument.servers).toEqual([{ url: '/api' }]);
   await page.goto('/api/docs/');
   // Scalar replaces its bootstrap custom element once it renders. Assert the
