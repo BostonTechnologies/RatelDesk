@@ -12,8 +12,10 @@ version="$1"
 source_revision="$2"
 output_directory="$3"
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+mkdir -p "$output_directory"
+output_directory="$(cd "$output_directory" && pwd)"
 staging_directory="$output_directory/staging"
-mkdir -p "$staging_directory" "$output_directory"
+mkdir -p "$staging_directory"
 
 declare -a rids=(linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64)
 

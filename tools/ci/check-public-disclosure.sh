@@ -26,6 +26,7 @@ disallowed_matches=$(rg -n -i -e "$blocked_text" \
     -e 's#https://github.com/BostonTechnologies/RatelDesk##g' \
     -e 's#ghcr.io/bostontechnologies/rateldesk-web##g' \
     -e 's#ghcr.io/bostontechnologies/rateldesk-api##g' \
+    -e 's#ghcr.io/bostontechnologies/rateldesk-mcp-http##g' \
     -e 's#orgs/BostonTechnologies/packages/container##g' \
     -e 's#BostonTechnologies/RatelDesk##g' \
   | rg -n -i -e "$blocked_text" || true)

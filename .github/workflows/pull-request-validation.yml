@@ -260,6 +260,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
+      RATELDESK_VERSION: 0.0.0-ci
       RATELDESK_POSTGRES_CONNECTION_STRING: Host=postgres.example.test;Port=5432;Database=rateldesk;Username=rateldesk;Password=ci-placeholder;Ssl Mode=Require
       RATELDESK_BOOTSTRAP_ADMIN_EMAIL: admin@example.test
       RATELDESK_BOOTSTRAP_ADMIN_DISPLAY_NAME: Initial Administrator

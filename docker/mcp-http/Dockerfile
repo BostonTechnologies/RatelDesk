@@ -10,9 +10,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD wget 
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401-alpine3.23 AS build
 WORKDIR /src
 ARG BUILD_CONFIGURATION=Release
-ARG VERSION
-ARG SOURCE_REVISION_ID
-ARG BUILD_TIMESTAMP
+ARG VERSION=0.0.0-local
+ARG SOURCE_REVISION_ID=unknown
+ARG BUILD_TIMESTAMP=
 
 COPY global.json ./
 COPY Directory.Build.props Directory.Build.targets ./
@@ -34,7 +34,8 @@ RUN mkdir /out \
       /p:UseAppHost=false \
       /p:Version=$VERSION \
       /p:SourceRevisionId=$SOURCE_REVISION_ID \
-      /p:BuildTimestamp=$BUILD_TIMESTAMP
+      /p:BuildTimestamp=$BUILD_TIMESTAMP \
+      /p:ContinuousIntegrationBuild=true
 
 FROM base AS final
 WORKDIR /app
