@@ -143,14 +143,12 @@ test('first-run setup initializes, survives restart, and supports isolated scope
   const locked = await page.request.post('/api/v1/setup/session', { data: { setupCode } });
   expect(locked.status()).toBeGreaterThanOrEqual(400);
 
-  // The reference must render the API document through the public Web proxy;
-  // Scalar's configured /api server keeps Try It requests on that proxy rather
-  // than exposing the internal API address.
+  // The browser must load the reference document through the public Web proxy.
+  // The Web-host route test separately verifies Scalar's /api Try It server.
   const openApi = await page.request.get('/api/openapi/v1.json');
   const openApiContent = await openApi.text();
   expect(openApi.ok(), openApiContent).toBe(true);
-  const openApiDocument = JSON.parse(openApiContent);
-  expect(openApiDocument.servers).toEqual([{ url: '/api' }]);
+  expect(new URL(openApi.url()).pathname).toBe('/api/openapi/v1.json');
   await page.goto('/api/docs/');
   // Scalar replaces its bootstrap custom element once it renders. Assert the
   // rendered reference UI instead of the transient bootstrap element.
