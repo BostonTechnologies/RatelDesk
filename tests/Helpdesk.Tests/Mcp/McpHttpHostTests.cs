@@ -517,6 +517,7 @@ public sealed class McpHttpHostTests
         private const string DevApiVariable = "RATELDESK_MCP_DEV_API_BASE_URL";
         private const string ProdApiVariable = "RATELDESK_MCP_PROD_API_BASE_URL";
         private const string PublicResourceVariable = "Helpdesk__Mcp__PublicResourceUri";
+        private const string AllowedOriginVariable = "Helpdesk__Mcp__AllowedOrigins__0";
         private const string AuthorityVariable = "Authentication__AuthentikMcp__Authority";
         private const string AudienceVariable = "Authentication__AuthentikMcp__Audience";
         private const string ScopeVariable = "Authentication__AuthentikMcp__RequiredScopes__0";
@@ -526,6 +527,7 @@ public sealed class McpHttpHostTests
         private readonly string? _previousDevApi = Environment.GetEnvironmentVariable(DevApiVariable);
         private readonly string? _previousProdApi = Environment.GetEnvironmentVariable(ProdApiVariable);
         private readonly string? _previousPublicResource = Environment.GetEnvironmentVariable(PublicResourceVariable);
+        private readonly string? _previousAllowedOrigin = Environment.GetEnvironmentVariable(AllowedOriginVariable);
         private readonly string? _previousAuthority = Environment.GetEnvironmentVariable(AuthorityVariable);
         private readonly string? _previousAudience = Environment.GetEnvironmentVariable(AudienceVariable);
         private readonly string? _previousScope = Environment.GetEnvironmentVariable(ScopeVariable);
@@ -546,6 +548,7 @@ public sealed class McpHttpHostTests
             Environment.SetEnvironmentVariable(InstanceVariable, instance);
             Environment.SetEnvironmentVariable(instance == "dev" ? DevApiVariable : ProdApiVariable, apiBaseUrl);
             Environment.SetEnvironmentVariable(PublicResourceVariable, publicResourceUri);
+            Environment.SetEnvironmentVariable(AllowedOriginVariable, "https://client.example");
             Environment.SetEnvironmentVariable(AuthorityVariable, Authority);
             Environment.SetEnvironmentVariable(AudienceVariable, publicResourceUri);
             Environment.SetEnvironmentVariable(ScopeVariable, "helpdesk.mcp");
@@ -565,6 +568,7 @@ public sealed class McpHttpHostTests
             Environment.SetEnvironmentVariable(DevApiVariable, _previousDevApi);
             Environment.SetEnvironmentVariable(ProdApiVariable, _previousProdApi);
             Environment.SetEnvironmentVariable(PublicResourceVariable, _previousPublicResource);
+            Environment.SetEnvironmentVariable(AllowedOriginVariable, _previousAllowedOrigin);
             Environment.SetEnvironmentVariable(AuthorityVariable, _previousAuthority);
             Environment.SetEnvironmentVariable(AudienceVariable, _previousAudience);
             Environment.SetEnvironmentVariable(ScopeVariable, _previousScope);

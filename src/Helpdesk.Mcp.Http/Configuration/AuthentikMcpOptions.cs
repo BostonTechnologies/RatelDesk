@@ -47,7 +47,12 @@ public sealed class AuthentikMcpOptionsValidator(IOptions<HelpdeskMcpHttpOptions
 
     internal static bool IsAbsoluteHttps(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
     internal static bool IsCanonicalMcpResource(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.AbsolutePath.TrimEnd('/'), "/mcp", StringComparison.Ordinal);
-    internal static bool IsAllowedOrigin(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
+    /// <summary>
+    /// Determines whether a browser origin is a complete HTTP(S) origin rather
+    /// than a resource URL. Hosts use this to validate their allow-list before
+    /// accepting MCP browser requests.
+    /// </summary>
+    public static bool IsAllowedOrigin(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
         && !string.IsNullOrWhiteSpace(uri.Host)
         && (uri.AbsolutePath is "" or "/")
