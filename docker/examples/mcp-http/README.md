@@ -19,22 +19,37 @@ Set `RATELDESK_API_BASE_URL` to the exact API target,
 `RATELDESK_MCP_PUBLIC_RESOURCE_URI` to the public HTTPS `/mcp` URL. Configure
 `RATELDESK_MCP_ALLOWED_ORIGIN` to the exact browser origin (not a path).
 The MCP container receives only its protected configuration file and does not
-mount the API database or data-protection key ring.
+mount the API database or data-protection key ring. The one-shot
+`mcp-config-init` service reads the host file as root, copies it into a named
+volume with owner `10001:10001` and mode `0400`, then exits. The running MCP
+gateway remains non-root and mounts only that copied file read-only.
 
 For an external OAuth deployment, use the source or release compose overlay
-with `Helpdesk__Mcp__AuthenticationMode=authentik` and its required
-`Authentication__AuthentikMcp__*` settings. Authentik mode is explicit and is
-never used as a fallback for local paired credentials.
+with `Helpdesk__Mcp__AuthenticationMode=authentik`. Copy
+`config.authentik.example.json` to a protected file and replace every
+placeholder: it supplies the downstream service-account configuration, while
+the Compose settings below supply the separate ingress issuer, audience,
+scope, and group checks. Authentik mode is explicit and is never used as a
+fallback for local paired credentials.
 
 For a source checkout, run from the repository root:
 
 ```sh
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.mcp.yml up --build
+cp docker/examples/mcp-http/config.authentik.example.json config.authentik.json
+chmod 600 config.authentik.json
+RATELDESK_MCP_CONFIG_FILE="$PWD/config.authentik.json" \
+RATELDESK_MCP_AUTHENTIK_AUTHORITY=https://auth.example.test/ \
+docker compose --env-file docker/examples/mcp-http/.env \
+  -f docker/docker-compose.yml -f docker/docker-compose.mcp.yml up --build
 ```
 
 For release images, supply the one selected version to both files:
 
 ```sh
-RATELDESK_VERSION=0.1.0-rc.9 \
-  docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.mcp.release.yml up -d
+cp docker/examples/mcp-http/config.authentik.example.json config.authentik.json
+chmod 600 config.authentik.json
+RATELDESK_MCP_CONFIG_FILE="$PWD/config.authentik.json" \
+RATELDESK_MCP_AUTHENTIK_AUTHORITY=https://auth.example.test/ \
+docker compose --env-file docker/examples/mcp-http/.env \
+  -f docker/docker-compose.release.yml -f docker/docker-compose.mcp.release.yml up -d
 ```

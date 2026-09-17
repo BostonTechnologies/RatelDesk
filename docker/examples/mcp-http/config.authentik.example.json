@@ -1,0 +1,9 @@
+{
+  "apiBaseUrl": "http://api:8222/",
+  "credentialMode": "authentik",
+  "authentikTokenUrl": "https://auth.example.test/application/o/token/",
+  "authentikClientId": "replace-with-the-mcp-client-id",
+  "authentikUsername": "replace-with-the-mcp-service-account",
+  "authentikAppPassword": "replace-with-the-mcp-service-account-password",
+  "authentikScope": "openid profile email"
+}

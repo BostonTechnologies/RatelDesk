@@ -173,6 +173,10 @@ jobs:
         if: matrix.name == 'web'
         run: tools/ci/smoke-web-static-assets.sh "${{ matrix.image }}"
 
+      - name: Validate MCP Compose configuration ownership
+        if: matrix.name == 'mcp-http'
+        run: tools/ci/test-mcp-compose-config.sh "${{ matrix.image }}"
+
   release-assets:
     name: Release asset rehearsal
     runs-on: ubuntu-latest
