@@ -47,6 +47,7 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.Contains("/api/v1/system/version", content, StringComparison.Ordinal);
         using var document = JsonDocument.Parse(content);
         Assert.Equal("RatelDesk API", document.RootElement.GetProperty("info").GetProperty("title").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(document.RootElement.GetProperty("info").GetProperty("version").GetString()));
         Assert.True(document.RootElement.TryGetProperty("x-tagGroups", out var groups));
         Assert.Contains(groups.EnumerateArray(), group => group.GetProperty("name").GetString() == "Ticketing");
 

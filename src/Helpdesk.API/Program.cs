@@ -42,6 +42,7 @@ using Helpdesk.API.Hubs;
 using Helpdesk.API.Services;
 using Helpdesk.API.Middleware;
 using Helpdesk.Shared.Auth;
+using Helpdesk.Shared.Build;
 using Helpdesk.API.Ops;
 using Helpdesk.API.Validators;
 using Helpdesk.API.Background;
@@ -1043,6 +1044,7 @@ builder.Services.AddOpenApi(options =>
     options.AddDocumentTransformer((document, context, cancellationToken) =>
     {
         RatelDeskOpenApiCatalog.TransformDocumentAsync(document, cancellationToken);
+        document.Info.Version = BuildInfoProvider.FromAssembly(typeof(Program).Assembly, builder.Environment.EnvironmentName).Version;
         RatelDeskOpenApiCatalog.ConfigureSecuritySchemes(document, localAuthenticationCookieName);
 
         return Task.CompletedTask;
