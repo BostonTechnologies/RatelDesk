@@ -25,10 +25,14 @@ internal sealed class CliRuntime
 
     public async Task<string> GetAccessTokenAsync(ResolvedCliConfig config, CancellationToken ct = default)
     {
-        var key = $"{config.ApiBaseUrl}|{config.AuthentikTokenUrl}|{config.AuthentikClientId}|{config.AuthentikUsername}|{config.AuthentikScope}";
+        var key = $"{config.ApiBaseUrl}|{config.CredentialMode}|{config.AuthentikTokenUrl}|{config.AuthentikClientId}|{config.AuthentikUsername}|{config.AuthentikScope}";
         if (!_agentClients.TryGetValue(key, out var agentClient))
         {
-            agentClient = new HelpdeskAgentClient(new AgentClientConfiguration(config.ApiBaseUrl.ToString(), config.AuthentikTokenUrl, config.AuthentikClientId, config.AuthentikUsername, config.AuthentikAppPassword, config.AuthentikScope, config.AgentUserEmail), _handlerFactory);
+            agentClient = new HelpdeskAgentClient(new AgentClientConfiguration(config.ApiBaseUrl.ToString(), config.AuthentikTokenUrl, config.AuthentikClientId, config.AuthentikUsername, config.AuthentikAppPassword, config.AuthentikScope, config.AgentUserEmail)
+            {
+                CredentialMode = config.CredentialMode,
+                IntegrationCredential = config.IntegrationCredential
+            }, _handlerFactory);
             _agentClients[key] = agentClient;
         }
         try { return await agentClient.GetAccessTokenAsync(ct).ConfigureAwait(false); }

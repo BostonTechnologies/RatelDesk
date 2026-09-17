@@ -1,0 +1,5 @@
+{
+  "apiBaseUrl": "https://api.example.test/",
+  "credentialMode": "integration",
+  "integrationCredential": "replace-with-an-mcp-targeted-credential"
+}

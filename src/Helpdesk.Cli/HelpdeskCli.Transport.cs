@@ -95,7 +95,11 @@ internal static partial class HelpdeskCli
             Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_USERNAME"),
             Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_APP_PASSWORD"),
             Environment.GetEnvironmentVariable("RATELDESK_AUTHENTIK_SCOPE"),
-            Environment.GetEnvironmentVariable("RATELDESK_AGENT_USER_EMAIL"));
+            Environment.GetEnvironmentVariable("RATELDESK_AGENT_USER_EMAIL"))
+        {
+            CredentialMode = Environment.GetEnvironmentVariable("RATELDESK_CREDENTIAL_MODE"),
+            IntegrationCredential = Environment.GetEnvironmentVariable("RATELDESK_INTEGRATION_CREDENTIAL")
+        };
         var overrides = new CliConfig(
             ctx.ParseResult.GetValueForOption(globals.ApiBaseUrl),
             ctx.ParseResult.GetValueForOption(globals.TokenUrl),
@@ -717,6 +721,8 @@ internal static partial class HelpdeskCli
         var email = string.IsNullOrWhiteSpace(explicitEmail)
             ? loaded.Resolved!.AgentUserEmail
             : explicitEmail;
+        if (string.IsNullOrWhiteSpace(email))
+            throw new CliValidationException("An agent user email is required for assign-self.");
         var response = await SendRawAsync(runtime, loaded.Resolved!, HttpMethod.Get, "/api/v1/users/by-email/" + Escape(email), authenticated: true, null, ctx.GetCancellationToken()).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
@@ -759,7 +765,8 @@ internal static partial class HelpdeskCli
 
     private static CliConfig Redact(CliConfig config) => config with
     {
-        AuthentikAppPassword = string.IsNullOrWhiteSpace(config.AuthentikAppPassword) ? null : "***"
+        AuthentikAppPassword = string.IsNullOrWhiteSpace(config.AuthentikAppPassword) ? null : "***",
+        IntegrationCredential = string.IsNullOrWhiteSpace(config.IntegrationCredential) ? null : "***"
     };
 
     private static string? GetConfigValue(CliConfig config, string key, bool redact) => NormalizeConfigKey(key) switch
@@ -769,6 +776,8 @@ internal static partial class HelpdeskCli
         "authentikClientId" => config.AuthentikClientId,
         "authentikUsername" => config.AuthentikUsername,
         "authentikAppPassword" => redact && !string.IsNullOrWhiteSpace(config.AuthentikAppPassword) ? "***" : config.AuthentikAppPassword,
+        "credentialMode" => config.CredentialMode,
+        "integrationCredential" => redact && !string.IsNullOrWhiteSpace(config.IntegrationCredential) ? "***" : config.IntegrationCredential,
         "authentikScope" => config.AuthentikScope,
         "agentUserEmail" => config.AgentUserEmail,
         _ => throw new CliValidationException($"Unknown config key '{key}'.")
@@ -781,6 +790,8 @@ internal static partial class HelpdeskCli
         "authentikClientId" => config with { AuthentikClientId = value },
         "authentikUsername" => config with { AuthentikUsername = value },
         "authentikAppPassword" => config with { AuthentikAppPassword = value },
+        "credentialMode" => config with { CredentialMode = value },
+        "integrationCredential" => config with { IntegrationCredential = value },
         "authentikScope" => config with { AuthentikScope = value },
         "agentUserEmail" => config with { AgentUserEmail = value },
         _ => throw new CliValidationException($"Unknown config key '{key}'.")

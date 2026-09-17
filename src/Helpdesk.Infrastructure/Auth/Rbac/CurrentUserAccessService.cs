@@ -221,7 +221,7 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
                 scopedPermissionGrants.Add(new ScopedPermissionGrant(permission, organizationId));
         }
 
-        return new CurrentUserAccessProfile(
+        var profile = new CurrentUserAccessProfile(
             IsAuthenticated: true,
             Name: user.Identity?.Name ?? FirstClaim(user, "name", "preferred_username") ?? email,
             Email: email,
@@ -237,6 +237,8 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
             UsesScopedPermissions = true,
             ScopedPermissionGrants = scopedPermissionGrants
         };
+
+        return ConstrainIntegrationCredential(profile, user);
     }
 
     private async Task<CustomerAuthLink?> FindCustomerAuthLinkAsync(
@@ -271,7 +273,43 @@ public sealed class CurrentUserAccessService : ICurrentUserAccessService
     }
 
     private static bool IsLocalAccount(ClaimsPrincipal user) =>
-        string.Equals(user.FindFirstValue("auth_mode"), "local", StringComparison.OrdinalIgnoreCase);
+        user.FindFirstValue("auth_mode") is "local" or "integration";
+
+    private static CurrentUserAccessProfile ConstrainIntegrationCredential(CurrentUserAccessProfile profile, ClaimsPrincipal user)
+    {
+        if (!string.Equals(user.FindFirstValue("auth_mode"), "integration", StringComparison.OrdinalIgnoreCase))
+            return profile;
+
+        var requestedPermissions = user.FindAll("integration_permission")
+            .Select(claim => claim.Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var requestedOrganizationId = user.FindFirstValue("integration_organization_id");
+        if (requestedPermissions.Count == 0 || string.IsNullOrWhiteSpace(requestedOrganizationId))
+            return Empty(true);
+
+        var effectivePermissions = profile.Permissions
+            .Where(requestedPermissions.Contains)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var effectiveOrganizations = profile.AllowedOrganizationIds
+            .Where(id => string.Equals(id, requestedOrganizationId, StringComparison.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var effectiveGrants = profile.ScopedPermissionGrants
+            .Where(grant => requestedPermissions.Contains(grant.Permission) && effectiveOrganizations.Contains(grant.OrganizationId))
+            .ToHashSet();
+
+        return profile with
+        {
+            IsHelpdeskAdmin = false,
+            RoleBundles = effectivePermissions,
+            Permissions = effectivePermissions,
+            AllowedOrganizationIds = effectiveOrganizations,
+            ManagedOrganizationIds = profile.ManagedOrganizationIds
+                .Where(effectiveOrganizations.Contains)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            UsesScopedPermissions = true,
+            ScopedPermissionGrants = effectiveGrants
+        };
+    }
 
     private static void AddDirectPermissionClaims(HashSet<string> groups, HashSet<string> permissions)
     {

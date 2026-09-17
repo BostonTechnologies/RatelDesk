@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Helpdesk.API;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -42,6 +43,10 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("\"openapi\"", content, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/api/v1/system/version", content, StringComparison.Ordinal);
+        using var document = JsonDocument.Parse(content);
+        Assert.Equal("RatelDesk API", document.RootElement.GetProperty("info").GetProperty("title").GetString());
+        Assert.True(document.RootElement.TryGetProperty("x-tagGroups", out var groups));
+        Assert.Contains(groups.EnumerateArray(), group => group.GetProperty("name").GetString() == "Ticketing");
     }
 
 }

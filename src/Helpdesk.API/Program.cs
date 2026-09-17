@@ -1,5 +1,7 @@
 using Dodo.Primitives;
 using FluentValidation;
+using Helpdesk.API.Authentication;
+using Helpdesk.API.Documentation;
 using Helpdesk.API.Email;
 using Helpdesk.API.Configuration;
 using Helpdesk.API.DependencyInjection;
@@ -522,6 +524,8 @@ builder.Services.AddAuthentication(options =>
                 : "Azure";
 
         var token = auth.Substring("Bearer ".Length).Trim();
+        if (token.StartsWith("rdk_", StringComparison.OrdinalIgnoreCase))
+            return IntegrationCredentialAuthenticationHandler.SchemeName;
         try
         {
             var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
@@ -559,6 +563,9 @@ builder.Services.AddAuthentication(options =>
         return "Azure";
     };
 })
+.AddScheme<AuthenticationSchemeOptions, IntegrationCredentialAuthenticationHandler>(
+    IntegrationCredentialAuthenticationHandler.SchemeName,
+    _ => { })
 .AddCookie(LocalAuthenticationOptions.Scheme, options =>
 {
     options.Cookie.Name = localAuthenticationCookieName;
@@ -1026,6 +1033,7 @@ builder.Services.AddOpenApi(options =>
 {
     options.AddDocumentTransformer((document, context, cancellationToken) =>
     {
+        RatelDeskOpenApiCatalog.TransformDocumentAsync(document, cancellationToken);
         document.Components ??= new OpenApiComponents();
         document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
         document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
@@ -1053,6 +1061,7 @@ builder.Services.AddOpenApi(options =>
 
     options.AddOperationTransformer((operation, context, cancellationToken) =>
     {
+        RatelDeskOpenApiCatalog.TransformOperationAsync(operation, context.Description, cancellationToken);
         operation.Security ??= new List<OpenApiSecurityRequirement>();
         if (!operation.Security.Any(requirement =>
                 requirement.Keys.Any(scheme => string.Equals(scheme.Reference?.Id, "Bearer", StringComparison.OrdinalIgnoreCase))))
@@ -1171,6 +1180,7 @@ if (useHangfireRuntime)
 }
 
 app.MapCurrentUserAccessEndpoint();
+app.MapIntegrationCredentialEndpoints();
 app.MapGet("/api/v1/setup/status", () => Results.Ok(new { state = "Ready" }))
     .AllowAnonymous()
     .WithTags("Setup");

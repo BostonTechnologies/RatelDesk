@@ -10,8 +10,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD wget 
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401-alpine3.23 AS build
 WORKDIR /src
 ARG BUILD_CONFIGURATION=Release
+ARG VERSION
+ARG SOURCE_REVISION_ID
+ARG BUILD_TIMESTAMP
 
 COPY global.json ./
+COPY Directory.Build.props Directory.Build.targets ./
 COPY src/Helpdesk.AgentClient/*.csproj      src/Helpdesk.AgentClient/
 COPY src/Helpdesk.Mcp.Core/*.csproj         src/Helpdesk.Mcp.Core/
 COPY src/Helpdesk.Mcp.Http/*.csproj         src/Helpdesk.Mcp.Http/
@@ -27,7 +31,10 @@ COPY src/Helpdesk.Shared/           src/Helpdesk.Shared/
 RUN mkdir /out \
  && dotnet publish src/Helpdesk.Mcp.Http/Helpdesk.Mcp.Http.csproj \
       -c $BUILD_CONFIGURATION -o /out --no-restore -v:n \
-      /p:UseAppHost=false
+      /p:UseAppHost=false \
+      /p:Version=$VERSION \
+      /p:SourceRevisionId=$SOURCE_REVISION_ID \
+      /p:BuildTimestamp=$BUILD_TIMESTAMP
 
 FROM base AS final
 WORKDIR /app

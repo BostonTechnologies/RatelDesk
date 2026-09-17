@@ -108,7 +108,15 @@ jobs:
             --build-arg VERSION --build-arg SOURCE_REVISION_ID --build-arg BUILD_TIMESTAMP .
           docker build --file docker/web/Dockerfile --tag rateldesk-web:release-validation \
             --build-arg VERSION --build-arg SOURCE_REVISION_ID --build-arg BUILD_TIMESTAMP .
+          docker build --file docker/mcp-http/Dockerfile --tag rateldesk-mcp-http:release-validation \
+            --build-arg VERSION --build-arg SOURCE_REVISION_ID --build-arg BUILD_TIMESTAMP .
           tools/ci/smoke-web-static-assets.sh rateldesk-web:release-validation
+
+      - name: Rehearse executable and deployment assets
+        run: tools/release/package-assets.sh "${{ needs.metadata.outputs.version }}" "${{ needs.metadata.outputs.source_revision }}" release-assets
+
+      - name: Verify executable asset checksums
+        run: (cd release-assets && sha256sum --check SHA256SUMS)
 
       - name: Start and smoke-test source Compose stack
         run: |
@@ -249,9 +257,71 @@ jobs:
           provenance: mode=max
           sbom: true
 
+  publish-mcp-http:
+    name: Publish HTTP MCP image
+    needs: [metadata, validation]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create image tags and labels
+        id: image
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/bostontechnologies/rateldesk-mcp-http
+          tags: |
+            type=raw,value=${{ needs.metadata.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.metadata.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.title=RatelDesk HTTP MCP
+            org.opencontainers.image.description=RatelDesk stateless HTTP MCP transport
+            org.opencontainers.image.source=https://github.com/BostonTechnologies/RatelDesk
+            org.opencontainers.image.revision=${{ needs.metadata.outputs.source_revision }}
+            org.opencontainers.image.version=${{ needs.metadata.outputs.version }}
+            org.opencontainers.image.created=${{ needs.metadata.outputs.build_timestamp }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build and push multi-platform image
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: docker/mcp-http/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.image.outputs.tags }}
+          labels: ${{ steps.image.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.metadata.outputs.version }}
+            SOURCE_REVISION_ID=${{ needs.metadata.outputs.source_revision }}
+            BUILD_TIMESTAMP=${{ needs.metadata.outputs.build_timestamp }}
+          provenance: mode=max
+          sbom: true
+
   release:
     name: Create GitHub Release
-    needs: [metadata, publish-web, publish-api]
+    needs: [metadata, publish-web, publish-api, publish-mcp-http]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -268,7 +338,7 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
-          for image in rateldesk-web rateldesk-api; do
+          for image in rateldesk-web rateldesk-api rateldesk-mcp-http; do
             test "$(gh api "orgs/BostonTechnologies/packages/container/$image" --jq '.visibility')" = public
             test "$(gh api "orgs/BostonTechnologies/packages/container/$image" --jq '.repository.full_name')" = BostonTechnologies/RatelDesk
             docker pull "ghcr.io/bostontechnologies/$image:$VERSION"
@@ -283,6 +353,7 @@ jobs:
           BUILD_TIMESTAMP: ${{ needs.metadata.outputs.build_timestamp }}
           WEB_DIGEST: ${{ needs.publish-web.outputs.digest }}
           API_DIGEST: ${{ needs.publish-api.outputs.digest }}
+          MCP_HTTP_DIGEST: ${{ needs.publish-mcp-http.outputs.digest }}
         run: |
           set -euo pipefail
           prerelease_flag=()
@@ -295,18 +366,21 @@ jobs:
 
           ghcr.io/bostontechnologies/rateldesk-web:$VERSION
           ghcr.io/bostontechnologies/rateldesk-api:$VERSION
+          ghcr.io/bostontechnologies/rateldesk-mcp-http:$VERSION
 
           Digests
 
           Web: $WEB_DIGEST
           API: $API_DIGEST
+          HTTP MCP: $MCP_HTTP_DIGEST
 
           Source commit: $SOURCE_REVISION
           Built: $BUILD_TIMESTAMP
 
           Pull:
           docker pull ghcr.io/bostontechnologies/rateldesk-web:$VERSION
-          docker pull ghcr.io/bostontechnologies/rateldesk-api:$VERSION"
+          docker pull ghcr.io/bostontechnologies/rateldesk-api:$VERSION
+          docker pull ghcr.io/bostontechnologies/rateldesk-mcp-http:$VERSION"
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" \

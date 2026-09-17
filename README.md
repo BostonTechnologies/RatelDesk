@@ -89,6 +89,16 @@ The main public configuration surfaces are:
 See [self-hosting guidance](docs/SELF_HOSTING.md) for configuration, Docker, reverse-proxy, identity, email, AI, MCP, orchestration, telemetry, and troubleshooting guidance.
 See [instance branding](docs/branding.md) to customise the customer-facing identity without forking RatelDesk.
 
+## API, CLI, and MCP
+
+The Web-hosted [RatelDesk API reference](/api/docs) groups the public API by product area and sends Try It requests through the established `/api` proxy. Local account login is a browser-cookie flow with CSRF protection; a browser cookie is not a CLI or MCP Bearer credential.
+
+For automation, sign in normally, complete configured MFA, then create a bounded API integration credential through `POST /api/v1/integration-credentials`. The secret is returned only by the create response. Store it in a protected configuration file or secret mount. Its effective access is always the intersection of the account's current authorization, the credential's selected permissions, and its organization scope; revocation and account disablement take effect on later requests.
+
+GitHub Releases contain self-contained `rateldesk` CLI and `rateldesk-mcp` stdio MCP archives for Linux x64/arm64, Windows x64, and macOS x64/arm64. The Linux archives target glibc distributions, not Alpine/musl. Both executables support offline `--help` and `--version` before loading credentials.
+
+HTTP MCP is optional and never joins the base Web/API stack. The source and release overlays are documented in [the HTTP MCP example](docker/examples/mcp-http/README.md). The existing Authentik HTTP MCP mode remains a separately configured external identity integration; it is not a fallback for local credentials.
+
 ## Contributing and security
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change. Report vulnerabilities privately according to [SECURITY.md](SECURITY.md).

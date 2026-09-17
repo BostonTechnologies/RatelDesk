@@ -3,7 +3,7 @@ name: rateldesk
 services:
   api:
     restart: unless-stopped
-    image: ghcr.io/bostontechnologies/rateldesk-api:${RATELDESK_VERSION:-0.1.0-rc.5}
+    image: ghcr.io/bostontechnologies/rateldesk-api:${RATELDESK_VERSION:?Set RATELDESK_VERSION to an exact published RatelDesk version.}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       Authentication__Mode: Local
@@ -27,7 +27,7 @@ services:
 
   web:
     restart: unless-stopped
-    image: ghcr.io/bostontechnologies/rateldesk-web:${RATELDESK_VERSION:-0.1.0-rc.5}
+    image: ghcr.io/bostontechnologies/rateldesk-web:${RATELDESK_VERSION:?Set RATELDESK_VERSION to an exact published RatelDesk version.}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ApiBaseUrl: http://api:8222/

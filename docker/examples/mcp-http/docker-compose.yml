@@ -1,0 +1,20 @@
+name: rateldesk-mcp-http
+
+# Connects to an already-running API; it deliberately has no depends_on entry.
+services:
+  mcp-http:
+    image: ghcr.io/bostontechnologies/rateldesk-mcp-http:${RATELDESK_VERSION:?Set RATELDESK_VERSION to an exact published RatelDesk version.}
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      RATELDESK_MCP_CONFIG: /run/rateldesk-mcp/config.json
+      Helpdesk__Mcp__Instance: ${RATELDESK_MCP_INSTANCE:-example}
+      Helpdesk__Mcp__ExpectedApiBaseUrl: ${RATELDESK_API_BASE_URL:?Set the pinned API URL.}
+      Helpdesk__Mcp__PublicResourceUri: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:?Set the canonical HTTPS MCP URL.}
+      Helpdesk__Mcp__AllowedOrigins: ${RATELDESK_MCP_ALLOWED_ORIGINS:-}
+    volumes:
+      - type: bind
+        source: ${RATELDESK_MCP_CONFIG_FILE:?Set the protected MCP configuration file.}
+        target: /run/rateldesk-mcp/config.json
+        read_only: true
+    ports:
+      - "127.0.0.1:${RATELDESK_MCP_PORT:-8223}:8223"

@@ -14,6 +14,16 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args is ["--help"] or ["-h"])
+        {
+            await Console.Out.WriteLineAsync("rateldesk-mcp - RatelDesk stdio MCP server\n\nConfigure RATELDESK_MCP_CONFIG and RATELDESK_MCP_INSTANCE before normal server mode. Logs are written to stderr; stdout is reserved for MCP protocol traffic.");
+            return 0;
+        }
+        if (args is ["--version"])
+        {
+            await Console.Out.WriteLineAsync($"rateldesk-mcp {typeof(Program).Assembly.GetName().Version} ({typeof(Program).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false).OfType<System.Reflection.AssemblyInformationalVersionAttribute>().SingleOrDefault()?.InformationalVersion ?? "unknown"})");
+            return 0;
+        }
         try
         {
             var configurationPath = Environment.GetEnvironmentVariable(HelpdeskMcpTarget.ConfigurationEnvironmentVariable);

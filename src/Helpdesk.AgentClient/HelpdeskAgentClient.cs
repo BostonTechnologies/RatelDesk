@@ -98,7 +98,7 @@ public sealed class HelpdeskAgentClient : IHelpdeskAgentClient
                  {
                      ("live", "/health/live", false),
                      ("ready", "/health/ready", false),
-                     ("auth", "/api/v1/auth/ai-agent/status", true)
+                     ("auth", string.Equals(Configuration.Resolve().CredentialMode, "integration", StringComparison.Ordinal) ? "/api/v1/auth/me" : "/api/v1/auth/ai-agent/status", true)
                  })
         {
             try
@@ -138,6 +138,9 @@ public sealed class HelpdeskAgentClient : IHelpdeskAgentClient
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var configuration = Configuration.Resolve();
+        if (string.Equals(configuration.CredentialMode, "integration", StringComparison.Ordinal))
+            return configuration.IntegrationCredential!;
         var cached = Volatile.Read(ref _tokenCache);
         if (HasUsableToken(cached)) return cached!.Value;
 
@@ -189,16 +192,18 @@ public sealed class HelpdeskAgentClient : IHelpdeskAgentClient
     private async Task<TokenCacheEntry> RefreshAccessTokenAsync(CancellationToken cancellationToken)
     {
         var configuration = Configuration.Resolve();
+        if (!string.Equals(configuration.CredentialMode, "authentik", StringComparison.Ordinal))
+            throw new AgentClientValidationException("Only the Authentik credential provider can mint an access token.");
         using var client = CreateAuthClient();
         using var request = new HttpRequestMessage(HttpMethod.Post, configuration.AuthentikTokenUrl)
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["grant_type"] = "client_credentials",
-                ["client_id"] = configuration.AuthentikClientId,
-                ["username"] = configuration.AuthentikUsername,
-                ["password"] = configuration.AuthentikAppPassword,
-                ["scope"] = configuration.AuthentikScope
+                ["client_id"] = configuration.AuthentikClientId!,
+                ["username"] = configuration.AuthentikUsername!,
+                ["password"] = configuration.AuthentikAppPassword!,
+                ["scope"] = configuration.AuthentikScope!
             })
         };
         using var requestCancellation = CreateRequestCancellation(cancellationToken, AuthRequestTimeout);

@@ -16,7 +16,7 @@ internal static partial class HelpdeskCli
 {
     private static Command BuildAuthCommand(CliRuntime runtime, GlobalOptions globals)
     {
-        var auth = new Command("auth", "Configure and verify Authentik AI-agent authentication.");
+        var auth = new Command("auth", "Configure and verify Authentik or integration-credential authentication.");
 
         var configure = new Command("configure", "Persist local CLI authentication settings.");
         configure.SetHandler(async ctx =>
@@ -28,8 +28,13 @@ internal static partial class HelpdeskCli
         });
         auth.AddCommand(configure);
 
-        var status = new Command("status", "Call the Helpdesk API AI-agent status endpoint.");
-        status.SetHandler(ctx => SendAsync(runtime, globals, ctx, HttpMethod.Get, "/api/v1/auth/ai-agent/status"));
+        var status = new Command("status", "Call the current credential's Helpdesk API status endpoint.");
+        status.SetHandler(async ctx =>
+        {
+            var resolved = LoadConfig(ctx, globals).Resolved!;
+            var response = await SendRawAsync(runtime, resolved, HttpMethod.Get, resolved.CredentialMode == "integration" ? "/api/v1/auth/me" : "/api/v1/auth/ai-agent/status", authenticated: true, null, ctx.GetCancellationToken()).ConfigureAwait(false);
+            await WriteResponseBodyAsync(runtime, response.Body, response.StatusCode, ctx, globals).ConfigureAwait(false);
+        });
         auth.AddCommand(status);
 
         var token = new Command("token", "Mint and print an Authentik AI-agent bearer token.");
@@ -101,9 +106,10 @@ internal static partial class HelpdeskCli
         command.SetHandler(async ctx =>
         {
             var loaded = LoadConfig(ctx, globals);
+            var authPath = loaded.Resolved!.CredentialMode == "integration" ? "/api/v1/auth/me" : "/api/v1/auth/ai-agent/status";
             var live = await SendRawAsync(runtime, loaded.Resolved!, HttpMethod.Get, "/health/live", authenticated: false, null, ctx.GetCancellationToken()).ConfigureAwait(false);
             var ready = await SendRawAsync(runtime, loaded.Resolved!, HttpMethod.Get, "/health/ready", authenticated: false, null, ctx.GetCancellationToken()).ConfigureAwait(false);
-            var auth = await SendRawAsync(runtime, loaded.Resolved!, HttpMethod.Get, "/api/v1/auth/ai-agent/status", authenticated: true, null, ctx.GetCancellationToken()).ConfigureAwait(false);
+            var auth = await SendRawAsync(runtime, loaded.Resolved!, HttpMethod.Get, authPath, authenticated: true, null, ctx.GetCancellationToken()).ConfigureAwait(false);
             await WriteJsonAsync(runtime, new[] { live.ToHealth("live"), ready.ToHealth("ready"), auth.ToHealth("auth") }, ctx, globals).ConfigureAwait(false);
         });
         return command;

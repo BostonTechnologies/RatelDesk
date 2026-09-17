@@ -1,0 +1,25 @@
+name: rateldesk
+
+# Optional source-build overlay. The base compose topology remains Web + API.
+services:
+  mcp-http:
+    build:
+      context: ..
+      dockerfile: docker/mcp-http/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      RATELDESK_MCP_CONFIG: /run/rateldesk-mcp/config.json
+      Helpdesk__Mcp__Instance: ${RATELDESK_MCP_INSTANCE:-local}
+      Helpdesk__Mcp__ExpectedApiBaseUrl: http://api:8222/
+      Helpdesk__Mcp__PublicResourceUri: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:?Set the canonical HTTPS MCP URL, for example https://mcp.example.test/mcp.}
+      Helpdesk__Mcp__AllowedOrigins: ${RATELDESK_MCP_ALLOWED_ORIGINS:-}
+    volumes:
+      - type: bind
+        source: ${RATELDESK_MCP_CONFIG_FILE:?Set RATELDESK_MCP_CONFIG_FILE to a protected configuration file.}
+        target: /run/rateldesk-mcp/config.json
+        read_only: true
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${RATELDESK_MCP_PORT:-8223}:8223"
