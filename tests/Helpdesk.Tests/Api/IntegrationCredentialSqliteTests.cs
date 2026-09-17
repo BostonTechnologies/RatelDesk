@@ -5,6 +5,8 @@ using System.Text.Encodings.Web;
 using Helpdesk.API.Endpoints.Authentication;
 using Helpdesk.API.Authentication;
 using Helpdesk.Infrastructure.Identity;
+using Helpdesk.Infrastructure.Persistence;
+using Helpdesk.Shared.Models;
 using Helpdesk.Shared.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
@@ -15,6 +17,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -116,6 +119,26 @@ public sealed class IntegrationCredentialSqliteTests
         Assert.Equal("https://helpdesk.example/mcp", credential.McpResourceUri);
     }
 
+    [Fact]
+    public async Task Create_endpoint_rejects_a_permission_from_another_organization()
+    {
+        await using var harness = await Harness.CreateAsync();
+
+        var response = await harness.Client.PostAsJsonAsync("/api/v1/integration-credentials/", new
+        {
+            name = "Wrong organization",
+            purpose = "api",
+            organizationId = "org-b",
+            permissions = new[] { "Incident.Write" },
+            lifetimeDays = 30
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        await using var scope = harness.Services.CreateAsyncScope();
+        Assert.Empty(await scope.ServiceProvider.GetRequiredService<RatelDeskIdentityDbContext>()
+            .IntegrationCredentials.ToListAsync());
+    }
+
     private static IntegrationCredential Credential(string ownerId, string name, DateTimeOffset createdAtUtc) => new()
     {
         Id = Guid.NewGuid(),
@@ -143,7 +166,15 @@ public sealed class IntegrationCredentialSqliteTests
             await connection.OpenAsync();
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
             builder.WebHost.UseTestServer();
+            builder.Services.AddHttpContextAccessor();
             builder.Services.AddDbContext<RatelDeskIdentityDbContext>(options => options.UseSqlite(connection));
+            builder.Services.AddDbContext<HelpdeskDbContext>(options => options.UseSqlite(connection));
+            builder.Services.AddScoped<ITenantContext>(_ =>
+            {
+                var tenant = Substitute.For<ITenantContext>();
+                tenant.IsHelpdeskAdmin.Returns(true);
+                return tenant;
+            });
             builder.Services.AddSingleton<ICurrentUserAccessService>(new TestAccessService());
             builder.Services.AddScoped<IIntegrationCredentialOwnerResolver, StaticOwnerResolver>();
             builder.Services.AddScoped<IAuthorizationHandler, IntegrationCredentialManagementSessionHandler>();
@@ -164,6 +195,12 @@ public sealed class IntegrationCredentialSqliteTests
                 await identity.Database.EnsureCreatedAsync();
                 identity.Users.Add(new ApplicationUser { Id = "owner", UserName = "owner", Email = "owner@example.test", IsEnabled = true });
                 await identity.SaveChangesAsync();
+                var domain = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+                await domain.GetService<IRelationalDatabaseCreator>().CreateTablesAsync();
+                domain.Organizations.AddRange(
+                    new Organization { Id = "org-a", Name = "Organization A", IsEnabled = true },
+                    new Organization { Id = "org-b", Name = "Organization B", IsEnabled = true });
+                await domain.SaveChangesAsync();
             }
 
             return new Harness(application, connection);
@@ -202,9 +239,17 @@ public sealed class IntegrationCredentialSqliteTests
         private static readonly CurrentUserAccessProfile Profile = new(
             true, "owner", "owner@example.test", "org-a", null, null, false,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-            new HashSet<string>(["Incident.Read"], StringComparer.OrdinalIgnoreCase),
-            new HashSet<string>(["org-a"], StringComparer.OrdinalIgnoreCase),
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(["Incident.Read", "Incident.Write"], StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(["org-a", "org-b"], StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+        {
+            UsesScopedPermissions = true,
+            ScopedPermissionGrants = new HashSet<ScopedPermissionGrant>
+            {
+                new("Incident.Read", "org-a"),
+                new("Incident.Write", "org-a")
+            }
+        };
 
         public Task<CurrentUserAccessProfile> ResolveAsync(ClaimsPrincipal user, CancellationToken ct = default)
             => Task.FromResult(Profile);

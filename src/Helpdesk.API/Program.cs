@@ -964,6 +964,11 @@ builder.Services.AddAuthorization(opts =>
         policy.RequireAuthenticatedUser();
         policy.AddRequirements(new IntegrationCredentialManagementSessionRequirement());
     });
+    opts.AddPolicy(IntegrationCredentialEndpoints.SelfRevocationPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(IntegrationCredentialAuthenticationHandler.SchemeName);
+        policy.RequireAuthenticatedUser();
+    });
 
     opts.AddPolicy("HelpdeskAdmin", p =>
     {
