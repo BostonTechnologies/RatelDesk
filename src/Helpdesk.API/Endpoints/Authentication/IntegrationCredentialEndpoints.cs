@@ -26,7 +26,8 @@ public static class IntegrationCredentialEndpoints
             if (string.IsNullOrWhiteSpace(ownerId)) return Results.Unauthorized();
             var credentials = await identityDb.IntegrationCredentials.AsNoTracking()
                 .Where(credential => credential.OwnerUserId == ownerId)
-                .OrderByDescending(credential => credential.CreatedAtUtc)
+                .OrderByDescending(credential => credential.CreatedAtUnixMilliseconds)
+                .ThenByDescending(credential => credential.Id)
                 .Select(credential => new IntegrationCredentialMetadata(
                     credential.Id, credential.Name, credential.Prefix, credential.Purpose,
                     credential.OrganizationId, credential.Permissions.Split(' ', StringSplitOptions.RemoveEmptyEntries),
@@ -61,6 +62,7 @@ public static class IntegrationCredentialEndpoints
             var id = Guid.NewGuid();
             var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
             var prefix = $"rdk_{id:N}"[..16];
+            var createdAtUtc = DateTimeOffset.UtcNow;
             var credential = new IntegrationCredential
             {
                 Id = id,
@@ -71,8 +73,9 @@ public static class IntegrationCredentialEndpoints
                 Purpose = request.Purpose,
                 OrganizationId = request.OrganizationId,
                 Permissions = string.Join(' ', requestedPermissions.Order(StringComparer.OrdinalIgnoreCase)),
-                CreatedAtUtc = DateTimeOffset.UtcNow,
-                ExpiresAtUtc = DateTimeOffset.UtcNow.AddDays(lifetimeDays)
+                CreatedAtUtc = createdAtUtc,
+                CreatedAtUnixMilliseconds = createdAtUtc.ToUnixTimeMilliseconds(),
+                ExpiresAtUtc = createdAtUtc.AddDays(lifetimeDays)
             };
             identityDb.IntegrationCredentials.Add(credential);
             await identityDb.SaveChangesAsync(ct);

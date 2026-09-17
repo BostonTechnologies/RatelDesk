@@ -112,6 +112,9 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Identity
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("CreatedAtUnixMilliseconds")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("TEXT");
 
@@ -161,6 +164,8 @@ namespace Helpdesk.Infrastructure.SqliteMigrations.Migrations.Identity
                     b.HasKey("Id");
 
                     b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("OwnerUserId", "CreatedAtUnixMilliseconds", "Id");
 
                     b.HasIndex("Purpose", "ExpiresAtUtc", "RevokedAtUtc");
 

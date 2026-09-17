@@ -16,6 +16,11 @@ public sealed class IntegrationCredential
     public string Permissions { get; set; } = string.Empty;
     public DateTimeOffset ExpiresAtUtc { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; }
+    /// <summary>
+    /// Provider-neutral UTC sort key for credential listings. SQLite cannot
+    /// translate ordering over <see cref="DateTimeOffset"/> values.
+    /// </summary>
+    public long CreatedAtUnixMilliseconds { get; set; }
     public DateTimeOffset? LastUsedAtUtc { get; set; }
     public DateTimeOffset? RevokedAtUtc { get; set; }
 }
