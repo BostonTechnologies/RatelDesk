@@ -198,11 +198,18 @@ jobs:
           (cd release-assets && sha256sum --check SHA256SUMS)
           test -s release-assets/release-manifest.json
 
+      - name: Test draft release asset upload semantics
+        run: tools/release/test-publish-release-assets.sh
+
       - name: Upload release rehearsal assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-asset-rehearsal
-          path: release-assets
+          path: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/SHA256SUMS
+            release-assets/release-manifest.json
           retention-days: 14
 
   compose:

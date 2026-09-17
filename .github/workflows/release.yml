@@ -118,6 +118,20 @@ jobs:
       - name: Verify executable asset checksums
         run: (cd release-assets && sha256sum --check SHA256SUMS)
 
+      - name: Test draft release asset upload semantics
+        run: tools/release/test-publish-release-assets.sh
+
+      - name: Transfer validated release payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/SHA256SUMS
+            release-assets/release-manifest.json
+          if-no-files-found: error
+
       - name: Start and smoke-test source Compose stack
         run: |
           docker compose -f docker/docker-compose.yml config --quiet
@@ -321,7 +335,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [metadata, publish-web, publish-api, publish-mcp-http]
+    needs: [metadata, validation, publish-web, publish-api, publish-mcp-http]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -331,6 +345,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.ref }}
+
+      - name: Download the validated release payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: release-assets
 
       - name: Verify public packages and anonymous pulls
         env:
@@ -344,7 +364,7 @@ jobs:
             docker pull "ghcr.io/bostontechnologies/$image:$VERSION"
           done
 
-      - name: Create release after both images are available
+      - name: Create draft release after images and payload are verified
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -382,15 +402,12 @@ jobs:
           docker pull ghcr.io/bostontechnologies/rateldesk-api:$VERSION
           docker pull ghcr.io/bostontechnologies/rateldesk-mcp-http:$VERSION"
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" \
-              --title "RatelDesk $VERSION" \
-              "${prerelease_flag[@]}" \
-              --notes "$release_notes"
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "RatelDesk $VERSION" \
-              --generate-notes \
-              "${prerelease_flag[@]}" \
-              --notes "$release_notes"
-          fi
+          tools/release/prepare-release-manifest.sh \
+            "$VERSION" "$SOURCE_REVISION" release-assets \
+            "$WEB_DIGEST" "$API_DIGEST" "$MCP_HTTP_DIGEST" "$GITHUB_REF_NAME"
+          tools/release/publish-release-assets.sh "$GITHUB_REF_NAME" "$VERSION" release-assets
+          gh release edit "$GITHUB_REF_NAME" \
+            --title "RatelDesk $VERSION" \
+            --draft \
+            "${prerelease_flag[@]}" \
+            --notes "$release_notes"
