@@ -3,7 +3,9 @@ using System.Text.Json;
 using Helpdesk.API;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Helpdesk.Tests.Api;
@@ -47,6 +49,40 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.Equal("RatelDesk API", document.RootElement.GetProperty("info").GetProperty("title").GetString());
         Assert.True(document.RootElement.TryGetProperty("x-tagGroups", out var groups));
         Assert.Contains(groups.EnumerateArray(), group => group.GetProperty("name").GetString() == "Ticketing");
+
+        var schemes = document.RootElement.GetProperty("components").GetProperty("securitySchemes");
+        Assert.Equal("JWT", schemes.GetProperty("JwtBearer").GetProperty("bearerFormat").GetString());
+        Assert.Equal("opaque rdk credential", schemes.GetProperty("IntegrationCredential").GetProperty("bearerFormat").GetString());
+        Assert.Equal("cookie", schemes.GetProperty("LocalSession").GetProperty("in").GetString());
+
+        var integrationCredentialsEndpoint = _factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Single(endpoint => endpoint.RoutePattern.RawText?.TrimEnd('/') == "/api/v1/integration-credentials" &&
+                endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains("GET") == true);
+        Assert.Contains(integrationCredentialsEndpoint.Metadata, metadata => metadata is Microsoft.AspNetCore.Authorization.IAuthorizeData);
+
+        Assert.Empty(SecuritySchemes(document, "/api/v1/setup/status", "get"));
+        Assert.Empty(SecuritySchemes(document, "/api/v1/tickets/public/view", "get"));
+        Assert.Equal(["JwtBearer", "LocalSession"], SecuritySchemes(document, "/api/v1/integration-credentials", "get"));
+        Assert.Equal(["OrchestrationM2M"], SecuritySchemes(document, "/api/v1/orchestration/provider/m2m/ping", "get"));
+        Assert.Equal(["AiAgentJwt"], SecuritySchemes(document, "/api/v1/auth/ai-agent/status", "get"));
+        Assert.Equal(["IntegrationCredential", "JwtBearer", "LocalSession"], SecuritySchemes(document, "/api/v1/incidents", "get"));
+    }
+
+    private static string[] SecuritySchemes(JsonDocument document, string path, string method)
+    {
+        var paths = document.RootElement.GetProperty("paths");
+        Assert.True(paths.TryGetProperty(path, out var pathItem),
+            $"OpenAPI path '{path}' was not generated. Available paths: {string.Join(", ", paths.EnumerateObject().Select(item => item.Name))}");
+        Assert.True(pathItem.TryGetProperty(method, out var operation),
+            $"OpenAPI operation '{method}' was not generated for path '{path}'.");
+        return operation.TryGetProperty("security", out var security)
+            ? security.EnumerateArray()
+                .SelectMany(requirement => requirement.EnumerateObject().Select(property => property.Name))
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+            : [];
     }
 
 }

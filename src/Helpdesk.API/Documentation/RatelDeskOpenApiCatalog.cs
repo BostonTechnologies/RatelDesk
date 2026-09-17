@@ -1,6 +1,8 @@
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi;
 
 namespace Helpdesk.API.Documentation;
@@ -8,6 +10,13 @@ namespace Helpdesk.API.Documentation;
 /// <summary>Single source of truth for the public API reference navigation.</summary>
 public static class RatelDeskOpenApiCatalog
 {
+    private const string JwtBearerScheme = "JwtBearer";
+    private const string IntegrationCredentialScheme = "IntegrationCredential";
+    private const string LocalSessionScheme = "LocalSession";
+    private const string AiAgentScheme = "AiAgentJwt";
+    private const string OrchestrationScheme = "OrchestrationM2M";
+    private const string SystemScheme = "SystemToken";
+
     private sealed record Tag(string Name, string Group, string Description);
 
     private static readonly Tag[] Tags =
@@ -56,7 +65,71 @@ public static class RatelDeskOpenApiCatalog
         return Task.CompletedTask;
     }
 
-    public static Task TransformOperationAsync(OpenApiOperation operation, ApiDescription description, CancellationToken cancellationToken)
+    /// <summary>
+    /// Documents the authentication mechanisms an endpoint actually accepts. This deliberately
+    /// does not set document-level security: a document default would make public endpoints look
+    /// protected unless every operation supplied a security override.
+    /// </summary>
+    public static void ConfigureSecuritySchemes(OpenApiDocument document, string localCookieName)
+    {
+        document.Components ??= new OpenApiComponents();
+        document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
+
+        document.Components.SecuritySchemes[JwtBearerScheme] = new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "Bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Description = "OIDC or local development JWT in the Authorization header."
+        };
+        document.Components.SecuritySchemes[IntegrationCredentialScheme] = new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "Bearer",
+            BearerFormat = "opaque rdk credential",
+            In = ParameterLocation.Header,
+            Description = "Opaque integration credential: `Bearer rdk_<credential-id>_<secret>`. It is not a JWT and is scoped to its organization and permissions."
+        };
+        document.Components.SecuritySchemes[LocalSessionScheme] = new OpenApiSecurityScheme
+        {
+            Name = localCookieName,
+            Type = SecuritySchemeType.ApiKey,
+            In = ParameterLocation.Cookie,
+            Description = "Local browser session cookie. State-changing local-session requests also require the application's CSRF protection."
+        };
+        document.Components.SecuritySchemes[AiAgentScheme] = new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "Bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Description = "JWT issued for the configured AI-agent machine identity."
+        };
+        document.Components.SecuritySchemes[OrchestrationScheme] = new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "Bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Description = "Client-credentials JWT for the configured orchestration provider."
+        };
+        document.Components.SecuritySchemes[SystemScheme] = new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "Bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Description = "Machine-only system JWT. It is not an end-user or integration credential."
+        };
+    }
+
+    public static Task TransformOperationAsync(OpenApiOperation operation, ApiDescription description, OpenApiDocument document, IServiceProvider applicationServices, CancellationToken cancellationToken)
     {
         var tag = operation.Tags?.Select(item => item.Name).FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(tag) && CanonicalNames.TryGetValue(tag, out var canonical))
@@ -65,9 +138,59 @@ public static class RatelDeskOpenApiCatalog
             operation.Tags.Add(new OpenApiTagReference(canonical));
         }
 
-        var metadata = description.ActionDescriptor.EndpointMetadata;
-        if (metadata?.OfType<IAllowAnonymous>().Any() == true)
+        var metadata = ResolveEndpointMetadata(description, applicationServices);
+        if (metadata.OfType<IAllowAnonymous>().Any())
+        {
             operation.Security = [];
+            return Task.CompletedTask;
+        }
+
+        var authorization = metadata.OfType<IAuthorizeData>().ToArray();
+        if (authorization.Length == 0)
+        {
+            // No document-level default exists, but make the public contract explicit in JSON.
+            operation.Security = [];
+            return Task.CompletedTask;
+        }
+
+        var policies = authorization
+            .Select(item => item.Policy)
+            .Where(policy => !string.IsNullOrWhiteSpace(policy))
+            .ToHashSet(StringComparer.Ordinal);
+
+        operation.Security = policies switch
+        {
+            _ when policies.Contains("AuthentikAiAgentApi") => Requirements(document, AiAgentScheme),
+            _ when policies.Contains("OrchestrationM2MOnly") => Requirements(document, OrchestrationScheme),
+            _ when policies.Contains("SystemBlazorWeb") => Requirements(document, SystemScheme),
+            _ when policies.Contains("IntegrationCredentialManagementSession") => Requirements(document, JwtBearerScheme, LocalSessionScheme),
+            _ => Requirements(document, JwtBearerScheme, IntegrationCredentialScheme, LocalSessionScheme)
+        };
         return Task.CompletedTask;
+    }
+
+    private static List<OpenApiSecurityRequirement> Requirements(OpenApiDocument document, params string[] schemes) =>
+        schemes.Select(scheme => new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference(scheme, document)] = []
+        }).ToList();
+
+    private static IEnumerable<object> ResolveEndpointMetadata(ApiDescription description, IServiceProvider applicationServices)
+    {
+        var relativePath = description.RelativePath?.Trim('/');
+        var endpoint = applicationServices.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .FirstOrDefault(candidate =>
+                string.Equals(candidate.RoutePattern.RawText?.Trim('/'), relativePath, StringComparison.OrdinalIgnoreCase) &&
+                candidate.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods
+                    .Any(method => string.Equals(method, description.HttpMethod, StringComparison.OrdinalIgnoreCase)) == true);
+
+        // ApiExplorer currently omits group-level authorization metadata for some minimal API
+        // routes. The endpoint data source contains the effective runtime metadata, which is
+        // what authorization middleware will evaluate.
+        return endpoint is not null
+            ? endpoint.Metadata
+            : description.ActionDescriptor.EndpointMetadata ?? [];
     }
 }

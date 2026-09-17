@@ -82,7 +82,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 using Microsoft.AspNetCore.Identity;
 using Npgsql;
 using System.IdentityModel.Tokens.Jwt;
@@ -1044,43 +1043,14 @@ builder.Services.AddOpenApi(options =>
     options.AddDocumentTransformer((document, context, cancellationToken) =>
     {
         RatelDeskOpenApiCatalog.TransformDocumentAsync(document, cancellationToken);
-        document.Components ??= new OpenApiComponents();
-        document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
-        document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
-        {
-            Name = "Authorization",
-            Type = SecuritySchemeType.Http,
-            Scheme = "Bearer",
-            BearerFormat = "JWT",
-            In = ParameterLocation.Header,
-            Description = "JWT Authorization header using the Bearer scheme"
-        };
-
-        document.Security ??= new List<OpenApiSecurityRequirement>();
-        if (!document.Security.Any(requirement =>
-                requirement.Keys.Any(scheme => string.Equals(scheme.Reference?.Id, "Bearer", StringComparison.OrdinalIgnoreCase))))
-        {
-            document.Security.Add(new OpenApiSecurityRequirement
-            {
-                [new OpenApiSecuritySchemeReference("Bearer", document)] = []
-            });
-        }
+        RatelDeskOpenApiCatalog.ConfigureSecuritySchemes(document, localAuthenticationCookieName);
 
         return Task.CompletedTask;
     });
 
     options.AddOperationTransformer((operation, context, cancellationToken) =>
     {
-        RatelDeskOpenApiCatalog.TransformOperationAsync(operation, context.Description, cancellationToken);
-        operation.Security ??= new List<OpenApiSecurityRequirement>();
-        if (!operation.Security.Any(requirement =>
-                requirement.Keys.Any(scheme => string.Equals(scheme.Reference?.Id, "Bearer", StringComparison.OrdinalIgnoreCase))))
-        {
-            operation.Security.Add(new OpenApiSecurityRequirement
-            {
-                [new OpenApiSecuritySchemeReference("Bearer")] = []
-            });
-        }
+        RatelDeskOpenApiCatalog.TransformOperationAsync(operation, context.Description, context.Document, context.ApplicationServices, cancellationToken);
 
         return Task.CompletedTask;
     });
