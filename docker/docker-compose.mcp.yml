@@ -8,11 +8,12 @@ services:
       dockerfile: docker/mcp-http/Dockerfile
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
-    command: >-
-      mkdir -p /run/rateldesk-mcp &&
-      cp /input/config.json /run/rateldesk-mcp/config.json &&
-      chown 10001:10001 /run/rateldesk-mcp/config.json &&
-      chmod 0400 /run/rateldesk-mcp/config.json
+    command:
+      - >-
+        mkdir -p /run/rateldesk-mcp &&
+        cp /input/config.json /run/rateldesk-mcp/config.json &&
+        chown 10001:10001 /run/rateldesk-mcp/config.json &&
+        chmod 0400 /run/rateldesk-mcp/config.json
     volumes:
       - type: bind
         source: ${RATELDESK_MCP_CONFIG_FILE:?Set RATELDESK_MCP_CONFIG_FILE to a protected configuration file.}
