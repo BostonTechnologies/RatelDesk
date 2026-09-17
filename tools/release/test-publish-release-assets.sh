@@ -10,7 +10,7 @@ mkdir -p "$assets" "$fake_gh_root/assets"
 
 version="0.0.0-test"
 tag="v$version"
-declare -a rids=(linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64)
+declare -a rids=(linux-x64 linux-arm64 win-x64)
 declare -a archives=()
 for rid in "${rids[@]}"; do
   suffix=tar.gz
@@ -18,6 +18,7 @@ for rid in "${rids[@]}"; do
   archives+=("rateldesk-cli-${version}-${rid}.${suffix}" "rateldesk-mcp-stdio-${version}-${rid}.${suffix}")
 done
 archives+=("rateldesk-deployment-${version}.tar.gz")
+expected_asset_count=$((${#archives[@]} + 3)) # SHA256SUMS and the manifest plus its detached checksum
 for asset in "${archives[@]}"; do printf '%s\n' "$asset" > "$assets/$asset"; done
 (cd "$assets" && printf '%s\n' "${archives[@]}" | sort | xargs sha256sum > SHA256SUMS)
 "$repository_root/tools/release/prepare-release-manifest.sh" "$version" deadbeef "$assets" sha256:web sha256:api sha256:mcp "$tag"
@@ -56,7 +57,7 @@ EOF
 chmod 700 "$temporary_directory/gh"
 
 RELEASE_ASSET_DRY_RUN=true "$repository_root/tools/release/publish-release-assets.sh" "$tag" "$version" "$assets" > "$temporary_directory/dry-run"
-test "$(wc -l < "$temporary_directory/dry-run")" = 14
+test "$(wc -l < "$temporary_directory/dry-run")" = "$expected_asset_count"
 
 # Missing assets are rejected before any release command is run.
 mv "$assets/${archives[0]}" "$temporary_directory/missing-asset"
@@ -68,7 +69,7 @@ mv "$temporary_directory/missing-asset" "$assets/${archives[0]}"
 
 # The first run creates a draft and uploads the complete payload.
 FAKE_GH_ROOT="$fake_gh_root" GH_BIN="$temporary_directory/gh" "$repository_root/tools/release/publish-release-assets.sh" "$tag" "$version" "$assets"
-test "$(find "$fake_gh_root/assets" -maxdepth 1 -type f | wc -l)" = 14
+test "$(find "$fake_gh_root/assets" -maxdepth 1 -type f | wc -l)" = "$expected_asset_count"
 
 # A complete rerun reuses verified assets, while differing content is rejected.
 FAKE_GH_ROOT="$fake_gh_root" GH_BIN="$temporary_directory/gh" "$repository_root/tools/release/publish-release-assets.sh" "$tag" "$version" "$assets"
@@ -84,7 +85,7 @@ if FAKE_GH_ROOT="$partial_root" FAKE_GH_FAIL_UPLOAD=true GH_BIN="$temporary_dire
   exit 1
 fi
 FAKE_GH_ROOT="$partial_root" GH_BIN="$temporary_directory/gh" "$repository_root/tools/release/publish-release-assets.sh" "$tag" "$version" "$assets"
-test "$(find "$partial_root/assets" -maxdepth 1 -type f | wc -l)" = 14
+test "$(find "$partial_root/assets" -maxdepth 1 -type f | wc -l)" = "$expected_asset_count"
 
 printf '%s\n' changed > "$assets/${archives[0]}"
 (cd "$assets" && printf '%s\n' "${archives[@]}" | sort | xargs sha256sum > SHA256SUMS)

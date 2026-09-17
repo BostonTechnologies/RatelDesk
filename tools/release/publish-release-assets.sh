@@ -19,7 +19,7 @@ if [[ ! -d "$asset_directory" ]]; then
   exit 1
 fi
 
-declare -a rids=(linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64)
+declare -a rids=(linux-x64 linux-arm64 win-x64)
 declare -a assets=()
 for rid in "${rids[@]}"; do
   suffix=tar.gz

@@ -167,10 +167,6 @@ jobs:
             rid: linux-arm64
           - runner: windows-latest
             rid: win-x64
-          - runner: macos-13
-            rid: osx-x64
-          - runner: macos-14
-            rid: osx-arm64
     steps:
       - name: Check out release scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

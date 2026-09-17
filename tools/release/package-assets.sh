@@ -17,7 +17,7 @@ output_directory="$(cd "$output_directory" && pwd)"
 staging_directory="$output_directory/staging"
 mkdir -p "$staging_directory"
 
-declare -a rids=(linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64)
+declare -a rids=(linux-x64 linux-arm64 win-x64)
 
 package_tool() {
   local project="$1" tool="$2" archive_prefix="$3" rid="$4"
@@ -66,7 +66,7 @@ for line in (directory / "SHA256SUMS").read_text().splitlines():
     hashes[name.strip()] = digest
 (directory / "release-manifest.json").write_text(json.dumps({
     "version": sys.argv[2], "sourceRevision": sys.argv[3],
-    "supportedRids": ["linux-x64", "linux-arm64", "win-x64", "osx-x64", "osx-arm64"],
+    "supportedRids": ["linux-x64", "linux-arm64", "win-x64"],
     "assets": hashes,
     "containers": [
         f"ghcr.io/bostontechnologies/rateldesk-web:{sys.argv[2]}",

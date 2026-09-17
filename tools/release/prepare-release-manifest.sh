@@ -41,8 +41,8 @@ for line in (directory / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
     assets[name] = digest
 
 expected_archives = {
-    *(f"rateldesk-cli-{version}-{rid}.{'zip' if rid == 'win-x64' else 'tar.gz'}" for rid in ("linux-x64", "linux-arm64", "win-x64", "osx-x64", "osx-arm64")),
-    *(f"rateldesk-mcp-stdio-{version}-{rid}.{'zip' if rid == 'win-x64' else 'tar.gz'}" for rid in ("linux-x64", "linux-arm64", "win-x64", "osx-x64", "osx-arm64")),
+    *(f"rateldesk-cli-{version}-{rid}.{'zip' if rid == 'win-x64' else 'tar.gz'}" for rid in ("linux-x64", "linux-arm64", "win-x64")),
+    *(f"rateldesk-mcp-stdio-{version}-{rid}.{'zip' if rid == 'win-x64' else 'tar.gz'}" for rid in ("linux-x64", "linux-arm64", "win-x64")),
     f"rateldesk-deployment-{version}.tar.gz",
 }
 if set(assets) != expected_archives:
@@ -54,7 +54,7 @@ manifest = {
     "version": version,
     "tag": tag,
     "sourceRevision": revision,
-    "supportedRids": ["linux-x64", "linux-arm64", "win-x64", "osx-x64", "osx-arm64"],
+    "supportedRids": ["linux-x64", "linux-arm64", "win-x64"],
     "assets": dict(sorted(assets.items())),
     "containers": [
         {"image": f"ghcr.io/bostontechnologies/rateldesk-web:{version}", "digest": web},

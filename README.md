@@ -95,7 +95,7 @@ The Web-hosted [RatelDesk API reference](/api/docs) groups the public API by pro
 
 For automation, sign in normally, complete configured MFA, then create a bounded API integration credential through `POST /api/v1/integration-credentials`. The secret is returned only by the create response. Store it in a protected configuration file or secret mount. Its effective access is always the intersection of the account's current authorization, the credential's selected permissions, and its organization scope; revocation and account disablement take effect on later requests.
 
-GitHub Releases contain self-contained `rateldesk` CLI and `rateldesk-mcp` stdio MCP archives for Linux x64/arm64, Windows x64, and macOS x64/arm64. The Linux archives target glibc distributions, not Alpine/musl. Both executables support offline `--help` and `--version` before loading credentials.
+GitHub Releases contain self-contained `rateldesk` CLI and `rateldesk-mcp` stdio MCP archives for Linux x64/arm64 and Windows x64. The Linux archives target glibc distributions, not Alpine/musl. Both executables support offline `--help` and `--version` before loading credentials.
 
 HTTP MCP is optional and never joins the base Web/API stack. The source and release overlays are documented in [the HTTP MCP example](docker/examples/mcp-http/README.md). The existing Authentik HTTP MCP mode remains a separately configured external identity integration; it is not a fallback for local credentials.
 

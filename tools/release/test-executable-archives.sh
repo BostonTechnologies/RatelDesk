@@ -14,7 +14,7 @@ rid="$2"
 [[ -d "$asset_directory" ]] || { echo "Asset directory does not exist: $asset_directory" >&2; exit 1; }
 
 case "$rid" in
-  linux-x64|linux-arm64|osx-x64|osx-arm64) extension=tar.gz ;;
+  linux-x64|linux-arm64) extension=tar.gz ;;
   win-x64) extension=zip ;;
   *) echo "Unsupported RID: $rid" >&2; exit 64 ;;
 esac
