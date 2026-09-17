@@ -40,6 +40,7 @@ public sealed partial class Program
         builder.Services.AddOptions<HelpdeskMcpHttpOptions>()
             .Bind(builder.Configuration.GetSection(HelpdeskMcpHttpOptions.SectionName))
             .Validate(options => AuthentikMcpOptionsValidator.IsCanonicalMcpResource(options.PublicResourceUri), "Helpdesk:Mcp:PublicResourceUri must be an absolute HTTPS /mcp URI.")
+            .Validate(options => options.AllowedOrigins.Length > 0 && options.AllowedOrigins.All(AuthentikMcpOptionsValidator.IsAllowedOrigin), "Helpdesk:Mcp:AllowedOrigins must contain one or more absolute HTTP(S) origins without paths.")
             .ValidateOnStart();
         builder.Services.AddSingleton<IValidateOptions<AuthentikMcpOptions>, AuthentikMcpOptionsValidator>();
         builder.Services.AddOptions<AuthentikMcpOptions>()

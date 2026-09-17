@@ -43,4 +43,17 @@ public sealed class AuthentikMcpOptionsValidatorTests
 
         Assert.False(result.Succeeded);
     }
+
+    [Theory]
+    [InlineData("https://client.example")]
+    [InlineData("http://localhost:3000")]
+    public void Accepts_a_single_origin_without_path(string origin)
+        => Assert.True(AuthentikMcpOptionsValidator.IsAllowedOrigin(origin));
+
+    [Theory]
+    [InlineData("https://client.example/mcp")]
+    [InlineData("https://client.example?query=value")]
+    [InlineData("not-an-origin")]
+    public void Rejects_an_origin_with_a_path_or_non_origin_value(string origin)
+        => Assert.False(AuthentikMcpOptionsValidator.IsAllowedOrigin(origin));
 }

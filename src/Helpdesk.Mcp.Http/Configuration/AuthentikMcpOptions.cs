@@ -47,5 +47,11 @@ public sealed class AuthentikMcpOptionsValidator(IOptions<HelpdeskMcpHttpOptions
 
     internal static bool IsAbsoluteHttps(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
     internal static bool IsCanonicalMcpResource(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.AbsolutePath.TrimEnd('/'), "/mcp", StringComparison.Ordinal);
+    internal static bool IsAllowedOrigin(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+        && !string.IsNullOrWhiteSpace(uri.Host)
+        && (uri.AbsolutePath is "" or "/")
+        && string.IsNullOrEmpty(uri.Query)
+        && string.IsNullOrEmpty(uri.Fragment);
     internal static string Normalize(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) ? uri.AbsoluteUri.TrimEnd('/') : value;
 }

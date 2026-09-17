@@ -10,7 +10,11 @@ services:
       Helpdesk__Mcp__Instance: ${RATELDESK_MCP_INSTANCE:-example}
       Helpdesk__Mcp__ExpectedApiBaseUrl: ${RATELDESK_API_BASE_URL:?Set the pinned API URL.}
       Helpdesk__Mcp__PublicResourceUri: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:?Set the canonical HTTPS MCP URL.}
-      Helpdesk__Mcp__AllowedOrigins: ${RATELDESK_MCP_ALLOWED_ORIGINS:-}
+      Helpdesk__Mcp__AllowedOrigins__0: ${RATELDESK_MCP_ALLOWED_ORIGIN:?Set the browser origin allowed to call this MCP endpoint.}
+      Authentication__AuthentikMcp__Authority: ${RATELDESK_MCP_AUTHENTIK_AUTHORITY:?Set the configured external authorization server URL.}
+      Authentication__AuthentikMcp__Audience: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:?Set the canonical HTTPS MCP URL.}
+      Authentication__AuthentikMcp__RequiredScopes__0: ${RATELDESK_MCP_REQUIRED_SCOPE:-helpdesk.mcp}
+      Authentication__AuthentikMcp__RequiredGroups__0: ${RATELDESK_MCP_REQUIRED_GROUP:-ai-assistant}
     volumes:
       - type: bind
         source: ${RATELDESK_MCP_CONFIG_FILE:?Set the protected MCP configuration file.}
