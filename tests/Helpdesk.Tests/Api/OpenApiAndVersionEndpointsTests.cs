@@ -110,7 +110,7 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations));
         // The Release-mode inventory has 342 operations. Keep this explicit so
         // additions or omissions require a reviewed taxonomy update.
-        Assert.Equal(343, operationCount);
+        Assert.Equal(342, operationCount);
 
         var pathOrder = document.RootElement.GetProperty("paths").EnumerateObject().Select(path => path.Name).ToArray();
         Assert.Equal(pathOrder.Order(StringComparer.Ordinal), pathOrder);
