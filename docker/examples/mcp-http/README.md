@@ -30,7 +30,7 @@ while `RATELDESK_MCP_PUBLIC_RESOURCE_URI` is the URI configured in the MCP
 client and paired credential.
 
 ```sh
-cp docker/examples/mcp-http/config.example.json config.gateway.json
+cp docker/examples/mcp-http/config.gateway.local.example.json config.gateway.json
 chmod 600 config.gateway.json
 RATELDESK_MCP_CONFIG_FILE="$PWD/config.gateway.json" \
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.mcp.gateway.yml up --build
