@@ -26,7 +26,7 @@ public sealed class GatewayDelegationAuthenticationHandler(
     public const string SchemeName = "HelpdeskMcpGateway";
     public const string ExecutionTokenItemKey = "RatelDesk.Mcp.ExecutionToken";
     public const string DelegationClientName = "Helpdesk.Mcp.Http.Delegation";
-    internal static readonly TimeSpan ExchangeTimeout = TimeSpan.FromSeconds(20);
+    internal const int DefaultExchangeTimeoutSeconds = 20;
     internal const int MaximumDelegationResponseBytes = 16 * 1024;
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -37,7 +37,7 @@ public sealed class GatewayDelegationAuthenticationHandler(
             return AuthenticateResult.NoResult();
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Context.RequestAborted);
-        deadline.CancelAfter(ExchangeTimeout);
+        deadline.CancelAfter(TimeSpan.FromSeconds(mcpOptions.Value.DelegationTimeoutSeconds));
         try
         {
             using var delegationRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/mcp/execution-token");
