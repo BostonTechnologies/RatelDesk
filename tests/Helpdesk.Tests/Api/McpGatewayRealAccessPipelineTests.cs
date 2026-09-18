@@ -27,6 +27,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Testcontainers.PostgreSql;
 
 namespace Helpdesk.Tests.Api;
 
@@ -42,6 +43,18 @@ public sealed class McpGatewayRealAccessPipelineTests
     public async Task Same_owner_credentials_are_isolated_by_organization_through_execution_tokens()
     {
         await using var harness = await GatewayAccessHarness.CreateAsync();
+        await AssertOrganizationScopeAsync(harness);
+    }
+
+    [Fact]
+    public async Task Same_owner_credentials_are_isolated_by_organization_through_execution_tokens_on_postgresql()
+    {
+        await using var harness = await GatewayAccessHarness.CreatePostgreSqlAsync();
+        await AssertOrganizationScopeAsync(harness);
+    }
+
+    private static async Task AssertOrganizationScopeAsync(GatewayAccessHarness harness)
+    {
         var credentialA = await harness.CreateCredentialAsync("org-a");
         var credentialB = await harness.CreateCredentialAsync("org-b");
 
@@ -91,7 +104,7 @@ public sealed class McpGatewayRealAccessPipelineTests
         Assert.Equal(HttpStatusCode.Unauthorized, disabledOwner.StatusCode);
     }
 
-    private sealed class GatewayAccessHarness(WebApplication application, SqliteConnection connection) : IAsyncDisposable
+    private sealed class GatewayAccessHarness(WebApplication application, IAsyncDisposable database) : IAsyncDisposable
     {
         private const string ResourceUri = "https://helpdesk.example/mcp";
 
@@ -101,12 +114,32 @@ public sealed class McpGatewayRealAccessPipelineTests
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
+            return await CreateAsync(options => options.UseSqlite(connection), connection);
+        }
+
+        public static async Task<GatewayAccessHarness> CreatePostgreSqlAsync()
+        {
+            var postgres = new PostgreSqlBuilder("postgres:16").Build();
+            await postgres.StartAsync();
+            try
+            {
+                return await CreateAsync(options => options.UseNpgsql(postgres.GetConnectionString()), postgres);
+            }
+            catch
+            {
+                await postgres.DisposeAsync();
+                throw;
+            }
+        }
+
+        private static async Task<GatewayAccessHarness> CreateAsync(Action<DbContextOptionsBuilder> configureDatabase, IAsyncDisposable database)
+        {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
             builder.WebHost.UseTestServer();
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddDataProtection();
-            builder.Services.AddDbContext<HelpdeskDbContext>(options => options.UseSqlite(connection));
-            builder.Services.AddDbContext<RatelDeskIdentityDbContext>(options => options.UseSqlite(connection));
+            builder.Services.AddDbContext<HelpdeskDbContext>(configureDatabase);
+            builder.Services.AddDbContext<RatelDeskIdentityDbContext>(configureDatabase);
             builder.Services.AddScoped<ITenantContext>(_ => new TestTenantContext("org-a", "owner"));
             builder.Services.AddScoped<ICurrentUserAccessService, CurrentUserAccessService>();
             builder.Services.AddScoped<ISelfServiceAudienceService, SelfServiceAudienceService>();
@@ -213,7 +246,7 @@ public sealed class McpGatewayRealAccessPipelineTests
             }
 
             await app.StartAsync();
-            return new GatewayAccessHarness(app, connection);
+            return new GatewayAccessHarness(app, database);
         }
 
         public async Task<Credential> CreateCredentialAsync(string organizationId)
@@ -321,7 +354,7 @@ public sealed class McpGatewayRealAccessPipelineTests
         {
             Client.Dispose();
             await application.DisposeAsync();
-            await connection.DisposeAsync();
+            await database.DisposeAsync();
         }
     }
 
