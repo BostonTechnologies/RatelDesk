@@ -341,6 +341,38 @@ public class CurrentUserAccessServiceTests
     }
 
     [Fact]
+    public async Task Integration_credential_keeps_customer_identity_but_limits_authorization_to_its_scoped_organization()
+    {
+        await using var db = CreateDb();
+        await using var identityDb = CreateIdentityDb();
+        db.Organizations.AddRange(
+            new Organization { Id = "org-a", Name = "Organization A" },
+            new Organization { Id = "org-b", Name = "Organization B" });
+        db.Customers.Add(new Customer { Id = "customer-a", Name = "Customer A", Email = "owner@example.test", OrganizationId = "org-a" });
+        db.Users.Add(new User { Id = "owner", Name = "Owner", Email = "owner@example.test", OrganizationId = "org-a" });
+        db.CustomerAuthLinks.Add(new CustomerAuthLink { CustomerId = "customer-a", LocalAccountId = "owner", InviteStatus = CustomerInviteStatus.Active });
+        db.ScopedRoleAssignments.Add(new ScopedRoleAssignment { UserId = "owner", OrganizationId = "org-b", RoleKey = ScopedRoleCatalog.SelfServiceUser });
+        identityDb.Users.Add(new ApplicationUser { Id = "owner", UserName = "owner@example.test", IsEnabled = true });
+        await db.SaveChangesAsync();
+        await identityDb.SaveChangesAsync();
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+        [
+            new Claim(ClaimTypes.NameIdentifier, "owner"),
+            new Claim("auth_mode", "integration"),
+            new Claim("integration_organization_id", "org-b"),
+            new Claim("integration_permission", HelpdeskPermissions.SelfServiceUser)
+        ], "IntegrationCredential"));
+
+        var access = await new CurrentUserAccessService(db, identityDb).ResolveAsync(principal);
+
+        Assert.Equal("customer-a", access.CustomerId);
+        Assert.Equal("org-a", access.PrimaryOrganizationId);
+        Assert.Equal(["org-b"], access.AllowedOrganizationIds);
+        Assert.True(access.HasPermission(HelpdeskPermissions.SelfServiceUser, "org-b"));
+        Assert.False(access.HasPermission(HelpdeskPermissions.SelfServiceUser, "org-a"));
+    }
+
+    [Fact]
     public async Task Persisted_custom_role_permissions_are_scoped_to_the_assigned_tenant()
     {
         await using var db = CreateDb();

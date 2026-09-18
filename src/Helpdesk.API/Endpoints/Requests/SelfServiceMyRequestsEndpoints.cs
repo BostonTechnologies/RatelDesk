@@ -52,7 +52,8 @@ public static class SelfServiceMyRequestsEndpoints
         var isTestUser = await selfServiceAudienceService.IsTestUserAsync(token);
         var currentCustomer = isAdmin ? null : await ResolveCurrentCustomerAsync(db, access.CustomerId, token);
         var currentCustomerId = currentCustomer?.Id;
-        if (!isAdmin && string.IsNullOrWhiteSpace(currentCustomerId))
+        if (!isAdmin && (string.IsNullOrWhiteSpace(currentCustomerId) ||
+                         !IsOrganizationAllowed(access, currentCustomer?.OrganizationId)))
         {
             return Results.Ok(new PagedResponse<MyRequestListItemDto>
             {
@@ -267,7 +268,8 @@ public static class SelfServiceMyRequestsEndpoints
         var isTestUser = await selfServiceAudienceService.IsTestUserAsync(token);
         var currentCustomer = isAdmin ? null : await ResolveCurrentCustomerAsync(db, access.CustomerId, token);
         var currentCustomerId = currentCustomer?.Id;
-        if (!isAdmin && string.IsNullOrWhiteSpace(currentCustomerId))
+        if (!isAdmin && (string.IsNullOrWhiteSpace(currentCustomerId) ||
+                         !IsOrganizationAllowed(access, currentCustomer?.OrganizationId)))
         {
             return null;
         }
@@ -348,6 +350,13 @@ public static class SelfServiceMyRequestsEndpoints
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == customerId && x.State == Helpdesk.Shared.Models.EntityState.Enabled, token);
     }
+
+    // Customer identity identifies who submitted a request; it is not a grant
+    // to that customer's home organization. This check is required because the
+    // endpoint intentionally uses IgnoreQueryFilters for customer-owned data.
+    private static bool IsOrganizationAllowed(CurrentUserAccessProfile access, string? organizationId) =>
+        access.IsHelpdeskAdmin ||
+        (!string.IsNullOrWhiteSpace(organizationId) && access.AllowedOrganizationIds.Contains(organizationId));
 
     private static string GetCorrelationId(ICorrelationContext correlation)
     {

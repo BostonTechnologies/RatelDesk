@@ -60,6 +60,22 @@ public sealed class SelfServiceMyRequestsEndpointsTests
     }
 
     [Fact]
+    public async Task IntegrationCredential_ScopedToAnotherOrganization_DoesNotExposeCustomerRequests()
+    {
+        await using var harness = await SelfServiceMyRequestsTestHarness.CreateAsync("IntegrationB");
+
+        var list = await harness.Client.GetFromJsonAsync<PagedResponse<MyRequestListItemDto>>("/api/v1/self-service/requests");
+        var detail = await harness.Client.GetAsync($"/api/v1/self-service/requests/{harness.RequestId}");
+        var tasks = await harness.Client.GetAsync($"/api/v1/self-service/requests/{harness.RequestId}/tasks");
+
+        Assert.NotNull(list);
+        Assert.Equal(0, list!.TotalCount);
+        Assert.Empty(list.Items);
+        Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, tasks.StatusCode);
+    }
+
+    [Fact]
     public async Task GetMyRequests_DoesNotUseMatchingEmailWithoutAnExplicitCustomerLink()
     {
         await using var harness = await SelfServiceMyRequestsTestHarness.CreateAsync("EmailOnly");
@@ -257,7 +273,17 @@ public sealed class SelfServiceMyRequestsEndpointsTests
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
-            var claims = Request.Headers.Authorization.ToString().Contains("EmailOnly", StringComparison.OrdinalIgnoreCase)
+            var claims = Request.Headers.Authorization.ToString().Contains("IntegrationB", StringComparison.OrdinalIgnoreCase)
+                ? new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "user-1"),
+                    new Claim(ClaimTypes.Name, "Requester"),
+                    new Claim("preferred_username", "requester@example.com"),
+                    new Claim("customer_id", "customer-1"),
+                    new Claim("allowed_organization_id", "tenant-2"),
+                    new Claim(ClaimTypes.Role, "SelfService.User")
+                }
+                : Request.Headers.Authorization.ToString().Contains("EmailOnly", StringComparison.OrdinalIgnoreCase)
                 ? new[]
                 {
                     new Claim(ClaimTypes.NameIdentifier, "user-1"),
@@ -271,6 +297,7 @@ public sealed class SelfServiceMyRequestsEndpointsTests
                 new Claim(ClaimTypes.Name, "Requester"),
                 new Claim("preferred_username", "requester@example.com"),
                 new Claim("customer_id", "customer-1"),
+                new Claim("organization_id", "tenant-1"),
                 new Claim(ClaimTypes.Role, "SelfService.User")
             };
 
