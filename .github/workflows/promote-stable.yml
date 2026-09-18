@@ -1,0 +1,83 @@
+name: Promote verified stable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published stable tag to promote (for example v0.1.1)
+        required: true
+        type: string
+
+# latest is shared state: never cancel a running promotion in favour of a
+# newer dispatch, and never allow two versions to race it.
+concurrency:
+  group: rateldesk-stable-channel
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Verify and promote immutable digests
+    runs-on: ubuntu-latest
+    environment: release-promotion
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Validate requested stable tag and published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Only a stable SemVer tag may promote latest." >&2; exit 64; }
+          release="$(gh release view "$TAG" --json isDraft,isPrerelease,tagName)"
+          python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["tagName"] == sys.argv[1] and not r["isDraft"] and not r["isPrerelease"], "Promotion requires an already-published stable release"' "$TAG" <<<"$release"
+
+      - name: Download and verify the published manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          gh release download "$TAG" --pattern release-manifest.json --pattern release-manifest.json.sha256 --dir release-assets
+          (cd release-assets && sha256sum --check release-manifest.json.sha256)
+          python3 - "$TAG" release-assets/release-manifest.json <<'PY'
+          import json, re, sys
+          tag, path = sys.argv[1:]
+          release = json.load(open(path, encoding="utf-8"))
+          assert release["tag"] == tag
+          assert release["version"] == tag[1:]
+          containers = release["containers"]
+          assert len(containers) == 3
+          assert all(re.fullmatch(r"sha256:[0-9a-f]{64}", entry["digest"]) for entry in containers)
+          PY
+
+      - name: Set up Buildx and registry login
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image architectures and promote recorded digests
+        run: |
+          set -euo pipefail
+          python3 - release-assets/release-manifest.json <<'PY' > promotion-inputs.txt
+          import json, sys
+          for item in json.load(open(sys.argv[1], encoding="utf-8"))["containers"]:
+              print(item["image"].rsplit(":", 1)[0], item["digest"])
+          PY
+          while read -r image digest; do
+            inspect="$(docker buildx imagetools inspect "$image@$digest")"
+            grep -q 'linux/amd64' <<<"$inspect"
+            grep -q 'linux/arm64' <<<"$inspect"
+            # This creates only a new mutable reference to the recorded
+            # manifest; it does not rebuild or overwrite versioned tags.
+            docker buildx imagetools create --tag "$image:latest" "$image@$digest"
+          done < promotion-inputs.txt
+
+      - name: Summarize immutable promotion
+        run: |
+          echo "Promoted the three latest references to digests recorded in ${{ inputs.tag }}." >> "$GITHUB_STEP_SUMMARY"

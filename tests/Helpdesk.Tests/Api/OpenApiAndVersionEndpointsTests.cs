@@ -75,6 +75,7 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.Equal(["AiAgentJwt"], SecuritySchemes(document, "/api/v1/auth/ai-agent/status", "get"));
         Assert.Equal(["IntegrationCredential", "JwtBearer", "LocalSession"], SecuritySchemes(document, "/api/v1/incidents", "get"));
         Assert.Equal(["McpIntegrationCredential"], SecuritySchemes(document, "/api/v1/mcp/execution-token", "post"));
+        Assert.Equal(["IntegrationCredential"], SecuritySchemes(document, "/api/v1/integration-credentials/self/revoke", "post"));
     }
 
     [Fact]
@@ -109,7 +110,7 @@ public class OpenApiAndVersionEndpointsTests : IClassFixture<WebApplicationFacto
         Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations));
         // The Release-mode inventory has 342 operations. Keep this explicit so
         // additions or omissions require a reviewed taxonomy update.
-        Assert.Equal(342, operationCount);
+        Assert.Equal(343, operationCount);
 
         var pathOrder = document.RootElement.GetProperty("paths").EnumerateObject().Select(path => path.Name).ToArray();
         Assert.Equal(pathOrder.Order(StringComparer.Ordinal), pathOrder);

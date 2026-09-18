@@ -18,6 +18,14 @@ public static class RatelDeskOpenApiCatalog
     private const string OrchestrationScheme = "OrchestrationM2M";
     private const string SystemScheme = "SystemToken";
 
+    private static readonly string[] GroupOrder =
+    [
+        "Getting Started", "Identity & Access", "Organizations & Customers", "Ticketing",
+        "Service Catalog & Self-Service", "Service Levels", "Email & Notifications",
+        "Automation & Integrations", "AI Assistant", "Reporting & Search", "Assets & Data",
+        "System & Diagnostics"
+    ];
+
     private sealed record Tag(string Name, string Group, string Description);
 
     private static readonly Tag[] Tags =
@@ -75,7 +83,9 @@ public static class RatelDeskOpenApiCatalog
             document.Paths.Add(path.Key, path.Value);
         }
         document.Extensions ??= new Dictionary<string, IOpenApiExtension>();
-        document.Extensions["x-tagGroups"] = new JsonNodeExtension(new JsonArray(Tags.GroupBy(tag => tag.Group).Select(group => (JsonNode)new JsonObject
+        document.Extensions["x-tagGroups"] = new JsonNodeExtension(new JsonArray(Tags.GroupBy(tag => tag.Group)
+        .OrderBy(group => Array.IndexOf(GroupOrder, group.Key))
+        .Select(group => (JsonNode)new JsonObject
         {
             ["name"] = group.Key,
             ["tags"] = new JsonArray(group.Select(tag => (JsonNode)tag.Name).ToArray())
@@ -191,6 +201,7 @@ public static class RatelDeskOpenApiCatalog
             _ when policies.Contains("OrchestrationM2MOnly") => Requirements(document, OrchestrationScheme),
             _ when policies.Contains("SystemBlazorWeb") => Requirements(document, SystemScheme),
             _ when policies.Contains("IntegrationCredentialManagementSession") => Requirements(document, JwtBearerScheme, LocalSessionScheme),
+            _ when policies.Contains("IntegrationCredentialSelfRevocation") => Requirements(document, IntegrationCredentialScheme),
             _ when policies.Contains("McpCredentialDelegation") => Requirements(document, McpIntegrationCredentialScheme),
             _ => Requirements(document, JwtBearerScheme, IntegrationCredentialScheme, LocalSessionScheme)
         };

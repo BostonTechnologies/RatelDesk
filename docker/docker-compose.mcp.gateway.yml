@@ -1,0 +1,45 @@
+name: rateldesk
+
+# Optional local source-build overlay. Unlike docker-compose.mcp.yml, this
+# recipe uses the API's paired-credential gateway and needs no Authentik values.
+services:
+  mcp-config-init:
+    build:
+      context: ..
+      dockerfile: docker/mcp-http/Dockerfile
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: >-
+      mkdir -p /run/rateldesk-mcp && cp /input/config.json /run/rateldesk-mcp/config.json &&
+      chown 10001:10001 /run/rateldesk-mcp/config.json && chmod 0400 /run/rateldesk-mcp/config.json
+    volumes:
+      - type: bind
+        source: ${RATELDESK_MCP_CONFIG_FILE:?Set RATELDESK_MCP_CONFIG_FILE to a gateway configuration file.}
+        target: /input/config.json
+        read_only: true
+      - mcp-http-config:/run/rateldesk-mcp
+
+  mcp-http:
+    build:
+      context: ..
+      dockerfile: docker/mcp-http/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      RATELDESK_MCP_CONFIG: /run/rateldesk-mcp/config.json
+      Helpdesk__Mcp__Instance: ${RATELDESK_MCP_INSTANCE:-local}
+      Helpdesk__Mcp__ExpectedApiBaseUrl: http://api:8222/
+      Helpdesk__Mcp__PublicResourceUri: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:-https://localhost:8223/mcp}
+      Helpdesk__Mcp__AllowedOrigins__0: ${RATELDESK_MCP_ALLOWED_ORIGIN:-http://localhost:8223}
+      Helpdesk__Mcp__AuthenticationMode: gateway
+    volumes:
+      - mcp-http-config:/run/rateldesk-mcp:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      mcp-config-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${RATELDESK_MCP_PORT:-8223}:8223"
+
+volumes:
+  mcp-http-config:

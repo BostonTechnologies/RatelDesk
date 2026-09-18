@@ -1,6 +1,23 @@
 # Releases
 
-RatelDesk has one repository-owned release line. The root `Directory.Build.props` is the source of truth: maintainers update `VersionPrefix` when preparing the next release. All application projects inherit that value. `VersionSuffix` creates prereleases without changing the release line; for example, `-p:VersionPrefix=0.2.0 -p:VersionSuffix=beta.1` evaluates to `0.2.0-beta.1`. The current stable tag is `0.1.0`.
+RatelDesk has one repository-owned release line. The root `Directory.Build.props` is the source of truth: maintainers update `VersionPrefix` when preparing the next release. All application projects inherit that value. `VersionSuffix` creates prereleases without changing the release line. The current planned test release is `0.1.1-beta.1`; the current stable tag remains `0.1.0`.
+
+## Channel policy
+
+`beta.N` and `rc.N` are GitHub prereleases and publish exact immutable image
+tags only. A stable version has no suffix and is the only version eligible for
+`latest` promotion after an owner-approved publication step. Staging creates a
+draft and verifies archives, checksums, manifests and immutable image digests;
+it does not make a release public. Consumers should deploy exact tags or
+digests. If promotion needs recovery, verify every recorded digest first and
+republish the same digests rather than rebuilding a versioned release.
+
+The tag workflow deliberately does **not** move `latest`. An owner first
+confirms the staged release is complete, publishes the non-prerelease GitHub
+release, verifies its public downloads and recorded digests, then performs the
+separate protected channel-promotion procedure. Do not promote an older
+version over an existing stable channel; serialize that procedure and preserve
+the immutable exact-version tags as the recovery source.
 
 ## 0.1.0 — first usable alpha
 
