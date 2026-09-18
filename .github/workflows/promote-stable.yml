@@ -33,6 +33,30 @@ jobs:
           release="$(gh release view "$TAG" --json isDraft,isPrerelease,tagName)"
           python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["tagName"] == sys.argv[1] and not r["isDraft"] and not r["isPrerelease"], "Promotion requires an already-published stable release"' "$TAG" <<<"$release"
 
+      - name: Reject an older stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > releases.json
+          python3 - "$TAG" releases.json <<'PY'
+          import json
+          import re
+          import sys
+
+          candidate = tuple(map(int, sys.argv[1][1:].split(".")))
+          releases = json.load(open(sys.argv[2], encoding="utf-8"))
+          versions = []
+          for release in releases:
+              tag = release.get("tag_name", "")
+              match = re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag)
+              if match and not release.get("draft") and not release.get("prerelease"):
+                  versions.append(tuple(map(int, match.groups())))
+          if versions and candidate < max(versions):
+              raise SystemExit("Refusing to move latest backwards from a newer published stable release.")
+          PY
+
       - name: Download and verify the published manifest
         env:
           GH_TOKEN: ${{ github.token }}
