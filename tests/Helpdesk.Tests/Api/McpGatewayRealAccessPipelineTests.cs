@@ -104,9 +104,9 @@ public sealed class McpGatewayRealAccessPipelineTests
         Assert.Equal(HttpStatusCode.Unauthorized, disabledOwner.StatusCode);
     }
 
-    private sealed class GatewayAccessHarness(WebApplication application, IAsyncDisposable database) : IAsyncDisposable
+    internal sealed class GatewayAccessHarness(WebApplication application, IAsyncDisposable database) : IAsyncDisposable
     {
-        private const string ResourceUri = "https://helpdesk.example/mcp";
+        public const string ResourceUri = "https://helpdesk.example/mcp";
 
         public HttpClient Client { get; } = application.GetTestClient();
 
@@ -177,6 +177,7 @@ public sealed class McpGatewayRealAccessPipelineTests
             app.UseMiddleware<UserAccessClaimsMiddleware>();
             app.UseAuthorization();
             app.MapMcpGatewayDelegationEndpoints();
+            app.MapCurrentUserAccessEndpoint();
             app.MapSelfServiceMyRequestsEndpoints();
 
             await using (var scope = app.Services.CreateAsyncScope())
@@ -274,6 +275,8 @@ public sealed class McpGatewayRealAccessPipelineTests
             return new Credential(id, $"rdk_{id:N}_{secret}");
         }
 
+        public HttpMessageHandler CreateHandler() => application.GetTestServer().CreateHandler();
+
         public async Task<string> DelegateAsync(Credential credential)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/mcp/execution-token");
@@ -358,7 +361,7 @@ public sealed class McpGatewayRealAccessPipelineTests
         }
     }
 
-    private sealed record Credential(Guid Id, string Bearer);
+    internal sealed record Credential(Guid Id, string Bearer);
 
     private sealed class TestTenantContext(string? tenantId, string? userId) : ITenantContext
     {

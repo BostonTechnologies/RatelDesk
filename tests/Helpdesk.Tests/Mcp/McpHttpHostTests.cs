@@ -19,6 +19,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
+using Helpdesk.Tests.Api;
 using Xunit;
 
 namespace Helpdesk.Tests.Mcp;
@@ -159,6 +160,38 @@ public sealed class McpHttpHostTests
         Assert.DoesNotContain(outbound.ApiAuthorizations, value => value.Contains("rdk_local-a", StringComparison.Ordinal));
         Assert.DoesNotContain(outbound.ApiAuthorizations, value => value.Contains("rdk_local-b", StringComparison.Ordinal));
         Assert.Equal(["Bearer rdx_local-a", "Bearer rdx_local-b"], outbound.ApiAuthorizations.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task Gateway_mcp_host_uses_a_real_authority_for_delegation_and_current_identity()
+    {
+        await using var authority = await McpGatewayRealAccessPipelineTests.GatewayAccessHarness.CreateAsync();
+        var credential = await authority.CreateCredentialAsync("org-b");
+        using var environment = new McpHostEnvironment(
+            apiBaseUrl: "https://api.example",
+            publicResourceUri: McpGatewayRealAccessPipelineTests.GatewayAccessHarness.ResourceUri,
+            gateway: true);
+        using var factory = CreateFactory(
+            environment.SigningKey,
+            apiHandlerFactory: authority.CreateHandler,
+            delegationHandlerFactory: authority.CreateHandler);
+        using var client = CreateClient(factory, McpGatewayRealAccessPipelineTests.GatewayAccessHarness.ResourceUri);
+
+        using var identity = await HttpCallAsync(client, credential.Bearer, 1, "tools/call", ToolCallParameters("helpdesk_auth", "status"));
+        var identityData = StructuredContent(identity.RootElement).GetProperty("data");
+        Assert.Equal("owner", identityData.GetProperty("userId").GetString());
+        Assert.Contains("org-b", identityData.GetProperty("allowedOrganizationIds").EnumerateArray().Select(value => value.GetString()));
+
+        await authority.SetCredentialRevokedAsync(credential.Id);
+        using var revokedRequest = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+        {
+            Content = McpToolCall("helpdesk_auth", "status")
+        };
+        revokedRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Bearer);
+        revokedRequest.Headers.Accept.ParseAdd("application/json, text/event-stream");
+        using var revoked = await client.SendAsync(revokedRequest);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
     }
 
     [Fact]
@@ -487,7 +520,7 @@ public sealed class McpHttpHostTests
         Assert.Equal(0, outbound.CallCount);
     }
 
-    private static WebApplicationFactory<Helpdesk.Mcp.Http.Program> CreateFactory(ECDsa signingKey, AuditLogCollector? audit = null, OutboundCallProbe? outboundProbe = null, McpJwtValidation? jwt = null, AgentClientBoundaryProbe? boundaryProbe = null, GatewayDelegationProbe? delegationProbe = null)
+    private static WebApplicationFactory<Helpdesk.Mcp.Http.Program> CreateFactory(ECDsa signingKey, AuditLogCollector? audit = null, OutboundCallProbe? outboundProbe = null, McpJwtValidation? jwt = null, AgentClientBoundaryProbe? boundaryProbe = null, GatewayDelegationProbe? delegationProbe = null, Func<HttpMessageHandler>? apiHandlerFactory = null, Func<HttpMessageHandler>? delegationHandlerFactory = null)
         => new WebApplicationFactory<Helpdesk.Mcp.Http.Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
@@ -509,10 +542,22 @@ public sealed class McpHttpHostTests
                     services.AddHttpClient(Helpdesk.AgentClient.HelpdeskAgentClient.AuthHttpClientName)
                         .ConfigurePrimaryHttpMessageHandler(outboundProbe.CreateHandler);
                 }
+                else if (apiHandlerFactory is not null)
+                {
+                    services.AddHttpClient(Helpdesk.AgentClient.HelpdeskAgentClient.ApiHttpClientName)
+                        .ConfigurePrimaryHttpMessageHandler(apiHandlerFactory);
+                    services.AddHttpClient(Helpdesk.AgentClient.HelpdeskAgentClient.AuthHttpClientName)
+                        .ConfigurePrimaryHttpMessageHandler(apiHandlerFactory);
+                }
                 if (delegationProbe is not null)
                 {
                     services.AddHttpClient(GatewayDelegationAuthenticationHandler.DelegationClientName)
                         .ConfigurePrimaryHttpMessageHandler(delegationProbe.CreateHandler);
+                }
+                else if (delegationHandlerFactory is not null)
+                {
+                    services.AddHttpClient(GatewayDelegationAuthenticationHandler.DelegationClientName)
+                        .ConfigurePrimaryHttpMessageHandler(delegationHandlerFactory);
                 }
 
                 services.PostConfigure<JwtBearerOptions>("HelpdeskMcpJwt", options =>
