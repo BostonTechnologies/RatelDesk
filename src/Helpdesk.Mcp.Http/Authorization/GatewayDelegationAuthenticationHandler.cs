@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Net;
 using System.Text.Json;
 using Helpdesk.AgentClient;
 using Helpdesk.Mcp.Http.Configuration;
@@ -25,6 +26,8 @@ public sealed class GatewayDelegationAuthenticationHandler(
     public const string SchemeName = "HelpdeskMcpGateway";
     public const string ExecutionTokenItemKey = "RatelDesk.Mcp.ExecutionToken";
     public const string DelegationClientName = "Helpdesk.Mcp.Http.Delegation";
+    internal static readonly TimeSpan ExchangeTimeout = TimeSpan.FromSeconds(20);
+    internal const int MaximumDelegationResponseBytes = 16 * 1024;
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -33,19 +36,22 @@ public sealed class GatewayDelegationAuthenticationHandler(
         if (!authorization.StartsWith("Bearer rdk_", StringComparison.OrdinalIgnoreCase))
             return AuthenticateResult.NoResult();
 
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Context.RequestAborted);
+        deadline.CancelAfter(ExchangeTimeout);
         try
         {
             using var delegationRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/mcp/execution-token");
             delegationRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
             delegationRequest.Headers.TryAddWithoutValidation("X-RatelDesk-Mcp-Resource", mcpOptions.Value.PublicResourceUri.TrimEnd('/'));
             using var response = await clients.CreateClient(DelegationClientName)
-                .SendAsync(delegationRequest, HttpCompletionOption.ResponseHeadersRead, Context.RequestAborted)
+                .SendAsync(delegationRequest, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
                 .ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 return AuthenticateResult.Fail("The MCP credential could not be delegated for this gateway.");
+            if (!response.IsSuccessStatusCode)
+                return AuthenticateResult.Fail("The MCP delegation service is temporarily unavailable.");
 
-            await using var stream = await response.Content.ReadAsStreamAsync(Context.RequestAborted).ConfigureAwait(false);
-            var delegated = await JsonSerializer.DeserializeAsync<DelegatedCredential>(stream, SerializerOptions, Context.RequestAborted).ConfigureAwait(false);
+            var delegated = await ReadDelegatedCredentialAsync(response.Content, deadline.Token).ConfigureAwait(false);
             if (delegated is null || string.IsNullOrWhiteSpace(delegated.AccessToken) || delegated.ExpiresAtUtc <= DateTimeOffset.UtcNow ||
                 string.IsNullOrWhiteSpace(delegated.UserId))
             {
@@ -74,10 +80,40 @@ public sealed class GatewayDelegationAuthenticationHandler(
         {
             throw;
         }
-        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        catch (OperationCanceledException)
+        {
+            return AuthenticateResult.Fail("The MCP delegation service timed out.");
+        }
+        catch (JsonException)
+        {
+            return AuthenticateResult.Fail("The MCP gateway received an invalid execution credential.");
+        }
+        catch (HttpRequestException)
         {
             return AuthenticateResult.Fail("The MCP gateway could not reach the delegation endpoint.");
         }
+    }
+
+    private static async Task<DelegatedCredential?> ReadDelegatedCredentialAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is > MaximumDelegationResponseBytes)
+            throw new JsonException("The delegation response exceeds the permitted size.");
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using var buffer = new MemoryStream();
+        var chunk = new byte[4096];
+        while (true)
+        {
+            var count = await stream.ReadAsync(chunk.AsMemory(), cancellationToken).ConfigureAwait(false);
+            if (count == 0)
+                break;
+
+            if (buffer.Length + count > MaximumDelegationResponseBytes)
+                throw new JsonException("The delegation response exceeds the permitted size.");
+            await buffer.WriteAsync(chunk.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
+        }
+
+        return JsonSerializer.Deserialize<DelegatedCredential>(buffer.GetBuffer().AsSpan(0, checked((int)buffer.Length)), SerializerOptions);
     }
 
     private sealed record DelegatedCredential(

@@ -179,6 +179,61 @@ public sealed class McpHttpHostTests
         Assert.Equal(HttpStatusCode.OK, initialize.StatusCode);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task Paired_gateway_does_not_fall_back_when_delegation_dependency_rejects_or_is_unavailable(HttpStatusCode statusCode)
+    {
+        using var environment = new McpHostEnvironment(gateway: true);
+        var delegation = new GatewayDelegationProbe((_, _) => Task.FromResult(new HttpResponseMessage(statusCode)));
+        var outbound = new AgentClientBoundaryProbe();
+        using var factory = CreateFactory(environment.SigningKey, boundaryProbe: outbound, delegationProbe: delegation);
+        using var client = CreateClient(factory);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "tools/call",
+                @params = ToolCallParameters("helpdesk_auth", "status")
+            }), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "rdk_local-a");
+        request.Headers.Accept.ParseAdd("application/json, text/event-stream");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(1, delegation.Requests);
+        Assert.Equal(0, outbound.ApiRequests);
+    }
+
+    [Theory]
+    [InlineData("not-json")]
+    [InlineData("{\"accessToken\":\"")]
+    public async Task Paired_gateway_rejects_invalid_or_oversized_delegation_bodies_without_fallback(string body)
+    {
+        using var environment = new McpHostEnvironment(gateway: true);
+        var responseBody = body == "{\"accessToken\":\""
+            ? body + new string('x', 17 * 1024) + "\"}"
+            : body;
+        var delegation = new GatewayDelegationProbe((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseBody, Encoding.UTF8)
+        }));
+        var outbound = new AgentClientBoundaryProbe();
+        using var factory = CreateFactory(environment.SigningKey, boundaryProbe: outbound, delegationProbe: delegation);
+        using var client = CreateClient(factory);
+        using var request = CreateGatewayRequest();
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(1, delegation.Requests);
+        Assert.Equal(0, outbound.ApiRequests);
+    }
+
     [Fact]
     public async Task Http_health_resource_uses_the_registered_outbound_agent_client()
     {
@@ -499,6 +554,23 @@ public sealed class McpHttpHostTests
         return ParseMcpResponse(responseBody);
     }
 
+    private static HttpRequestMessage CreateGatewayRequest()
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "tools/call",
+                @params = ToolCallParameters("helpdesk_auth", "status")
+            }), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "rdk_local-a");
+        request.Headers.Accept.ParseAdd("application/json, text/event-stream");
+        return request;
+    }
+
     private static JsonDocument ParseMcpResponse(string responseBody)
     {
         if (responseBody.TrimStart().StartsWith("event:", StringComparison.Ordinal))
@@ -713,6 +785,12 @@ public sealed class McpHttpHostTests
     private sealed class GatewayDelegationProbe
     {
         private int _requests;
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? _responseFactory;
+
+        public GatewayDelegationProbe(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? responseFactory = null)
+        {
+            _responseFactory = responseFactory;
+        }
 
         public int Requests => Volatile.Read(ref _requests);
 
@@ -723,6 +801,8 @@ public sealed class McpHttpHostTests
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {
                 Interlocked.Increment(ref probe._requests);
+                if (probe._responseFactory is not null)
+                    return probe._responseFactory(request, cancellationToken);
                 var inbound = request.Headers.TryGetValues("Authorization", out var authorizationValues)
                     ? authorizationValues.SingleOrDefault()?.Replace("Bearer ", string.Empty, StringComparison.OrdinalIgnoreCase)
                     : null;

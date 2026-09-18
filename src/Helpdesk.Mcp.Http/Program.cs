@@ -91,7 +91,9 @@ public sealed partial class Program
             builder.Services.AddHttpClient(GatewayDelegationAuthenticationHandler.DelegationClientName, client =>
             {
                 client.BaseAddress = new Uri(hostContext.CanonicalApiBaseUrl);
-                client.Timeout = TimeSpan.FromSeconds(20);
+                // The authentication handler owns one linked deadline which
+                // includes both headers and body consumption.
+                client.Timeout = Timeout.InfiniteTimeSpan;
             });
             builder.Services.RemoveAll<IHelpdeskAgentClient>();
             builder.Services.AddSingleton<IAgentAccessTokenProvider, GatewayExecutionTokenProvider>();
