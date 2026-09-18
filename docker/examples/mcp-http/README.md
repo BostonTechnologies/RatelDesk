@@ -24,6 +24,24 @@ mount the API database or data-protection key ring. The one-shot
 volume with owner `10001:10001` and mode `0400`, then exits. The running MCP
 gateway remains non-root and mounts only that copied file read-only.
 
+For the combined local Web/API/MCP stack, use the gateway-specific overlay;
+it has no Authentik variables. The API target is internal (`http://api:8222/`)
+while `RATELDESK_MCP_PUBLIC_RESOURCE_URI` is the URI configured in the MCP
+client and paired credential.
+
+```sh
+cp docker/examples/mcp-http/config.gateway.local.example.json config.gateway.json
+chmod 600 config.gateway.json
+RATELDESK_MCP_CONFIG_FILE="$PWD/config.gateway.json" \
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.mcp.gateway.yml up --build
+```
+
+For an extracted release deployment, replace the source overlay with
+`docker-compose.release.yml` and `docker-compose.mcp.gateway.release.yml`,
+set `RATELDESK_VERSION` to the exact release version, and use the same setup
+sequence: initialize the API, create an account-owned paired credential, then
+connect the MCP client. Revoke that credential to invalidate future exchanges.
+
 For an external OAuth deployment, use the source or release compose overlay
 with `Helpdesk__Mcp__AuthenticationMode=authentik`. Copy
 `config.authentik.example.json` to a protected file and replace every

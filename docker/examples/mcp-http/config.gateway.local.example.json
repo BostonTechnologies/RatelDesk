@@ -1,0 +1,4 @@
+{
+  "apiBaseUrl": "http://api:8222/",
+  "credentialMode": "gateway"
+}

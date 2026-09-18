@@ -46,6 +46,7 @@ public sealed partial class Program
             .Validate(options => AuthentikMcpOptionsValidator.IsCanonicalMcpResource(options.PublicResourceUri), "Helpdesk:Mcp:PublicResourceUri must be an absolute HTTPS /mcp URI.")
             .Validate(options => options.AllowedOrigins.Length > 0 && options.AllowedOrigins.All(AuthentikMcpOptionsValidator.IsAllowedOrigin), "Helpdesk:Mcp:AllowedOrigins must contain one or more absolute HTTP(S) origins without paths.")
             .Validate(options => AuthentikMcpOptionsValidator.IsAuthenticationMode(options.AuthenticationMode.Trim().ToLowerInvariant()), "Helpdesk:Mcp:AuthenticationMode must be gateway or authentik.")
+            .Validate(options => options.DelegationTimeoutSeconds is >= 1 and <= 60, "Helpdesk:Mcp:DelegationTimeoutSeconds must be between 1 and 60.")
             .ValidateOnStart();
         if (usesGatewayCredentials && !string.Equals(agentConfiguration.CredentialMode, "gateway", StringComparison.OrdinalIgnoreCase))
             throw new AgentClientValidationException("Local HTTP MCP gateway mode requires credentialMode=gateway and does not accept a deployment credential.");
@@ -91,7 +92,9 @@ public sealed partial class Program
             builder.Services.AddHttpClient(GatewayDelegationAuthenticationHandler.DelegationClientName, client =>
             {
                 client.BaseAddress = new Uri(hostContext.CanonicalApiBaseUrl);
-                client.Timeout = TimeSpan.FromSeconds(20);
+                // The authentication handler owns one linked deadline which
+                // includes both headers and body consumption.
+                client.Timeout = Timeout.InfiniteTimeSpan;
             });
             builder.Services.RemoveAll<IHelpdeskAgentClient>();
             builder.Services.AddSingleton<IAgentAccessTokenProvider, GatewayExecutionTokenProvider>();

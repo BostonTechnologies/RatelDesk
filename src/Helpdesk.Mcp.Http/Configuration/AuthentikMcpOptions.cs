@@ -23,6 +23,8 @@ public sealed class HelpdeskMcpHttpOptions
     public string[] AllowedOrigins { get; init; } = [];
     /// <summary>Ingress mode: <c>gateway</c> for paired local credentials or <c>authentik</c> for external OAuth.</summary>
     public string AuthenticationMode { get; init; } = "authentik";
+    /// <summary>Maximum time allowed for the paired-credential exchange, including the response body.</summary>
+    public int DelegationTimeoutSeconds { get; init; } = 20;
 }
 
 public sealed class AuthentikMcpOptionsValidator(IOptions<HelpdeskMcpHttpOptions> mcpOptions)

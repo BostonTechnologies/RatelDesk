@@ -37,16 +37,11 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-            echo "Tag '$tag' is not a supported SemVer release tag." >&2
-            exit 1
-          fi
-
-          version="${tag#v}"
-          prerelease=false
+          release_metadata="$(bash tools/release/validate-release-version.sh "$tag")"
+          version="$(awk -F= '/^version=/{print $2}' <<<"$release_metadata")"
+          prerelease="$(awk -F= '/^prerelease=/{print $2}' <<<"$release_metadata")"
           msbuild_args=()
-          if [[ "$version" == *-* ]]; then
-            prerelease=true
+          if [[ "$prerelease" == true ]]; then
             msbuild_args=("-p:VersionSuffix=${version#*-}")
           fi
 
@@ -97,6 +92,9 @@ jobs:
 
       - name: Validate repository layout
         run: tools/ci/validate-layout.sh
+
+      - name: Test release-version gate
+        run: bash tools/release/test-validate-release-version.sh
 
       - name: Build release-equivalent containers
         env:
@@ -219,7 +217,6 @@ jobs:
           images: ghcr.io/bostontechnologies/rateldesk-web
           tags: |
             type=raw,value=${{ needs.metadata.outputs.version }}
-            type=raw,value=latest,enable=${{ needs.metadata.outputs.prerelease == 'false' }}
           labels: |
             org.opencontainers.image.title=RatelDesk Web
             org.opencontainers.image.description=RatelDesk web application
@@ -281,7 +278,6 @@ jobs:
           images: ghcr.io/bostontechnologies/rateldesk-api
           tags: |
             type=raw,value=${{ needs.metadata.outputs.version }}
-            type=raw,value=latest,enable=${{ needs.metadata.outputs.prerelease == 'false' }}
           labels: |
             org.opencontainers.image.title=RatelDesk API
             org.opencontainers.image.description=RatelDesk API
@@ -343,7 +339,6 @@ jobs:
           images: ghcr.io/bostontechnologies/rateldesk-mcp-http
           tags: |
             type=raw,value=${{ needs.metadata.outputs.version }}
-            type=raw,value=latest,enable=${{ needs.metadata.outputs.prerelease == 'false' }}
           labels: |
             org.opencontainers.image.title=RatelDesk HTTP MCP
             org.opencontainers.image.description=RatelDesk stateless HTTP MCP transport
