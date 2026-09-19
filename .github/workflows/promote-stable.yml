@@ -106,6 +106,7 @@ jobs:
 
       - name: Verify all immutable image inputs before promotion
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail

@@ -49,7 +49,7 @@ class StablePromotionValidatorTests(unittest.TestCase):
             "isPrerelease": False,
             "assets": [
                 {"name": name, "digest": f"sha256:{self.manifest['assets'][name]}" if name in self.manifest["assets"] else "sha256:" + "f" * 64}
-                for name in archives() | {"SHA256SUMS", "release-manifest.json", "release-manifest.json.sha256"}
+                for name in sorted(archives() | {"SHA256SUMS", "release-manifest.json", "release-manifest.json.sha256"})
             ],
         }
         self.pages = [[{"tag_name": TAG, "draft": False, "prerelease": False}]]
@@ -114,9 +114,11 @@ class StablePromotionValidatorTests(unittest.TestCase):
         self.sums_override = f"{'0' * 64}  {first_archive}\n"
         self.assert_rejected("SHA256SUMS does not exactly match")
         self.sums_override = None
-        self.release["assets"][0]["digest"] = "sha256:" + "0" * 64
+        archive_asset = next(asset for asset in self.release["assets"] if asset["name"] in self.manifest["assets"])
+        original_digest = archive_asset["digest"]
+        archive_asset["digest"] = "sha256:" + "0" * 64
         self.assert_rejected("asset digest mismatch")
-        self.release["assets"][0]["digest"] = f"sha256:{self.manifest['assets'][self.release['assets'][0]['name']]}" if self.release["assets"][0]["name"] in self.manifest["assets"] else "sha256:" + "f" * 64
+        archive_asset["digest"] = original_digest
         self.pages = [[{"tag_name": "v9.0.0", "draft": False, "prerelease": False}], *self.pages]
         self.assert_rejected("move latest backwards")
 

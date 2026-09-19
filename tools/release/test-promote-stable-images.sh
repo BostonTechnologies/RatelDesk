@@ -25,6 +25,13 @@ if [[ "$*" == *"imagetools create"* && "${FAKE_FAIL_TARGET:-}" != "" && "$*" == 
   exit 42
 fi
 if [[ "$*" == *"imagetools inspect"* ]]; then
+  if [[ "${FAKE_INSPECT_FAIL_TARGET:-}" != "" && "$*" == *"$FAKE_INSPECT_FAIL_TARGET"* ]]; then
+    exit 43
+  fi
+  if [[ "${FAKE_INSPECT_MISMATCH_TARGET:-}" != "" && "$*" == *"$FAKE_INSPECT_MISMATCH_TARGET"* ]]; then
+    printf '%s\n' 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    exit 0
+  fi
   printf '%s\n' "$MOCK_DOCKER_DIGEST"
 fi
 EOF
@@ -47,3 +54,17 @@ if MOCK_DOCKER_LOG="$log" MOCK_DOCKER_DIGEST="$digest" FAKE_FAIL_TARGET='ratelde
   exit 1
 fi
 grep -Fq 'already updated: ghcr.io/public-owner/rateldesk-api:latest' "$work_directory/partial.stderr"
+
+if MOCK_DOCKER_LOG="$log" MOCK_DOCKER_DIGEST="$digest" FAKE_INSPECT_FAIL_TARGET='rateldesk-web:latest' DOCKER_BIN="$mock_docker" \
+  "$repository_root/tools/release/promote-stable-images.sh" "$plan" >"$work_directory/readback-failure.stdout" 2>"$work_directory/readback-failure.stderr"; then
+  echo "The simulated registry read-back failure unexpectedly succeeded." >&2
+  exit 1
+fi
+grep -Fq 'already updated: ghcr.io/public-owner/rateldesk-api:latest ghcr.io/public-owner/rateldesk-web:latest. Read-back of ghcr.io/public-owner/rateldesk-web:latest failed.' "$work_directory/readback-failure.stderr"
+
+if MOCK_DOCKER_LOG="$log" MOCK_DOCKER_DIGEST="$digest" FAKE_INSPECT_MISMATCH_TARGET='rateldesk-web:latest' DOCKER_BIN="$mock_docker" \
+  "$repository_root/tools/release/promote-stable-images.sh" "$plan" >"$work_directory/readback-mismatch.stdout" 2>"$work_directory/readback-mismatch.stderr"; then
+  echo "The simulated registry read-back mismatch unexpectedly succeeded." >&2
+  exit 1
+fi
+grep -Fq 'already updated: ghcr.io/public-owner/rateldesk-api:latest ghcr.io/public-owner/rateldesk-web:latest. ghcr.io/public-owner/rateldesk-web:latest read back as sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$work_directory/readback-mismatch.stderr"
