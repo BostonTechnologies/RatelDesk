@@ -39,6 +39,7 @@ mono_crash.*
 !tools/
 !tools/release/
 !tools/release/*.py
+!tools/release/*.sh
 x64/
 x86/
 [Ww][Ii][Nn]32/

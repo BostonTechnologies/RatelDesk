@@ -59,6 +59,16 @@ def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def sha256sums(path: Path) -> dict[str, str]:
+    checksums: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2 or not re.fullmatch(r"[0-9a-f]{64}", parts[0]) or not parts[1] or parts[1] in checksums:
+            fail("SHA256SUMS is malformed or contains duplicate assets.")
+        checksums[parts[1]] = parts[0]
+    return checksums
+
+
 def validate(args: argparse.Namespace) -> dict[str, Any]:
     candidate_version = version(args.tag)
     release = load_json(args.release)
@@ -85,10 +95,16 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         fail("The release manifest does not contain the exact required archive set.")
     if any(not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in assets.values()):
         fail("The release manifest contains an invalid archive checksum.")
-    published_asset_names = {asset.get("name") for asset in release.get("assets", [])}
+    if sha256sums(args.sha256sums) != assets:
+        fail("SHA256SUMS does not exactly match the release manifest archive checksums.")
+
+    published_assets = {asset.get("name"): asset.get("digest") for asset in release.get("assets", [])}
     required_release_assets = set(assets) | {"SHA256SUMS", "release-manifest.json", "release-manifest.json.sha256"}
-    if published_asset_names != required_release_assets:
+    if set(published_assets) != required_release_assets or len(published_assets) != len(release.get("assets", [])):
         fail("The published release does not contain the exact expected asset set.")
+    for name, expected_hash in assets.items():
+        if published_assets.get(name) != f"sha256:{expected_hash}":
+            fail(f"Published release asset digest mismatch: {name}")
 
     expected_images = {f"ghcr.io/{args.registry_owner.lower()}/{name}:{release_version}" for name in IMAGE_NAMES}
     containers = manifest.get("containers")
@@ -112,7 +128,14 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         if REQUIRED_PLATFORMS - platforms:
             fail(f"{image}@{digest} is missing a required Linux platform.")
 
-    return {"tag": args.tag, "sourceRevision": args.source_revision, "images": [{"image": image, "digest": image_digests[image]} for image in sorted(expected_images)]}
+    return {
+        "tag": args.tag,
+        "sourceRevision": args.source_revision,
+        "images": [
+            {"image": image, "latest": f"{image.rsplit(':', 1)[0]}:latest", "digest": image_digests[image]}
+            for image in sorted(expected_images)
+        ],
+    }
 
 
 def main() -> None:
@@ -123,6 +146,7 @@ def main() -> None:
     parser.add_argument("--release", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--manifest-checksum", type=Path, required=True)
+    parser.add_argument("--sha256sums", type=Path, required=True)
     parser.add_argument("--release-pages", type=Path, required=True)
     parser.add_argument("--inspections", type=Path, required=True)
     args = parser.parse_args()

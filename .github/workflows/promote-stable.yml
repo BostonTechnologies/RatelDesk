@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-assets
-          gh release download "$TAG" --repo "$GH_REPO" --pattern release-manifest.json --pattern release-manifest.json.sha256 --dir release-assets
+          gh release download "$TAG" --repo "$GH_REPO" --pattern SHA256SUMS --pattern release-manifest.json --pattern release-manifest.json.sha256 --dir release-assets
           (cd release-assets && sha256sum --check release-manifest.json.sha256)
           python3 - "$TAG" release-assets/release-manifest.json <<'PY'
           import json, re, sys
@@ -138,25 +138,12 @@ jobs:
             --release release.json \
             --manifest release-assets/release-manifest.json \
             --manifest-checksum release-assets/release-manifest.json.sha256 \
+            --sha256sums release-assets/SHA256SUMS \
             --release-pages release-pages.json \
             --inspections image-inspections.json > promotion-plan.json
 
       - name: Promote immutable digests and read back mutable references
-        run: |
-          set -euo pipefail
-          promoted=()
-          while IFS=$'\t' read -r image digest; do
-            if ! docker buildx imagetools create --tag "$image:latest" "$image@$digest"; then
-              printf 'Partial promotion; already updated: %s. Re-run this exact tag after correcting registry access; do not roll latest backwards.\n' "${promoted[*]:-none}" >&2
-              exit 1
-            fi
-            actual="$(docker buildx imagetools inspect "$image:latest" --format '{{.Digest}}')"
-            if [[ "$actual" != "$digest" ]]; then
-              printf 'Partial promotion; %s latest read back as %s, expected %s. Re-run this exact tag after investigating.\n' "$image" "$actual" "$digest" >&2
-              exit 1
-            fi
-            promoted+=("$image")
-          done < <(jq -r '.images[] | [.image, .digest] | @tsv' promotion-plan.json)
+        run: tools/release/promote-stable-images.sh promotion-plan.json
 
       - name: Summarize immutable promotion
         run: |
