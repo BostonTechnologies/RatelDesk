@@ -130,6 +130,11 @@ jobs:
           HELPDESK_E2E_AUTH_MODE: development
         run: tools/ci/run-ux-local.sh
 
+      - name: Run AI Assistant Playwright validation
+        env:
+          HELPDESK_AI_ASSISTANT_CONFIGURATION: Release
+        run: npm run test:ux:ai-assistant
+
       - name: Upload Playwright reports and failure artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

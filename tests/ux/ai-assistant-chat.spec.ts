@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { assertNoHorizontalOverflow, selectTheme } from './auth';
+import { assertNoHorizontalOverflow } from './auth';
 
 // Requires the loopback fixture API and real feature NewWeb host. No live ticket mutations.
 test.beforeEach(async ({ page, request }) => {
@@ -7,29 +7,22 @@ test.beforeEach(async ({ page, request }) => {
   await page.goto('/auth/development', { waitUntil: 'domcontentloaded' });
 });
 
-async function openChat(page) {
+async function openChat(page, theme: 'Light' | 'Dark' = 'Light') {
+  await page.addInitScript((selectedTheme) => {
+    localStorage.setItem('ticket-tabs-index:incidents:ux-chat', '4');
+    localStorage.setItem('helpdesk.theme.preference', selectedTheme.toLowerCase());
+  }, theme);
   await page.goto('/incidents/ux-chat', { waitUntil: 'domcontentloaded' });
-  const assistantTab = page.getByRole('tab', { name: /AI Assistant/ });
   const composer = page.getByTestId('ai-assistant-composer');
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await assistantTab.click();
-    try {
-      await expect(composer).toBeVisible({ timeout: 2_000 });
-      return;
-    } catch {
-      // Ticket tabs can be recreated while their saved active panel is restored.
-    }
-  }
-
+  await expect(page.getByRole('tab', { name: /AI Assistant/ })).toHaveAttribute('aria-selected', 'true');
   await expect(composer).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.helpdeskTheme)).toBe(theme.toLowerCase());
 }
 
 for (const theme of ['Light', 'Dark'] as const) {
   for (const mobile of [false, true]) {
     test(`${theme} ${mobile ? 'mobile' : 'desktop'} completed, expand and composer boundary`, async ({ page }, testInfo) => {
-      await openChat(page);
-      await selectTheme(page, theme);
+      await openChat(page, theme);
       await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 });
       const heading = page.getByTestId('ai-assistant-activity').getByRole('button');
       await expect(heading).toHaveAttribute('aria-expanded', 'false');
@@ -71,7 +64,6 @@ for (const mode of ['empty', 'processing', 'approval', 'failed', 'archived']) {
       await expect(page.getByText('will not resend this request automatically', { exact: false })).toBeVisible();
     }
     if (mode === 'approval') {
-      await selectTheme(page, 'Light');
       const activity = page.getByTestId('ai-assistant-activity');
       const approval = page.getByTestId('ai-assistant-approval');
       const allow = approval.getByRole('button', { name: 'Allow once' });
@@ -116,8 +108,7 @@ for (const mode of ['empty', 'processing', 'approval', 'failed', 'archived']) {
 
 test('dark desktop approval callout remains visually distinct', async ({ page, request }, testInfo) => {
   await request.get('http://127.0.0.1:18299/fixture/reset?mode=approval');
-  await openChat(page);
-  await selectTheme(page, 'Dark');
+  await openChat(page, 'Dark');
   await page.setViewportSize({ width: 1440, height: 1000 });
   const approval = page.getByTestId('ai-assistant-approval');
   await expect(approval.getByRole('status')).toHaveText('Approval required');
@@ -186,8 +177,7 @@ test('live draft replacement, automatic completion collapse and duplicate replay
 
 test('mobile dark approval controls and bounded growing composer', async ({ page, request }, testInfo) => {
   await request.get('http://127.0.0.1:18299/fixture/reset?mode=approval');
-  await openChat(page);
-  await selectTheme(page, 'Dark');
+  await openChat(page, 'Dark');
   await page.setViewportSize({ width: 390, height: 844 });
   const approval = page.getByTestId('ai-assistant-approval');
   await expect(approval.getByRole('status')).toHaveText('Approval required');
@@ -196,7 +186,7 @@ test('mobile dark approval controls and bounded growing composer', async ({ page
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('mobile-dark-approval.png'), fullPage: true });
   await request.get('http://127.0.0.1:18299/fixture/reset?mode=empty');
-  await openChat(page);
+  await openChat(page, 'Dark');
   const input = page.getByRole('textbox', { name: 'Message AiAssistant' });
   await input.fill(Array.from({ length: 30 }, (_, i) => `Line ${i}`).join('\n'));
   await expect.poll(() => input.evaluate(e => e.scrollHeight > e.clientHeight)).toBe(true);

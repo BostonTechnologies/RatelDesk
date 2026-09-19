@@ -54,10 +54,10 @@ http.createServer(async (req, res) => {
     return reply({ token: `${encode({ alg: 'none' })}.${encode({ sub: actor, auth_mode: 'development', preferred_username: 'UX Test Operator', roles: ['HelpdeskAdmin', 'Incident.User'], exp: Math.floor(Date.now()/1000)+3600 })}.fixture` });
   }
   if (url.pathname === '/api/v1/auth/me') return reply({
-    isAuthenticated: true, name: 'UX Test Operator', email: 'ux@example.test', userId: actor,
-    primaryOrganizationId: 'ux-org', primaryOrganizationName: 'UX Organization', customerId: null,
-    isHelpdeskAdmin: true, roleBundles: ['HelpdeskAdmin'], permissions: [],
-    allowedOrganizationIds: ['ux-org'], managedOrganizationIds: ['ux-org'], scopedPermissionGrants: []
+    isAuthenticated: true, name: 'UX Test Operator', email: 'UX Test Operator', userId: actor,
+    primaryOrganizationId: null, primaryOrganizationName: null, customerId: null,
+    isHelpdeskAdmin: true, roleBundles: ['HelpdeskAdmin', 'Incident.User'], permissions: ['HelpdeskAdmin', 'Incident.User'],
+    allowedOrganizationIds: [], managedOrganizationIds: [], scopedPermissionGrants: []
   });
   if (url.pathname === '/api/v1/branding') return reply({ applicationName: 'RatelDesk', faviconUrl: '/favicon.ico' });
   if (url.pathname.endsWith('/chat/stream')) {
