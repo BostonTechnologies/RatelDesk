@@ -53,6 +53,12 @@ http.createServer(async (req, res) => {
     const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
     return reply({ token: `${encode({ alg: 'none' })}.${encode({ sub: actor, auth_mode: 'development', preferred_username: 'UX Test Operator', roles: ['HelpdeskAdmin', 'Incident.User'], exp: Math.floor(Date.now()/1000)+3600 })}.fixture` });
   }
+  if (url.pathname === '/api/v1/auth/me') return reply({
+    isAuthenticated: true, name: 'UX Test Operator', email: 'ux@example.test', userId: actor,
+    primaryOrganizationId: 'ux-org', primaryOrganizationName: 'UX Organization', customerId: null,
+    isHelpdeskAdmin: true, roleBundles: ['HelpdeskAdmin'], permissions: [],
+    allowedOrganizationIds: ['ux-org'], managedOrganizationIds: ['ux-org'], scopedPermissionGrants: []
+  });
   if (url.pathname === '/api/v1/branding') return reply({ applicationName: 'RatelDesk', faviconUrl: '/favicon.ico' });
   if (url.pathname.endsWith('/chat/stream')) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -60,6 +66,7 @@ http.createServer(async (req, res) => {
     res.write(`event: state\ndata: ${state}\n\n`);
     streams.add(res); req.on('close', () => streams.delete(res)); return;
   }
+  if (url.pathname.endsWith('/chat-capabilities')) return reply({ enabled: true, reason: null });
   if (url.pathname.endsWith('/chat/history')) return reply([{ conversationId: conversation, state, lastActivityUtc: new Date().toISOString(), createdByUserId: actor }]);
   if (url.pathname.endsWith('/chat/stop-waiting')) {
     state = 3; event('delivery_unknown', 'Operator stopped waiting locally.');
