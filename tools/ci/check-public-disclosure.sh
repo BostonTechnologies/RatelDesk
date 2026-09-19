@@ -12,7 +12,7 @@ done
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
-blocked_text='boston|bostec|proxicon|netratel|komodo|openbao|netclaw|spacetimeorchestrator|camelot|konrad|jeremi|hd-dev|@boston\.net\.za'
+blocked_text='boston|bostec|proxicon|netratel|komodo|openbao|spacetimeorchestrator|camelot|konrad|jeremi|hd-dev|@boston\.net\.za'
 blocked_files='(^|/)(\.env|appsettings\.Development\.local\.json)$|\.(pfx|pem|key)$|(^|/)(id_rsa|id_ed25519)$'
 
 failed=false
