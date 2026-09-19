@@ -6,6 +6,13 @@
     <button type="button" class="activity-heading" aria-expanded="@expanded.ToString().ToLowerInvariant()" @onclick="Toggle">
         <MudIcon Icon="@(expanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)" />
         <span>AiAssistant activity · @Turn.Summary</span>
+        @if (HasPendingApproval)
+        {
+            <span class="approval-heading-status">
+                <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Color="Color.Warning" Size="Size.Small" />
+                <span>Approval required</span>
+            </span>
+        }
         @if (!Turn.Completed && State == ChatState.Processing)
         {
             <MudProgressCircular Indeterminate="true" Size="Size.Small" />
@@ -26,14 +33,31 @@
         }
         @foreach (var item in Turn.Activity)
         {
-            <div class="activity-interaction">
-                <MudText Style="white-space: pre-wrap; overflow-wrap: anywhere">@item.Text</MudText>
-                @if (item.Type == "approval_request" && State == ChatState.AwaitingApproval && !Turn.Activity.Any(x => x.Type == "approval_response" && x.CallId == item.CallId))
+            var isPendingApproval = IsPendingApproval(item);
+            <div class="@(isPendingApproval ? "activity-interaction approval-callout" : "activity-interaction")"
+                 data-testid="@(isPendingApproval ? "ai-assistant-approval" : null)">
+                @if (isPendingApproval)
                 {
-                    @foreach (var option in JsonSerializer.Deserialize<List<ChatOption>>(item.OptionsJson ?? "[]") ?? [])
-                    {
-                        <MudButton Disabled="Busy" OnClick="@(() => Approval.InvokeAsync((item.CallId!, option.Key)))">@option.Label</MudButton>
-                    }
+                    <div class="approval-status" role="status" aria-live="polite">
+                        <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Color="Color.Warning" />
+                        <MudText Typo="Typo.subtitle2">Approval required</MudText>
+                    </div>
+                }
+                <MudText Style="white-space: pre-wrap; overflow-wrap: anywhere">@item.Text</MudText>
+                @if (isPendingApproval)
+                {
+                    <div class="approval-actions">
+                        @foreach (var option in JsonSerializer.Deserialize<List<ChatOption>>(item.OptionsJson ?? "[]") ?? [])
+                        {
+                            <MudButton Class="approval-action"
+                                       Color="@ApprovalColor(option.Key)"
+                                       Variant="@ApprovalVariant(option.Key)"
+                                       StartIcon="@ApprovalIcon(option.Key)"
+                                       Disabled="Busy"
+                                       data-approval-key="@option.Key"
+                                       OnClick="@(() => Approval.InvokeAsync((item.CallId!, option.Key)))">@option.Label</MudButton>
+                        }
+                    </div>
                 }
             </div>
         }
@@ -53,6 +77,15 @@
         completed = Turn.Completed; initialized = true;
     }
     private void Toggle() => expanded = !expanded;
+    private bool HasPendingApproval => Turn.Activity.Any(IsPendingApproval);
+    private bool IsPendingApproval(AiAssistantChatEvent item) => item.Type == "approval_request"
+        && State == ChatState.AwaitingApproval
+        && !Turn.Activity.Any(x => x.Type == "approval_response" && x.CallId == item.CallId);
+    private static Color ApprovalColor(string key) => key == "deny" ? Color.Error : Color.Primary;
+    private static Variant ApprovalVariant(string key) => key == "deny" ? Variant.Outlined : Variant.Filled;
+    private static string ApprovalIcon(string key) => key == "deny"
+        ? Icons.Material.Filled.Block
+        : Icons.Material.Filled.CheckCircle;
     private static string Icon(ChatActivityMetadata? metadata) => metadata?.Outcome == "failed" ? Icons.Material.Filled.ErrorOutline
         : metadata?.ToolKind switch
         {

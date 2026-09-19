@@ -32,8 +32,10 @@ export async function clearThemeOverride(page: Page): Promise<void> {
 }
 
 export async function assertNoHorizontalOverflow(page: Page): Promise<void> {
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-  expect(overflow, 'page should not require horizontal scrolling').toBeLessThanOrEqual(2);
+  await expect.poll(
+    () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    { message: 'page should not require horizontal scrolling' }
+  ).toBeLessThanOrEqual(2);
 }
 
 export async function selectTheme(page: Page, theme: 'System' | 'Light' | 'Dark'): Promise<void> {
