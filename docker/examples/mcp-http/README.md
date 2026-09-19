@@ -15,8 +15,11 @@ chmod 600 config.json
 docker compose up -d
 ```
 
-Set `RATELDESK_API_BASE_URL` to the exact API target,
-`RATELDESK_MCP_PUBLIC_RESOURCE_URI` to the public HTTPS `/mcp` URL. Configure
+Set `RATELDESK_VERSION` to one exact published version (for example
+`0.1.1-beta.2`), never `latest`. Set `RATELDESK_API_BASE_URL` to the exact API target,
+`RATELDESK_MCP_PUBLIC_RESOURCE_URI` to the public HTTPS `/mcp` URL served by
+your TLS proxy. The container's HTTP listener on port 8223 does not itself
+provide TLS, so `https://localhost:8223/mcp` is not a usable default. Configure
 `RATELDESK_MCP_ALLOWED_ORIGIN` to the exact browser origin (not a path).
 The MCP container receives only its protected configuration file and does not
 mount the API database or data-protection key ring. The one-shot
@@ -24,15 +27,19 @@ mount the API database or data-protection key ring. The one-shot
 volume with owner `10001:10001` and mode `0400`, then exits. The running MCP
 gateway remains non-root and mounts only that copied file read-only.
 
-For the combined local Web/API/MCP stack, use the gateway-specific overlay;
+For the combined disposable Web/API/MCP stack, use the gateway-specific overlay;
 it has no Authentik variables. The API target is internal (`http://api:8222/`)
 while `RATELDESK_MCP_PUBLIC_RESOURCE_URI` is the URI configured in the MCP
-client and paired credential.
+client and paired credential. Select a distinct Compose project, ports, and
+volumes from any existing deployment; do not use this recipe to recreate an
+existing Web/API stack.
 
 ```sh
 cp docker/examples/mcp-http/config.gateway.local.example.json config.gateway.json
 chmod 600 config.gateway.json
 RATELDESK_MCP_CONFIG_FILE="$PWD/config.gateway.json" \
+RATELDESK_MCP_PUBLIC_RESOURCE_URI=https://mcp.example.test/mcp \
+RATELDESK_MCP_ALLOWED_ORIGIN=https://app.example.test \
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.mcp.gateway.yml up --build
 ```
 
@@ -48,7 +55,11 @@ with `Helpdesk__Mcp__AuthenticationMode=authentik`. Copy
 placeholder: it supplies the downstream service-account configuration, while
 the Compose settings below supply the separate ingress issuer, audience,
 scope, and group checks. Authentik mode is explicit and is never used as a
-fallback for local paired credentials.
+fallback for local paired credentials. It validates an ingress MCP JWT but
+uses the separately configured downstream API service identity; it is not
+per-user delegated RatelDesk RBAC. The distinct linked-OIDC-user journey uses
+an account-owned MCP credential in gateway mode after the OIDC user is linked
+to an application account.
 
 For a source checkout, run from the repository root:
 

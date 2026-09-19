@@ -213,9 +213,12 @@ public sealed class McpHttpHostTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.TooManyRequests)]
-    [InlineData(HttpStatusCode.ServiceUnavailable)]
-    public async Task Paired_gateway_does_not_fall_back_when_delegation_dependency_rejects_or_is_unavailable(HttpStatusCode statusCode)
+    [InlineData(HttpStatusCode.TooManyRequests, HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.InternalServerError, HttpStatusCode.ServiceUnavailable)]
+    public async Task Paired_gateway_does_not_fall_back_when_delegation_dependency_rejects_or_is_unavailable(
+        HttpStatusCode statusCode,
+        HttpStatusCode expectedStatusCode)
     {
         using var environment = new McpHostEnvironment(gateway: true);
         var delegation = new GatewayDelegationProbe((_, _) => Task.FromResult(new HttpResponseMessage(statusCode)));
@@ -237,9 +240,54 @@ public sealed class McpHttpHostTests
         request.Headers.Accept.ParseAdd("application/json, text/event-stream");
         using var response = await client.SendAsync(request);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(expectedStatusCode, response.StatusCode);
+        Assert.Empty(await response.Content.ReadAsStringAsync());
         Assert.Equal(1, delegation.Requests);
         Assert.Equal(0, outbound.ApiRequests);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden, HttpStatusCode.Forbidden)]
+    public async Task Paired_gateway_maps_credential_and_authorization_failures_without_exposing_dependency_content(
+        HttpStatusCode delegationStatus,
+        HttpStatusCode expectedStatus)
+    {
+        using var environment = new McpHostEnvironment(gateway: true);
+        var delegation = new GatewayDelegationProbe((_, _) => Task.FromResult(new HttpResponseMessage(delegationStatus)
+        {
+            Content = new StringContent("sensitive upstream body", Encoding.UTF8)
+        }));
+        var outbound = new AgentClientBoundaryProbe();
+        using var factory = CreateFactory(environment.SigningKey, boundaryProbe: outbound, delegationProbe: delegation);
+        using var client = CreateClient(factory);
+        using var response = await client.SendAsync(CreateGatewayRequest());
+
+        Assert.Equal(expectedStatus, response.StatusCode);
+        Assert.DoesNotContain("sensitive", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        if (expectedStatus == HttpStatusCode.Unauthorized)
+            Assert.Contains(response.Headers.WwwAuthenticate, header => string.Equals(header.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase));
+        else
+            Assert.Empty(response.Headers.WwwAuthenticate);
+        Assert.Equal(0, outbound.ApiRequests);
+    }
+
+    [Fact]
+    public async Task Paired_gateway_sanitizes_and_bounds_delegation_retry_after()
+    {
+        using var environment = new McpHostEnvironment(gateway: true);
+        var delegation = new GatewayDelegationProbe((_, _) =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromMinutes(5));
+            return Task.FromResult(response);
+        });
+        using var factory = CreateFactory(environment.SigningKey, delegationProbe: delegation);
+        using var client = CreateClient(factory);
+        using var response = await client.SendAsync(CreateGatewayRequest());
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.Equal("60", Assert.Single(response.Headers.GetValues("Retry-After")));
     }
 
     [Theory]
@@ -262,7 +310,7 @@ public sealed class McpHttpHostTests
 
         using var response = await client.SendAsync(request);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         Assert.Equal(1, delegation.Requests);
         Assert.Equal(0, outbound.ApiRequests);
     }
@@ -278,7 +326,7 @@ public sealed class McpHttpHostTests
         using var headersClient = CreateClient(headersFactory);
         using var headersResponse = await headersClient.SendAsync(CreateGatewayRequest());
 
-        Assert.Equal(HttpStatusCode.Unauthorized, headersResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.GatewayTimeout, headersResponse.StatusCode);
         Assert.Equal(0, outbound.ApiRequests);
 
         var bodyNeverCompletes = new GatewayDelegationProbe((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -289,7 +337,7 @@ public sealed class McpHttpHostTests
         using var bodyClient = CreateClient(bodyFactory);
         using var bodyResponse = await bodyClient.SendAsync(CreateGatewayRequest());
 
-        Assert.Equal(HttpStatusCode.Unauthorized, bodyResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.GatewayTimeout, bodyResponse.StatusCode);
     }
 
     [Fact]
@@ -302,7 +350,7 @@ public sealed class McpHttpHostTests
         using var client = CreateClient(factory);
         using var response = await client.SendAsync(CreateGatewayRequest());
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(1, delegation.Requests);
         Assert.Equal(0, outbound.ApiRequests);
     }

@@ -22,7 +22,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
+      - name: Check out main history for tag ancestry validation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
       - name: Validate requested stable tag and published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -30,8 +37,19 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Only a stable SemVer tag may promote latest." >&2; exit 64; }
-          release="$(gh release view "$TAG" --json isDraft,isPrerelease,tagName)"
+          release="$(gh release view "$TAG" --repo "$GH_REPO" --json isDraft,isPrerelease,tagName,assets)"
           python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["tagName"] == sys.argv[1] and not r["isDraft"] and not r["isPrerelease"], "Promotion requires an already-published stable release"' "$TAG" <<<"$release"
+          printf '%s\n' "$release" > release.json
+
+      - name: Resolve the peeled tag commit and require main ancestry
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" main
+          source_revision="$(git rev-parse "$TAG^{}")"
+          git merge-base --is-ancestor "$source_revision" origin/main
+          printf '%s\n' "$source_revision" > source-revision.txt
 
       - name: Reject an older stable release
         env:
@@ -39,14 +57,15 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > releases.json
+          gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" > releases.json
           python3 - "$TAG" releases.json <<'PY'
           import json
           import re
           import sys
 
           candidate = tuple(map(int, sys.argv[1][1:].split(".")))
-          releases = json.load(open(sys.argv[2], encoding="utf-8"))
+          pages = json.load(open(sys.argv[2], encoding="utf-8"))
+          releases = [release for page in pages for release in page] if pages and isinstance(pages[0], list) else pages
           versions = []
           for release in releases:
               tag = release.get("tag_name", "")
@@ -64,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-assets
-          gh release download "$TAG" --pattern release-manifest.json --pattern release-manifest.json.sha256 --dir release-assets
+          gh release download "$TAG" --repo "$GH_REPO" --pattern SHA256SUMS --pattern release-manifest.json --pattern release-manifest.json.sha256 --dir release-assets
           (cd release-assets && sha256sum --check release-manifest.json.sha256)
           python3 - "$TAG" release-assets/release-manifest.json <<'PY'
           import json, re, sys
@@ -85,22 +104,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify image architectures and promote recorded digests
+      - name: Verify all immutable image inputs before promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          source_revision="$(<source-revision.txt)"
+          gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" > release-pages.json
+          mkdir image-inspections
           python3 - release-assets/release-manifest.json <<'PY' > promotion-inputs.txt
           import json, sys
           for item in json.load(open(sys.argv[1], encoding="utf-8"))["containers"]:
-              print(item["image"].rsplit(":", 1)[0], item["digest"])
+              print(item["image"], item["digest"], sep="\t")
           PY
-          while read -r image digest; do
-            inspect="$(docker buildx imagetools inspect "$image@$digest")"
-            grep -q 'linux/amd64' <<<"$inspect"
-            grep -q 'linux/arm64' <<<"$inspect"
-            # This creates only a new mutable reference to the recorded
-            # manifest; it does not rebuild or overwrite versioned tags.
-            docker buildx imagetools create --tag "$image:latest" "$image@$digest"
+          while IFS=$'\t' read -r image digest; do
+            file="image-inspections/$(basename "${image%%:*}").json"
+            docker buildx imagetools inspect "$image@$digest" --raw > "$file"
           done < promotion-inputs.txt
+          python3 - image-inspections release-assets/release-manifest.json <<'PY' > image-inspections.json
+          import json, pathlib, sys
+          directory, manifest_path = map(pathlib.Path, sys.argv[1:])
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          result = {}
+          for container in manifest["containers"]:
+              image = container["image"]
+              result[image] = json.loads((directory / f"{image.rsplit('/', 1)[-1].rsplit(':', 1)[0]}.json").read_text(encoding="utf-8"))
+          print(json.dumps(result))
+          PY
+          python3 tools/release/validate-stable-promotion.py \
+            --tag "$TAG" \
+            --registry-owner "${GH_REPO%%/*}" \
+            --source-revision "$source_revision" \
+            --release release.json \
+            --manifest release-assets/release-manifest.json \
+            --manifest-checksum release-assets/release-manifest.json.sha256 \
+            --sha256sums release-assets/SHA256SUMS \
+            --release-pages release-pages.json \
+            --inspections image-inspections.json > promotion-plan.json
+
+      - name: Promote immutable digests and read back mutable references
+        run: tools/release/promote-stable-images.sh promotion-plan.json
 
       - name: Summarize immutable promotion
         run: |

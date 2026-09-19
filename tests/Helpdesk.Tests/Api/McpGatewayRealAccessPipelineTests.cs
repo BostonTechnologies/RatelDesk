@@ -104,6 +104,27 @@ public sealed class McpGatewayRealAccessPipelineTests
         Assert.Equal(HttpStatusCode.Unauthorized, disabledOwner.StatusCode);
     }
 
+    [Fact]
+    public async Task Simultaneous_gateway_credentials_do_not_share_owner_scope_or_cached_authorization()
+    {
+        await using var harness = await GatewayAccessHarness.CreatePostgreSqlAsync();
+        var credentialA = await harness.CreateCredentialAsync("org-a");
+        var credentialB = await harness.CreateCredentialAsync("org-b");
+
+        var executions = await Task.WhenAll(harness.DelegateAsync(credentialA), harness.DelegateAsync(credentialB));
+        var reads = await Task.WhenAll(
+            harness.GetAsync<PagedResponse<MyRequestListItemDto>>(executions[0], "/api/v1/self-service/requests"),
+            harness.GetAsync<PagedResponse<MyRequestListItemDto>>(executions[1], "/api/v1/self-service/requests"));
+
+        Assert.Equal(HttpStatusCode.OK, reads[0].StatusCode);
+        Assert.Equal("request-a", Assert.Single(reads[0].Body!.Items).Id);
+        Assert.Equal(HttpStatusCode.OK, reads[1].StatusCode);
+        Assert.Empty(reads[1].Body!.Items);
+
+        var apiPurposeCredential = await harness.CreateCredentialAsync("org-a", purpose: "api");
+        await harness.AssertDelegationStatusAsync(apiPurposeCredential, GatewayAccessHarness.ResourceUri, HttpStatusCode.Unauthorized);
+    }
+
     internal sealed class GatewayAccessHarness(WebApplication application, IAsyncDisposable database) : IAsyncDisposable
     {
         public const string ResourceUri = "https://helpdesk.example/mcp";
@@ -250,7 +271,7 @@ public sealed class McpGatewayRealAccessPipelineTests
             return new GatewayAccessHarness(app, database);
         }
 
-        public async Task<Credential> CreateCredentialAsync(string organizationId)
+        public async Task<Credential> CreateCredentialAsync(string organizationId, string? purpose = null)
         {
             var id = Guid.NewGuid();
             var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
@@ -263,7 +284,7 @@ public sealed class McpGatewayRealAccessPipelineTests
                 Name = $"MCP {organizationId}",
                 Prefix = $"rdk_{id:N}"[..16],
                 SecretHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret))),
-                Purpose = IntegrationCredentialAuthenticationHandler.McpPurpose,
+                Purpose = purpose ?? IntegrationCredentialAuthenticationHandler.McpPurpose,
                 McpResourceUri = ResourceUri,
                 OrganizationId = organizationId,
                 Permissions = HelpdeskPermissions.SelfServiceUser,

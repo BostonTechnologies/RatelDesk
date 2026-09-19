@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 image=${1:?Usage: test-mcp-compose-config.sh <mcp-http-image>}
 work_directory=$(mktemp -d)
+archive_directory="$work_directory/archive"
 project_name="rateldesk-mcp-config-${RANDOM}${RANDOM}"
 image_tag="compose-validation-${RANDOM}${RANDOM}"
 mcp_image="ghcr.io/bostontechnologies/rateldesk-mcp-http:$image_tag"
@@ -34,15 +35,40 @@ compose_environment=(
   'RATELDESK_API_BASE_URL=https://api.example.test/'
   'RATELDESK_MCP_PUBLIC_RESOURCE_URI=https://mcp.example.test/mcp'
   'RATELDESK_MCP_ALLOWED_ORIGIN=https://client.example.test'
-  'RATELDESK_MCP_AUTHENTIK_AUTHORITY=https://auth.example.test/'
   'RATELDESK_MCP_PORT=18223'
+)
+authentik_environment=(
+  "${compose_environment[@]}"
+  'RATELDESK_MCP_AUTHENTIK_AUTHORITY=https://auth.example.test/'
 )
 
 docker tag "$image" "$mcp_image"
 
 env "${compose_environment[@]}" docker compose "${standalone_compose[@]}" config --quiet
-env "${compose_environment[@]}" docker compose -f docker/docker-compose.yml -f docker/docker-compose.mcp.yml config --quiet
-env "${compose_environment[@]}" docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.mcp.release.yml config --quiet
+env "${compose_environment[@]}" docker compose -f docker/docker-compose.yml -f docker/docker-compose.mcp.gateway.yml config --quiet
+env "${compose_environment[@]}" docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.mcp.gateway.release.yml config --quiet
+env "${authentik_environment[@]}" docker compose -f docker/docker-compose.yml -f docker/docker-compose.mcp.yml config --quiet
+env "${authentik_environment[@]}" docker compose -f docker/docker-compose.release.yml -f docker/docker-compose.mcp.release.yml config --quiet
+
+# Render the same image-only recipes after extracting the deployment payload.
+# This guards the archive layout and ensures examples never require a checkout.
+mkdir -p "$archive_directory/source" "$archive_directory/extracted"
+cp -a docker/. "$archive_directory/source/"
+tar -C "$archive_directory/source" -czf "$archive_directory/deployment.tar.gz" .
+tar -C "$archive_directory/extracted" -xzf "$archive_directory/deployment.tar.gz"
+grep -Fqx 'RATELDESK_VERSION=' "$archive_directory/extracted/examples/mcp-http/.env.example"
+if grep -Eq '^RATELDESK_VERSION=[0-9]+\.[0-9]+' "$archive_directory/extracted/examples/mcp-http/.env.example"; then
+  echo "The extracted standalone MCP example must require an explicit release version." >&2
+  exit 1
+fi
+env "${compose_environment[@]}" docker compose \
+  -f "$archive_directory/extracted/examples/mcp-http/docker-compose.yml" config --quiet
+env "${compose_environment[@]}" docker compose \
+  -f "$archive_directory/extracted/docker-compose.release.yml" \
+  -f "$archive_directory/extracted/docker-compose.mcp.gateway.release.yml" config --quiet
+env "${authentik_environment[@]}" docker compose \
+  -f "$archive_directory/extracted/docker-compose.release.yml" \
+  -f "$archive_directory/extracted/docker-compose.mcp.release.yml" config --quiet
 
 env "${compose_environment[@]}" docker compose "${standalone_compose[@]}" up --detach --wait
 curl --retry 6 --retry-all-errors --retry-delay 1 --fail --show-error --silent \

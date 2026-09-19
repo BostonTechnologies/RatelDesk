@@ -24,8 +24,8 @@ services:
       RATELDESK_MCP_CONFIG: /run/rateldesk-mcp/config.json
       Helpdesk__Mcp__Instance: ${RATELDESK_MCP_INSTANCE:-local}
       Helpdesk__Mcp__ExpectedApiBaseUrl: http://api:8222/
-      Helpdesk__Mcp__PublicResourceUri: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:-https://localhost:8223/mcp}
-      Helpdesk__Mcp__AllowedOrigins__0: ${RATELDESK_MCP_ALLOWED_ORIGIN:-http://localhost:8223}
+      Helpdesk__Mcp__PublicResourceUri: ${RATELDESK_MCP_PUBLIC_RESOURCE_URI:?Set the canonical public HTTPS MCP URL, for example https://mcp.example.test/mcp.}
+      Helpdesk__Mcp__AllowedOrigins__0: ${RATELDESK_MCP_ALLOWED_ORIGIN:?Set the browser origin allowed to call this MCP endpoint.}
       Helpdesk__Mcp__AuthenticationMode: gateway
     volumes:
       - mcp-http-config:/run/rateldesk-mcp:ro
