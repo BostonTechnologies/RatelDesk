@@ -185,6 +185,9 @@ jobs:
       - name: Check out triggering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Test stable-promotion validation helper without registry writes
+        run: python3 tools/release/test-validate-stable-promotion.py
+
       - name: Set up .NET SDK from global.json
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
@@ -201,6 +204,9 @@ jobs:
           test "$(find release-assets -maxdepth 1 -name 'rateldesk-mcp-stdio-*.zip' | wc -l)" = 1
           (cd release-assets && sha256sum --check SHA256SUMS)
           test -s release-assets/release-manifest.json
+
+      - name: Render MCP Compose recipes from the extracted deployment archive
+        run: tools/ci/test-deployment-archive-compose-config.sh release-assets/rateldesk-deployment-0.0.0-pr.tar.gz
 
       - name: Execute extracted Linux x64 archives
         run: tools/release/test-executable-archives.sh release-assets linux-x64

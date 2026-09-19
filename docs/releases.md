@@ -1,6 +1,6 @@
 # Releases
 
-RatelDesk has one repository-owned release line. The root `Directory.Build.props` is the source of truth: maintainers update `VersionPrefix` when preparing the next release. All application projects inherit that value. `VersionSuffix` creates prereleases without changing the release line. The current planned test release is `0.1.1-beta.1`; the current stable tag remains `0.1.0`.
+RatelDesk has one repository-owned release line. The root `Directory.Build.props` is the source of truth: maintainers update `VersionPrefix` when preparing the next release. All application projects inherit that value. `VersionSuffix` creates prereleases without changing the release line. The current planned test release is `0.1.1-beta.2`; beta.1 remains an immutable published prerelease.
 
 ## Channel policy
 
@@ -18,6 +18,17 @@ release, verifies its public downloads and recorded digests, then performs the
 separate protected channel-promotion procedure. Do not promote an older
 version over an existing stable channel; serialize that procedure and preserve
 the immutable exact-version tags as the recovery source.
+
+Before a maintainer dispatches `promote-stable.yml`, configure the repository
+`release-promotion` environment with required reviewers and deployment-branch
+policy in GitHub repository settings. The YAML environment name alone does not
+prove those approval rules exist. Promotion validates the peeled tag commit,
+its `main` ancestry, all release pages, the complete archive contract, and all
+three immutable multi-architecture image digests before it changes any
+`latest` reference. The three registry references are not atomic: if one write
+or read-back fails, the workflow names the references already updated; after
+correcting registry access, rerun the same stable tag rather than moving the
+channel backwards or rebuilding an immutable image.
 
 ## 0.1.0 — first usable alpha
 
